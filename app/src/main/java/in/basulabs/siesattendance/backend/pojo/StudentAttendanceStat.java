@@ -1,0 +1,44 @@
+package in.basulabs.siesattendance.backend.pojo;
+
+import androidx.annotation.NonNull;
+
+/**
+ * Per-student attendance aggregate, used by the statistics screen.
+ */
+public class StudentAttendanceStat {
+
+	public long studentID;
+
+	@NonNull
+	public String name;
+
+	@NonNull
+	public String rollNo;
+
+	public int totalLectures;
+
+	public int attended;
+
+	public StudentAttendanceStat(long studentID, @NonNull String name, @NonNull String rollNo,
+	                             int totalLectures, int attended) {
+		this.studentID = studentID;
+		this.name = name;
+		this.rollNo = rollNo;
+		this.totalLectures = totalLectures;
+		this.attended = attended;
+	}
+
+	public double percentage() {
+		if (totalLectures == 0) {
+			return 0d;
+		}
+		return (attended * 100d) / totalLectures;
+	}
+
+	/**
+	 * Most Indian universities require 75% attendance. This flags students below that line.
+	 */
+	public boolean isShort() {
+		return totalLectures > 0 && percentage() < 75d;
+	}
+}

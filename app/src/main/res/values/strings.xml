@@ -1,0 +1,197 @@
+<resources>
+
+    <string name="app_name">SIES Attendance</string>
+    <string name="title_activity_home">SIES Attendance</string>
+    <string name="title_mark_attendance">Mark attendance</string>
+    <string name="title_statistics">Statistics</string>
+
+    <!-- Bottom navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_students">Students</string>
+    <string name="nav_professors">Professors</string>
+    <string name="nav_courses">Courses</string>
+    <string name="nav_attendance">Attendance</string>
+
+    <!-- Tabs -->
+    <string name="tab_courses">Courses</string>
+    <string name="tab_lectures">Lectures</string>
+    <string name="tab_batches">Batches</string>
+    <string name="tab_by_student">By student</string>
+    <string name="tab_by_course">By course</string>
+
+    <!-- Sections -->
+    <string name="section_upcoming_lectures">Lectures today</string>
+    <string name="section_recent_activity">Recent activity</string>
+    <string name="section_personal_details">Personal details</string>
+    <string name="section_academic_details">Academic details</string>
+    <string name="section_students">Students</string>
+    <string name="section_select_lecture">Select a lecture</string>
+
+    <!-- Stat labels -->
+    <string name="label_students">Students</string>
+    <string name="label_courses">Courses</string>
+    <string name="label_lectures_today">Lectures today</string>
+    <string name="label_avg_attendance">Avg. attendance</string>
+    <string name="label_no_students_selected">No students selected</string>
+    <string name="label_overall">Overall</string>
+    <string name="label_below_75">Below 75%</string>
+    <string name="label_lectures">Lectures</string>
+    <string name="label_today">Today</string>
+    <string name="label_unmarked_count">%1$d not yet marked</string>
+
+    <!-- Hints -->
+    <string name="hint_search_students">Search by name or roll number</string>
+    <string name="hint_search_professors">Search professors</string>
+    <string name="hint_full_name">Full name</string>
+    <string name="hint_pronouns">Pronouns</string>
+    <string name="hint_email">Email</string>
+    <string name="hint_roll_number">Roll number</string>
+    <string name="hint_academic_year">Academic year</string>
+    <string name="hint_major_department">Major department</string>
+    <string name="hint_minor_department">Minor department (optional)</string>
+    <string name="hint_oe_department">Open elective department (optional)</string>
+    <string name="hint_department">Department</string>
+    <string name="hint_designation">Designation</string>
+    <string name="hint_course_code">Course code</string>
+    <string name="hint_course_topic">Course topic</string>
+    <string name="hint_stream">Stream</string>
+    <string name="hint_offering_department">Offering department</string>
+    <string name="hint_year">Year</string>
+    <string name="hint_semester">Semester</string>
+    <string name="hint_course_type">Course type</string>
+    <string name="hint_professor">Professor</string>
+    <string name="hint_remarks">Remarks (optional)</string>
+    <string name="hint_course">Course</string>
+    <string name="hint_batch">Batch</string>
+    <string name="hint_date">Date</string>
+    <string name="hint_start_time">Start time</string>
+    <string name="hint_end_time">End time</string>
+    <string name="hint_notes">Notes (optional)</string>
+    <string name="hint_batch_name">Batch name</string>
+    <string name="hint_batch_description">Description (optional)</string>
+    <string name="hint_filter_date">Pick a date</string>
+    <string name="hint_batch_from_filter">The batch will contain every student currently matched
+        by the class filter.</string>
+
+    <!-- Actions -->
+    <string name="action_add_student">Add student</string>
+    <string name="action_save_student">Save student</string>
+    <string name="action_add_professor">Add professor</string>
+    <string name="action_save_professor">Save professor</string>
+    <string name="action_add_course">Add course</string>
+    <string name="action_save_course">Save course</string>
+    <string name="action_take_attendance">Take attendance</string>
+    <string name="action_create_batch">Create batch</string>
+    <string name="action_select_students">Select students</string>
+    <string name="action_save_attendance">Save attendance</string>
+    <string name="action_mark_present">Mark present</string>
+    <string name="action_mark_absent">Mark absent</string>
+    <string name="action_all_present">All present</string>
+    <string name="action_all_absent">All absent</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="action_import_csv">Import CSV</string>
+    <string name="action_csv_format">What should the CSV look like?</string>
+    <string name="action_make_batch">Make batch</string>
+    <string name="action_import">Import</string>
+    <string name="action_view_stats">View statistics</string>
+    <string name="action_prev_day">Previous day</string>
+    <string name="action_next_day">Next day</string>
+
+    <!-- Filters -->
+    <string name="filter_all_classes">All classes</string>
+    <string name="class_chip_label">%1$s (%2$d)</string>
+
+    <!-- Chips -->
+    <string name="chip_present_count">%1$d present</string>
+    <string name="chip_absent_count">%1$d absent</string>
+    <string name="chip_pending">Not marked</string>
+    <string name="chip_marked_summary">%1$d of %2$d present</string>
+
+    <!-- Stats -->
+    <string name="stat_attended">%1$s · %2$d of %3$d lectures</string>
+    <string name="stat_course_detail">%1$d lectures · %2$d of %3$d present</string>
+
+    <!-- Empty states -->
+    <string name="empty_students">No students yet. Import a CSV or add one manually.</string>
+    <string name="empty_students_filtered">No students match this class.</string>
+    <string name="empty_professors">No professors added yet</string>
+    <string name="empty_lectures_today">No lectures scheduled for today</string>
+    <string name="empty_lectures_on_date">No lectures on this date</string>
+
+    <!-- Dialogs -->
+    <string name="dialog_import_title">Import students</string>
+    <string name="dialog_import_message">Students will be added to the %1$d-%2$d academic
+        year. Rows whose roll number already exists for that year will be updated rather than
+        duplicated.</string>
+    <string name="dialog_import_result_title">Import finished</string>
+    <string name="dialog_csv_format_title">CSV format</string>
+    <string name="dialog_csv_format_message">The first row must be a header. Column order does
+        not matter.\n\nRequired: rollNo, name, year, stream, majorDept\nOptional: pronouns,
+        email, minorDept, oeDept\n\nExample:\n\n%1$s</string>
+    <string name="dialog_create_batch_title">Create batch from this class</string>
+
+    <!-- Warnings and errors -->
+    <string name="warn_select_class_first">Select a class first, then create a batch from
+        it.</string>
+    <string name="error_required">Required</string>
+    <string name="error_end_before_start">Must be after the start time</string>
+    <string name="import_more_errors">…and %1$d more</string>
+
+    <plurals name="student_count">
+        <item quantity="one">%d student</item>
+        <item quantity="other">%d students</item>
+    </plurals>
+
+    <plurals name="import_success">
+        <item quantity="one">%d student imported</item>
+        <item quantity="other">%d students imported</item>
+    </plurals>
+
+    <plurals name="import_failed">
+        <item quantity="one">%d row could not be read:</item>
+        <item quantity="other">%d rows could not be read:</item>
+    </plurals>
+
+
+    <!-- Edit and delete -->
+    <string name="action_edit">Edit</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_save_changes">Save changes</string>
+
+    <string name="title_student_detail">Student</string>
+    <string name="section_by_course">Attendance by course</string>
+    <string name="label_no_email">Not provided</string>
+    <string name="label_attended_of">%1$d of %2$d lectures</string>
+    <string name="label_no_attendance_yet">No attendance recorded yet</string>
+    <string name="empty_course_breakdown">This student has not been marked in any lecture
+        yet.</string>
+
+    <string name="dialog_delete_student_title">Delete this student?</string>
+    <string name="dialog_delete_student_message">This removes the student and their record for
+        every academic year. It cannot be undone.</string>
+    <string name="dialog_delete_professor_title">Delete this professor?</string>
+    <string name="dialog_delete_course_title">Delete this course?</string>
+    <string name="dialog_delete_batch_title">Delete this batch?</string>
+    <string name="dialog_delete_batch_message">%1$s will be removed along with its student
+        membership and course links.</string>
+    <string name="dialog_delete_lecture_title">Delete this lecture?</string>
+    <string name="dialog_delete_lecture_message">This lecture will be removed. It cannot be
+        undone.</string>
+    <string name="dialog_delete_lecture_marked">This lecture has attendance marked for %1$d
+        student(s). Deleting it discards those records too.</string>
+    <string name="dialog_delete_generic_message">%1$s will be permanently removed.</string>
+
+    <string name="dialog_no_professors_title">Add a professor first</string>
+    <string name="dialog_no_professors_message">Every course must be assigned to a professor,
+        and there are none yet. Add one, then come back to create the course.</string>
+
+
+    <string name="title_take_attendance">Take attendance</string>
+    <string name="roll_header_for">Students · %1$s</string>
+    <string name="empty_roll_for_course">No students are enrolled in this course for the
+        selected academic year. Check that students have been imported with a matching year,
+        stream and department.</string>
+    <string name="label_whole_class">Whole class</string>
+
+</resources>

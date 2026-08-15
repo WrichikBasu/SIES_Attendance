@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/fragmentDashboard"
+        android:icon="@drawable/ic_home"
+        android:title="@string/nav_home" />
+
+    <item
+        android:id="@+id/fragmentStudents"
+        android:icon="@drawable/ic_people"
+        android:title="@string/nav_students" />
+
+    <item
+        android:id="@+id/fragmentProfessors"
+        android:icon="@drawable/ic_school"
+        android:title="@string/nav_professors" />
+
+    <item
+        android:id="@+id/fragmentCoursesHub"
+        android:icon="@drawable/ic_book"
+        android:title="@string/nav_courses" />
+
+    <item
+        android:id="@+id/fragmentAttendancePicker"
+        android:icon="@drawable/ic_clipboard_check"
+        android:title="@string/nav_attendance" />
+
+</menu>

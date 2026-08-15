@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/fragmentDashboard">
+
+    <fragment
+        android:id="@+id/fragmentDashboard"
+        android:name="in.basulabs.siesattendance.frontend.FragmentDashboard"
+        android:label="@string/nav_home"
+        tools:layout="@layout/fragment_dashboard">
+
+        <action
+            android:id="@+id/action_dashboard_to_attendance"
+            app:destination="@id/fragmentAttendance" />
+        <action
+            android:id="@+id/action_dashboard_to_stats"
+            app:destination="@id/fragmentStats" />
+        <action
+            android:id="@+id/action_dashboard_to_takeAttendance"
+            app:destination="@id/fragmentTakeAttendance" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentStudents"
+        android:name="in.basulabs.siesattendance.frontend.FragmentStudents"
+        android:label="@string/nav_students"
+        tools:layout="@layout/fragment_students">
+
+        <action
+            android:id="@+id/action_students_to_addStudent"
+            app:destination="@id/fragmentAddStudent" />
+        <action
+            android:id="@+id/action_students_to_studentDetail"
+            app:destination="@id/fragmentStudentDetail" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentStudentDetail"
+        android:name="in.basulabs.siesattendance.frontend.FragmentStudentDetail"
+        android:label="@string/title_student_detail"
+        tools:layout="@layout/fragment_student_detail">
+
+        <argument
+            android:name="studentID"
+            android:defaultValue="-1L"
+            app:argType="long" />
+
+        <action
+            android:id="@+id/action_studentDetail_to_editStudent"
+            app:destination="@id/fragmentAddStudent" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentAddStudent"
+        android:name="in.basulabs.siesattendance.frontend.FragmentAddStudent"
+        android:label="@string/action_add_student"
+        tools:layout="@layout/fragment_add_student">
+
+        <argument
+            android:name="studentID"
+            android:defaultValue="-1L"
+            app:argType="long" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentProfessors"
+        android:name="in.basulabs.siesattendance.frontend.FragmentProfessors"
+        android:label="@string/nav_professors"
+        tools:layout="@layout/fragment_professors">
+
+        <action
+            android:id="@+id/action_professors_to_addProfessor"
+            app:destination="@id/fragmentAddProfessor" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentAddProfessor"
+        android:name="in.basulabs.siesattendance.frontend.FragmentAddProfessor"
+        android:label="@string/action_add_professor"
+        tools:layout="@layout/fragment_add_professor">
+
+        <argument
+            android:name="profID"
+            android:defaultValue="-1L"
+            app:argType="long" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentCoursesHub"
+        android:name="in.basulabs.siesattendance.frontend.FragmentCoursesHub"
+        android:label="@string/nav_courses"
+        tools:layout="@layout/fragment_courses_hub">
+
+        <action
+            android:id="@+id/action_coursesHub_to_addCourse"
+            app:destination="@id/fragmentAddCourse" />
+        <action
+            android:id="@+id/action_coursesHub_to_takeAttendance"
+            app:destination="@id/fragmentTakeAttendance" />
+        <action
+            android:id="@+id/action_coursesHub_to_attendance"
+            app:destination="@id/fragmentAttendance" />
+        <action
+            android:id="@+id/action_coursesHub_to_students"
+            app:destination="@id/fragmentStudents" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentAddCourse"
+        android:name="in.basulabs.siesattendance.frontend.FragmentAddCourse"
+        android:label="@string/action_add_course"
+        tools:layout="@layout/fragment_add_course">
+
+        <argument
+            android:name="courseID"
+            android:defaultValue="-1L"
+            app:argType="long" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentTakeAttendance"
+        android:name="in.basulabs.siesattendance.frontend.FragmentTakeAttendance"
+        android:label="@string/title_take_attendance"
+        tools:layout="@layout/fragment_take_attendance" />
+
+    <fragment
+        android:id="@+id/fragmentAttendancePicker"
+        android:name="in.basulabs.siesattendance.frontend.FragmentAttendancePicker"
+        android:label="@string/nav_attendance"
+        tools:layout="@layout/fragment_attendance_picker">
+
+        <action
+            android:id="@+id/action_attendancePicker_to_attendance"
+            app:destination="@id/fragmentAttendance" />
+        <action
+            android:id="@+id/action_attendancePicker_to_takeAttendance"
+            app:destination="@id/fragmentTakeAttendance" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentAttendance"
+        android:name="in.basulabs.siesattendance.frontend.FragmentAttendance"
+        android:label="@string/title_mark_attendance"
+        tools:layout="@layout/fragment_attendance">
+
+        <argument
+            android:name="lectureID"
+            android:defaultValue="-1L"
+            app:argType="long" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentStats"
+        android:name="in.basulabs.siesattendance.frontend.FragmentStats"
+        android:label="@string/title_statistics"
+        tools:layout="@layout/fragment_stats" />
+
+</navigation>

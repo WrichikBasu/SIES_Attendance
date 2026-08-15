@@ -1,0 +1,94 @@
+package in.basulabs.siesattendance.frontend.adapter;
+
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.TextView;
+
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.DiffUtil;
+import androidx.recyclerview.widget.ListAdapter;
+import androidx.recyclerview.widget.RecyclerView;
+
+import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
+
+public class AdapterStudent
+		extends ListAdapter<StudentWithYear, AdapterStudent.Holder> {
+
+	public interface OnClick {
+		void onStudentClicked(StudentWithYear student);
+
+		default void onStudentLongPressed(StudentWithYear student) {
+		}
+	}
+
+	private final OnClick listener;
+
+	private static final DiffUtil.ItemCallback<StudentWithYear> DIFF =
+			new DiffUtil.ItemCallback<StudentWithYear>() {
+				@Override
+				public boolean areItemsTheSame(@NonNull StudentWithYear a,
+				                               @NonNull StudentWithYear b) {
+					return a.studentID == b.studentID && a.academicYear == b.academicYear;
+				}
+
+				@Override
+				public boolean areContentsTheSame(@NonNull StudentWithYear a,
+				                                  @NonNull StudentWithYear b) {
+					return a.name.equals(b.name) && a.rollNo.equals(b.rollNo)
+							&& a.majorDept == b.majorDept && a.year == b.year
+							&& a.stream == b.stream;
+				}
+			};
+
+	public AdapterStudent(OnClick listener) {
+		super(DIFF);
+		this.listener = listener;
+	}
+
+	@NonNull
+	@Override
+	public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+		View view = LayoutInflater.from(parent.getContext())
+				.inflate(R.layout.item_student, parent, false);
+		return new Holder(view);
+	}
+
+	@Override
+	public void onBindViewHolder(@NonNull Holder holder, int position) {
+		holder.bind(getItem(position));
+	}
+
+	class Holder extends RecyclerView.ViewHolder {
+
+		private final TextView initials, name, info;
+
+		Holder(@NonNull View itemView) {
+			super(itemView);
+			initials = itemView.findViewById(R.id.tvInitials);
+			name = itemView.findViewById(R.id.tvStudentName);
+			info = itemView.findViewById(R.id.tvStudentInfo);
+		}
+
+		void bind(@NonNull StudentWithYear student) {
+			initials.setText(student.initials());
+			name.setText(student.name);
+			info.setText(student.rollNo + " · " + student.classLabel());
+
+			itemView.setOnClickListener(v -> {
+				if (listener != null) {
+					listener.onStudentClicked(student);
+				}
+			});
+
+			itemView.setOnLongClickListener(v -> {
+				if (listener != null) {
+					listener.onStudentLongPressed(student);
+					return true;
+				}
+				return false;
+			});
+		}
+	}
+}

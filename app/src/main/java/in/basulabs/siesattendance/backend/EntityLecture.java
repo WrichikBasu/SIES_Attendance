@@ -1,0 +1,77 @@
+package in.basulabs.siesattendance.backend;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.room.Entity;
+import androidx.room.ForeignKey;
+import androidx.room.Ignore;
+import androidx.room.Index;
+import androidx.room.PrimaryKey;
+
+import java.time.ZonedDateTime;
+
+/**
+ * One class session of a course, held at a specific date and time.
+ * <p>
+ * A lecture is created at the moment attendance is taken rather than scheduled ahead of it, so
+ * every row here is a session that actually happened.
+ * <p>
+ * {@code batchID} is nullable. A null batch means the lecture was held for the course's whole
+ * class — the students of that year, stream and department who take the course. A non-null
+ * batch narrows it to that batch's members, which is what practicals need.
+ */
+@Entity(tableName = EntityLecture.TABLE_NAME,
+		indices = {
+				@Index(value = {"courseID", "batchID", "startDateTime", "endDateTime"},
+						unique = true),
+				@Index(value = {"batchID"}),
+				@Index(value = {"courseID"})
+		},
+		foreignKeys = {
+				@ForeignKey(entity = EntityBatchDesc.class,
+						parentColumns = {"batchID"},
+						childColumns = {"batchID"},
+						onDelete = ForeignKey.RESTRICT,
+						onUpdate = ForeignKey.CASCADE),
+				@ForeignKey(entity = EntityCourse.class,
+						parentColumns = {"courseID"},
+						childColumns = {"courseID"},
+						onDelete = ForeignKey.RESTRICT,
+						onUpdate = ForeignKey.CASCADE)
+		}
+)
+public class EntityLecture {
+
+	@Ignore
+	public static final String TABLE_NAME = "lectures";
+
+	@PrimaryKey(autoGenerate = true)
+	public long lectureID;
+
+	public long courseID;
+
+	/**
+	 * Null when the lecture was taken for the whole class rather than a single batch.
+	 */
+	@Nullable
+	public Long batchID;
+
+	@NonNull
+	public ZonedDateTime startDateTime;
+
+	@NonNull
+	public ZonedDateTime endDateTime;
+
+	@Nullable
+	public String notes;
+
+	public EntityLecture(long courseID, @Nullable Long batchID,
+	                     @NonNull ZonedDateTime startDateTime,
+	                     @NonNull ZonedDateTime endDateTime, @Nullable String notes) {
+		this.courseID = courseID;
+		this.batchID = batchID;
+		this.startDateTime = startDateTime;
+		this.endDateTime = endDateTime;
+		this.notes = notes;
+	}
+}
