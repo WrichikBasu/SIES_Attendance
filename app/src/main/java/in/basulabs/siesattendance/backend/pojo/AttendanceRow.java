@@ -2,6 +2,8 @@ package in.basulabs.siesattendance.backend.pojo;
 
 import androidx.annotation.NonNull;
 
+import in.basulabs.siesattendance.backend.util.NameFormat;
+
 /**
  * One row on the mark-attendance screen. {@code present} is tri-state in the UI: the Boolean is
  * null until the user taps present or absent, which lets the UI distinguish "not yet marked"
@@ -28,11 +30,12 @@ public class AttendanceRow {
 	}
 
 	@NonNull
+	public String displayName() {
+		return NameFormat.properCase(name);
+	}
+
+	@NonNull
 	public String initials() {
-		String[] parts = name.trim().split("\\s+");
-		if (parts.length == 1) {
-			return parts[0].substring(0, Math.min(2, parts[0].length())).toUpperCase();
-		}
-		return ("" + parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+		return NameFormat.initials(name);
 	}
 }

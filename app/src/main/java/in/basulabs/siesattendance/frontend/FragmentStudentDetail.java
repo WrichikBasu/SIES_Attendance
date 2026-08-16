@@ -136,7 +136,7 @@ public class FragmentStudentDetail extends Fragment {
 		}
 
 		initials.setText(student.initials());
-		name.setText(student.name);
+		name.setText(student.displayName());
 		rollNo.setText(student.rollNo);
 		classLabel.setText(student.classLabel());
 		pronouns.setText(student.pronouns);

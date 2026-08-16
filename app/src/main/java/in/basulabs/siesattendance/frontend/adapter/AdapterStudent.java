@@ -62,19 +62,21 @@ public class AdapterStudent
 
 	class Holder extends RecyclerView.ViewHolder {
 
-		private final TextView initials, name, info;
+		private final TextView initials, rollNo, name, info;
 
 		Holder(@NonNull View itemView) {
 			super(itemView);
 			initials = itemView.findViewById(R.id.tvInitials);
+			rollNo = itemView.findViewById(R.id.tvRollNo);
 			name = itemView.findViewById(R.id.tvStudentName);
 			info = itemView.findViewById(R.id.tvStudentInfo);
 		}
 
 		void bind(@NonNull StudentWithYear student) {
 			initials.setText(student.initials());
-			name.setText(student.name);
-			info.setText(student.rollNo + " · " + student.classLabel());
+			rollNo.setText(student.rollNo);
+			name.setText(student.displayName());
+			info.setText(student.classLabel());
 
 			itemView.setOnClickListener(v -> {
 				if (listener != null) {

@@ -6,6 +6,7 @@ import androidx.annotation.Nullable;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
+import in.basulabs.siesattendance.backend.util.NameFormat;
 
 /**
  * A flattened join of {@code students} and {@code student_year}, which is what every student
@@ -70,12 +71,16 @@ public class StudentWithYear {
 		return year.name() + " " + stream.name() + " " + majorDept.name();
 	}
 
+	/**
+	 * The name as it should be shown. The raw {@code name} field keeps whatever was imported.
+	 */
+	@NonNull
+	public String displayName() {
+		return NameFormat.properCase(name);
+	}
+
 	@NonNull
 	public String initials() {
-		String[] parts = name.trim().split("\\s+");
-		if (parts.length == 1) {
-			return parts[0].substring(0, Math.min(2, parts[0].length())).toUpperCase();
-		}
-		return ("" + parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+		return NameFormat.initials(name);
 	}
 }

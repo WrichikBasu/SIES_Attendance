@@ -194,4 +194,8 @@
         stream and department.</string>
     <string name="label_whole_class">Whole class</string>
 
+
+    <string name="hint_group">Class or batch</string>
+    <string name="helper_no_batches_for_course">No batches exist for this class yet</string>
+
 </resources>

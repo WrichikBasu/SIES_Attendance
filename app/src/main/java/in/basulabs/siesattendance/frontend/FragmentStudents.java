@@ -181,7 +181,7 @@ public class FragmentStudents extends Fragment {
 	 */
 	private void showStudentActions(@NonNull StudentWithYear student) {
 		new AlertDialog.Builder(requireContext())
-				.setTitle(student.name)
+				.setTitle(student.displayName())
 				.setItems(new CharSequence[]{
 						getString(R.string.action_edit),
 						getString(R.string.action_delete)

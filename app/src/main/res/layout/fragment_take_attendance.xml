@@ -37,8 +37,9 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp"
-            android:hint="@string/hint_batch"
+            android:hint="@string/hint_group"
             android:visibility="gone"
+            app:helperTextEnabled="true"
             tools:visibility="visible">
 
             <AutoCompleteTextView

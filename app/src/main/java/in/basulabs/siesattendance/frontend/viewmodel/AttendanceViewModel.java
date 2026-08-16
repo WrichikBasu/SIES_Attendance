@@ -768,10 +768,15 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
+	/**
+	 * Batches that make sense for this course in the current academic year, rather than every
+	 * batch that happens to exist for the year.
+	 */
 	public void loadBatchesForCourse(long courseID,
 	                                 @NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
+		final int acadYear = academicYearValue();
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoCourse().getBatchesForCourseSync(courseID)));
+				cb.accept(db.daoCourse().getBatchesForCourseSync(courseID, acadYear)));
 	}
 
 	public LiveData<List<StudentWithYear>> getStudentsInBatch(long batchID) {

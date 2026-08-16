@@ -67,7 +67,7 @@ public class AdapterStudentStat
 
 		void bind(@NonNull StudentAttendanceStat stat) {
 
-			name.setText(stat.name);
+			name.setText(stat.displayName());
 			detail.setText(itemView.getContext().getString(R.string.stat_attended,
 					stat.rollNo, stat.attended, stat.totalLectures));
 

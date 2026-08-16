@@ -1,85 +1,87 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  Roll number leads because that is what a professor reads off the class list while marking;
+  the name is confirmation, not the primary key.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="horizontal"
     android:gravity="center_vertical"
+    android:orientation="horizontal"
     android:paddingHorizontal="16dp"
     android:paddingVertical="10dp">
 
     <TextView
         android:id="@+id/tvInitials"
-        android:layout_width="36dp"
-        android:layout_height="36dp"
-        android:gravity="center"
-        android:textAppearance="?attr/textAppearanceLabelSmall"
-        android:textColor="?attr/colorPrimary"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
         android:background="@drawable/bg_avatar_circle"
+        android:gravity="center"
+        android:textAppearance="?attr/textAppearanceLabelMedium"
+        android:textColor="?attr/colorPrimary"
         tools:text="AP" />
 
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
         android:layout_weight="1"
-        android:orientation="vertical"
-        android:layout_marginStart="10dp">
-
-        <TextView
-            android:id="@+id/tvStudentName"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textAppearance="?attr/textAppearanceBodySmall"
-            android:textStyle="bold"
-            tools:text="Aarav Patil" />
+        android:orientation="vertical">
 
         <TextView
             android:id="@+id/tvRollNo"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textAppearance="?attr/textAppearanceLabelSmall"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textAppearance="?attr/textAppearanceTitleMedium"
+            android:textColor="?attr/colorOnSurface"
             tools:text="2024CS032" />
+
+        <TextView
+            android:id="@+id/tvStudentName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            tools:text="Aarav Patil" />
 
     </LinearLayout>
 
-    <!-- Present button -->
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnPresent"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
+        style="@style/Widget.Material3.Button.OutlinedButton.Icon"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:checkable="true"
+        android:contentDescription="@string/action_mark_present"
         android:insetTop="0dp"
         android:insetBottom="0dp"
         android:padding="0dp"
+        app:cornerRadius="21dp"
         app:icon="@drawable/ic_check"
         app:iconGravity="textStart"
         app:iconPadding="0dp"
         app:iconSize="18dp"
-        app:cornerRadius="20dp"
-        app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Full"
-        android:checkable="true"
-        style="@style/Widget.Material3.Button.OutlinedButton.Icon"
-        android:contentDescription="@string/action_mark_present" />
+        app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Full" />
 
-    <!-- Absent button -->
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnAbsent"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
+        style="@style/Widget.Material3.Button.OutlinedButton.Icon"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
         android:layout_marginStart="6dp"
+        android:checkable="true"
+        android:contentDescription="@string/action_mark_absent"
         android:insetTop="0dp"
         android:insetBottom="0dp"
         android:padding="0dp"
+        app:cornerRadius="21dp"
         app:icon="@drawable/ic_close"
         app:iconGravity="textStart"
         app:iconPadding="0dp"
         app:iconSize="18dp"
-        app:cornerRadius="20dp"
-        app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Full"
-        android:checkable="true"
-        style="@style/Widget.Material3.Button.OutlinedButton.Icon"
-        android:contentDescription="@string/action_mark_absent" />
+        app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Full" />
 
 </LinearLayout>

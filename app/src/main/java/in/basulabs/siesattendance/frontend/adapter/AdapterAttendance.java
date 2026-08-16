@@ -170,8 +170,8 @@ public class AdapterAttendance extends RecyclerView.Adapter<AdapterAttendance.Ho
 
 		void bind(@NonNull AttendanceRow row) {
 			initials.setText(row.initials());
-			name.setText(row.name);
 			rollNo.setText(row.rollNo);
+			name.setText(row.displayName());
 			bindPresence(row);
 		}
 

@@ -2,6 +2,8 @@ package in.basulabs.siesattendance.backend.pojo;
 
 import androidx.annotation.NonNull;
 
+import in.basulabs.siesattendance.backend.util.NameFormat;
+
 /**
  * Per-student attendance aggregate, used by the statistics screen.
  */
@@ -26,6 +28,11 @@ public class StudentAttendanceStat {
 		this.rollNo = rollNo;
 		this.totalLectures = totalLectures;
 		this.attended = attended;
+	}
+
+	@NonNull
+	public String displayName() {
+		return NameFormat.properCase(name);
 	}
 
 	public double percentage() {

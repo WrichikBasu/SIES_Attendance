@@ -12,6 +12,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityProfessor;
+import in.basulabs.siesattendance.backend.util.NameFormat;
 
 public class AdapterProfessor
 		extends ListAdapter<EntityProfessor, AdapterProfessor.Holder> {
@@ -70,13 +71,8 @@ public class AdapterProfessor
 		}
 
 		void bind(@NonNull EntityProfessor professor) {
-			String[] parts = professor.name.trim().split("\\s+");
-			String label = parts.length == 1
-					? parts[0].substring(0, Math.min(2, parts[0].length()))
-					: "" + parts[0].charAt(0) + parts[parts.length - 1].charAt(0);
-
-			initials.setText(label.toUpperCase());
-			name.setText(professor.name);
+			initials.setText(NameFormat.initials(professor.name));
+			name.setText(NameFormat.properCase(professor.name));
 			info.setText(professor.department.name() + " · " + professor.designation);
 
 			itemView.setOnClickListener(v -> {

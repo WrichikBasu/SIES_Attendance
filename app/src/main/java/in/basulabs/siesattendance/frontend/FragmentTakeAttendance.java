@@ -42,9 +42,13 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 /**
  * Take attendance for a lecture that just happened.
  * <p>
- * There is no separate scheduling step: picking a course loads that course's students for the
- * current academic year straight away, and the lecture row is created when the sheet is saved.
- * A lecture in the database therefore always represents a session that actually took place.
+ * There is no separate scheduling step. Selection is two stages: pick a course, then pick which
+ * group of its students the session was for. Only once a group is chosen does the roll load —
+ * showing the whole class immediately would be wrong for a practical, and the user would have
+ * no way to tell that the list in front of them was the wrong one.
+ * <p>
+ * The lecture row is created when the sheet is saved, so a lecture in the database always
+ * represents a session that actually took place.
  */
 public class FragmentTakeAttendance extends Fragment {
 
@@ -77,6 +81,12 @@ public class FragmentTakeAttendance extends Fragment {
 
 	/** Null means the whole class rather than one batch. */
 	private Long selectedBatchID;
+
+	/**
+	 * Distinguishes "whole class was chosen" from "nothing chosen yet", since both leave
+	 * {@link #selectedBatchID} null.
+	 */
+	private boolean batchChosen;
 
 	private LocalDate date = LocalDate.now();
 
@@ -168,24 +178,29 @@ public class FragmentTakeAttendance extends Fragment {
 	}
 
 	/**
-	 * Picking a course is what loads the students; nothing else has to be filled in first.
+	 * Picking a course resets the group selection and loads the groups available for it. The
+	 * roll deliberately stays empty until a group is chosen.
 	 */
 	private void onCourseChosen(@NonNull EntityCourse course) {
 		selectedCourse = course;
 		selectedBatchID = null;
-		tilCourse.setError(null);
+		batchChosen = false;
 
-		rollHeader.setText(getString(R.string.roll_header_for,
-				course.year.name() + " " + course.stream.name() + " "
-						+ course.offeringDepartment.name()));
+		tilCourse.setError(null);
+		tilBatch.setError(null);
+
+		actvBatch.setText("", false);
+		viewModel.clearRoll();
 
 		loadBatchOptions(course);
-		viewModel.loadRoll(course.courseID, null);
+		updateRollVisibility();
 	}
 
 	/**
-	 * The batch dropdown only appears when the course actually has batches linked to it, so the
-	 * common whole-class case stays a single tap.
+	 * Loads the groups this course can be taken with: its whole class, plus any batch that
+	 * overlaps the course's roll in the current academic year. Batches belonging to other
+	 * classes of the same year are excluded by the query, so the list only ever offers groups
+	 * that make sense for this course.
 	 */
 	private void loadBatchOptions(@NonNull EntityCourse course) {
 		viewModel.loadBatchesForCourse(course.courseID, list -> {
@@ -193,34 +208,51 @@ public class FragmentTakeAttendance extends Fragment {
 				return;
 			}
 			requireActivity().runOnUiThread(() -> {
-				batches = list;
-
-				if (list.isEmpty()) {
-					tilBatch.setVisibility(View.GONE);
+				if (!isAdded()) {
 					return;
 				}
 
-				String wholeClass = getString(R.string.label_whole_class);
+				batches = list;
 
 				List<String> labels = new ArrayList<>();
-				labels.add(wholeClass);
+				labels.add(getString(R.string.label_whole_class));
 				for (EntityBatchDesc batch : list) {
 					labels.add(batch.batchName);
 				}
 
-				tilBatch.setVisibility(View.VISIBLE);
 				actvBatch.setAdapter(new ArrayAdapter<>(requireContext(),
 						android.R.layout.simple_list_item_1, labels));
-				actvBatch.setText(wholeClass, false);
 
 				actvBatch.setOnItemClickListener((parent, v, position, id) -> {
 					selectedBatchID = position == 0 ? null : batches.get(position - 1).batchID;
-					if (selectedCourse != null) {
-						viewModel.loadRoll(selectedCourse.courseID, selectedBatchID);
-					}
+					batchChosen = true;
+					tilBatch.setError(null);
+					onGroupChosen();
 				});
+
+				tilBatch.setHelperText(list.isEmpty()
+						? getString(R.string.helper_no_batches_for_course)
+						: null);
 			});
 		});
+	}
+
+	/**
+	 * Loads the roll for the chosen group and labels it, so it is obvious whose names are on
+	 * screen before anyone starts tapping.
+	 */
+	private void onGroupChosen() {
+		if (selectedCourse == null) {
+			return;
+		}
+
+		String groupLabel = selectedBatchID == null
+				? selectedCourse.year.name() + " " + selectedCourse.stream.name() + " "
+				+ selectedCourse.offeringDepartment.name()
+				: actvBatch.getText().toString();
+
+		rollHeader.setText(getString(R.string.roll_header_for, groupLabel));
+		viewModel.loadRoll(selectedCourse.courseID, selectedBatchID);
 	}
 
 	// ── Date and time ────────────────────────────────────────────────────
@@ -313,12 +345,13 @@ public class FragmentTakeAttendance extends Fragment {
 
 	private void updateRollVisibility() {
 		List<AttendanceRow> rows = viewModel.getAttendanceRows().getValue();
-		boolean hasCourse = selectedCourse != null;
 		boolean hasRows = rows != null && !rows.isEmpty();
 
-		rollSection.setVisibility(hasCourse ? View.VISIBLE : View.GONE);
+		tilBatch.setVisibility(selectedCourse == null ? View.GONE : View.VISIBLE);
+
+		rollSection.setVisibility(batchChosen ? View.VISIBLE : View.GONE);
 		bulkActions.setVisibility(hasRows ? View.VISIBLE : View.GONE);
-		rollEmpty.setVisibility(hasCourse && !hasRows ? View.VISIBLE : View.GONE);
+		rollEmpty.setVisibility(batchChosen && !hasRows ? View.VISIBLE : View.GONE);
 		save.setEnabled(hasRows);
 	}
 
@@ -331,8 +364,14 @@ public class FragmentTakeAttendance extends Fragment {
 		tilStart.setError(null);
 		tilEnd.setError(null);
 
+		tilBatch.setError(null);
+
 		if (selectedCourse == null) {
 			tilCourse.setError(getString(R.string.error_required));
+			return;
+		}
+		if (!batchChosen) {
+			tilBatch.setError(getString(R.string.error_required));
 			return;
 		}
 		if (startTime == null) {
