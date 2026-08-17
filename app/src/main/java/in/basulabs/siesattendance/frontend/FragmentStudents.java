@@ -96,7 +96,11 @@ public class FragmentStudents extends Fragment {
 
 			@Override
 			public void onStudentLongPressed(StudentWithYear student) {
-				showStudentActions(student);
+				// Straight to edit: there is no delete, so a chooser would have one entry.
+				Bundle args = new Bundle();
+				args.putLong("studentID", student.studentID);
+				Navigation.findNavController(view)
+						.navigate(R.id.action_students_to_addStudent, args);
 			}
 		});
 
@@ -175,40 +179,6 @@ public class FragmentStudents extends Fragment {
 		});
 	}
 
-	/**
-	 * Long-pressing a row offers edit and delete without needing to open the detail screen
-	 * first, which matters when correcting a batch of freshly imported rows.
-	 */
-	private void showStudentActions(@NonNull StudentWithYear student) {
-		new AlertDialog.Builder(requireContext())
-				.setTitle(student.displayName())
-				.setItems(new CharSequence[]{
-						getString(R.string.action_edit),
-						getString(R.string.action_delete)
-				}, (dialog, which) -> {
-					if (which == 0) {
-						Bundle args = new Bundle();
-						args.putLong("studentID", student.studentID);
-						Navigation.findNavController(requireView())
-								.navigate(R.id.action_students_to_addStudent, args);
-					} else {
-						confirmDeleteStudent(student);
-					}
-				})
-				.show();
-	}
-
-	private void confirmDeleteStudent(@NonNull StudentWithYear student) {
-		new AlertDialog.Builder(requireContext())
-				.setTitle(R.string.dialog_delete_student_title)
-				.setMessage(R.string.dialog_delete_student_message)
-				.setPositiveButton(R.string.action_delete, (d, w) ->
-						viewModel.deleteStudent(student.studentID, () -> {
-						}))
-				.setNegativeButton(R.string.action_cancel, null)
-				.show();
-	}
-
 	private boolean hasActiveFilter() {
 		return viewModel.getFilterYear() != null
 				|| viewModel.getFilterStream() != null
@@ -261,7 +231,7 @@ public class FragmentStudents extends Fragment {
 				.setTitle(R.string.dialog_import_title)
 				.setMessage(getString(R.string.dialog_import_message,
 						viewModel.academicYearValue(),
-						viewModel.academicYearValue() + 1))
+						(viewModel.academicYearValue() + 1) % 100))
 				.setPositiveButton(R.string.action_import, (d, w) -> viewModel.importCsv(uri))
 				.setNegativeButton(R.string.action_cancel, null)
 				.show();
@@ -271,8 +241,23 @@ public class FragmentStudents extends Fragment {
 			@NonNull in.basulabs.siesattendance.backend.util.CsvImporter.Result result) {
 
 		StringBuilder message = new StringBuilder();
-		message.append(getResources().getQuantityString(R.plurals.import_success,
-				result.imported, result.imported));
+
+		if (result.created > 0) {
+			message.append(getResources().getQuantityString(R.plurals.import_created,
+					result.created, result.created));
+		}
+
+		if (result.updated > 0) {
+			if (message.length() > 0) {
+				message.append('\n');
+			}
+			message.append(getResources().getQuantityString(R.plurals.import_updated,
+					result.updated, result.updated));
+		}
+
+		if (message.length() == 0) {
+			message.append(getString(R.string.import_nothing));
+		}
 
 		if (result.hasErrors()) {
 			message.append("\n\n").append(getResources().getQuantityString(

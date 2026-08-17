@@ -20,8 +20,6 @@ import androidx.navigation.Navigation;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.google.android.material.dialog.MaterialAlertDialogBuilder;
-
 import java.util.List;
 import java.util.Locale;
 
@@ -88,7 +86,7 @@ public class FragmentStudentDetail extends Fragment {
 
 			@Override
 			public void onCreateMenu(@NonNull Menu menu, @NonNull MenuInflater inflater) {
-				inflater.inflate(R.menu.menu_edit_delete, menu);
+				inflater.inflate(R.menu.menu_edit, menu);
 			}
 
 			@Override
@@ -100,26 +98,9 @@ public class FragmentStudentDetail extends Fragment {
 							.navigate(R.id.action_studentDetail_to_editStudent, args);
 					return true;
 				}
-				if (item.getItemId() == R.id.action_delete) {
-					confirmDelete();
-					return true;
-				}
 				return false;
 			}
 		}, getViewLifecycleOwner(), Lifecycle.State.RESUMED);
-	}
-
-	private void confirmDelete() {
-		new MaterialAlertDialogBuilder(requireContext())
-				.setTitle(R.string.dialog_delete_student_title)
-				.setMessage(R.string.dialog_delete_student_message)
-				.setPositiveButton(R.string.action_delete, (d, w) ->
-						viewModel.deleteStudent(studentID,
-								() -> requireActivity().runOnUiThread(() ->
-										Navigation.findNavController(requireView())
-												.navigateUp())))
-				.setNegativeButton(R.string.action_cancel, null)
-				.show();
 	}
 
 	private void observe() {

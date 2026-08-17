@@ -41,7 +41,21 @@ public class FragmentBatchList extends Fragment {
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
 
 		RecyclerView recyclerView = view.findViewById(R.id.rvBatches);
-		adapter = new AdapterBatch(this::confirmDelete);
+		adapter = new AdapterBatch(new AdapterBatch.OnAction() {
+
+			@Override
+			public void onEdit(EntityBatchDesc batch) {
+				Bundle args = new Bundle();
+				args.putLong("batchID", batch.batchID);
+				Navigation.findNavController(requireParentFragment().requireView())
+						.navigate(R.id.action_coursesHub_to_editBatch, args);
+			}
+
+			@Override
+			public void onLongPress(EntityBatchDesc batch) {
+				confirmDelete(batch);
+			}
+		});
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
 		recyclerView.setAdapter(adapter);
 

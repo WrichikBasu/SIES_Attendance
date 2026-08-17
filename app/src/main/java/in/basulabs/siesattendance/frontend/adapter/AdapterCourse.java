@@ -60,6 +60,7 @@ public class AdapterCourse extends ListAdapter<EntityCourse, AdapterCourse.Holde
 
 		private final TextView title, details;
 
+
 		Holder(@NonNull View itemView) {
 			super(itemView);
 			title = itemView.findViewById(R.id.tvCourseTitle);
@@ -68,9 +69,22 @@ public class AdapterCourse extends ListAdapter<EntityCourse, AdapterCourse.Holde
 
 		void bind(@NonNull EntityCourse course) {
 			title.setText(course.courseCode + " · " + course.courseTopic);
-			details.setText(course.offeringDepartment.name() + " · " + course.stream.name()
+			String summary = course.offeringDepartment.name() + " · " + course.stream.name()
 					+ " · " + course.year.name() + " · Sem " + course.semester
-					+ " · " + course.courseType.name());
+					+ " · " + course.courseType.name();
+
+			if (course.dateDiscontinued != null) {
+				summary += " · " + itemView.getContext()
+						.getString(R.string.label_discontinued);
+			}
+
+			details.setText(summary);
+
+			// Discontinued courses stay in the list because their history is still readable,
+			// but they are dimmed so they do not look like current offerings.
+			float alpha = course.dateDiscontinued == null ? 1f : 0.55f;
+			title.setAlpha(alpha);
+			details.setAlpha(alpha);
 
 			itemView.setOnClickListener(v -> {
 				if (listener != null) {

@@ -77,7 +77,7 @@ public class AdapterStudentStat
 
 			// Anyone below the 75% threshold is tinted so a shortfall is visible at a glance.
 			int colour = ContextCompat.getColor(itemView.getContext(),
-					stat.isShort() ? R.color.stat_short : R.color.stat_ok);
+					stat.isShort() ? R.color.attendance_short : R.color.attendance_ok);
 			percentage.setTextColor(colour);
 		}
 	}

@@ -74,6 +74,29 @@ public abstract class DaoBatch {
 			"WHERE batchID = :batchID")
 	public abstract void renameBatch(long batchID, String name, String description);
 
+	@Query("SELECT studentID FROM batch_student_map WHERE batchID = :batchID " +
+			"AND academicYear = :academicYear")
+	public abstract List<Long> getMemberIdsSync(long batchID, int academicYear);
+
+	/**
+	 * Rewrites a batch's details and its membership in one go.
+	 * <p>
+	 * Membership is replaced wholesale rather than diffed: the join table holds nothing but the
+	 * three key columns, so there is no per-row state to preserve, and clearing then reinserting
+	 * avoids having to work out which students were added and which removed.
+	 */
+	@Transaction
+	public void updateBatch(long batchID, String name, String description, int academicYear,
+	                        List<Long> studentIDs) {
+
+		renameBatch(batchID, name, description);
+		clearMembers(batchID);
+
+		for (long studentID : studentIDs) {
+			addStudent(new EntityBatchStudentMap(batchID, studentID, academicYear));
+		}
+	}
+
 	/**
 	 * Removes a batch along with its membership and course links. Lectures hold a RESTRICT key
 	 * onto batches, so a batch that still has lectures is refused with a count.

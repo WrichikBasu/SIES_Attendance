@@ -3,7 +3,6 @@ package in.basulabs.siesattendance.backend;
 import androidx.room.Entity;
 import androidx.room.ForeignKey;
 import androidx.room.Ignore;
-import androidx.room.Index;
 
 /**
  * Represents a many-to-many relationship between batches and students.

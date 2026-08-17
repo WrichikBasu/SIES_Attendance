@@ -612,19 +612,6 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
-	public void deleteStudent(long studentID, @NonNull Runnable onDone) {
-		MainDatabase.DB_EXECUTOR.execute(() -> {
-			try {
-				db.daoStudent().deleteStudentCascade(studentID);
-				toastMessage.postValue("Student deleted");
-				refreshStudents();
-				onDone.run();
-			} catch (Exception e) {
-				toastMessage.postValue(e.getMessage());
-			}
-		});
-	}
-
 	// ── Professor edit and delete ────────────────────────────────────────
 
 	public void updateProfessor(@NonNull EntityProfessor professor, @NonNull Runnable onDone) {
@@ -635,18 +622,6 @@ public class AttendanceViewModel extends AndroidViewModel {
 				onDone.run();
 			} catch (Exception e) {
 				toastMessage.postValue("Could not update: " + e.getMessage());
-			}
-		});
-	}
-
-	public void deleteProfessor(@NonNull EntityProfessor professor, @NonNull Runnable onDone) {
-		MainDatabase.DB_EXECUTOR.execute(() -> {
-			try {
-				db.daoProfessor().deleteProfessorChecked(professor);
-				toastMessage.postValue("Professor deleted");
-				onDone.run();
-			} catch (Exception e) {
-				toastMessage.postValue(e.getMessage());
 			}
 		});
 	}
@@ -685,14 +660,18 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
-	public void deleteCourse(@NonNull EntityCourse course, @NonNull Runnable onDone) {
+	/**
+	 * Marks a course as no longer offered. This replaces deletion: the lectures and attendance
+	 * filed under the course stay intact and its history remains readable.
+	 */
+	public void discontinueCourse(long courseID, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoCourse().deleteCourseChecked(course);
-				toastMessage.postValue("Course deleted");
+				db.daoCourse().setDiscontinued(courseID, ZonedDateTime.now());
+				toastMessage.postValue("Course marked as discontinued");
 				onDone.run();
 			} catch (Exception e) {
-				toastMessage.postValue(e.getMessage());
+				toastMessage.postValue("Could not update: " + e.getMessage());
 			}
 		});
 	}
@@ -743,11 +722,40 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	// ── Batch edit and delete ────────────────────────────────────────────
 
-	public void renameBatch(long batchID, @NonNull String name, @Nullable String description,
-	                        @NonNull Runnable onDone) {
+	public void loadBatchSync(long batchID,
+	                          @NonNull java.util.function.Consumer<EntityBatchDesc> cb) {
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoBatch().getByIdSync(batchID)));
+	}
+
+	/**
+	 * Loads every student of the academic year alongside the IDs already in the batch, so the
+	 * edit screen can present one list with the members pre-ticked.
+	 */
+	public void loadBatchEditor(long batchID, @NonNull BatchEditorCallback cb) {
+		final int acadYear = academicYearValue();
+
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+			EntityBatchDesc batch = db.daoBatch().getByIdSync(batchID);
+			List<StudentWithYear> all =
+					db.daoStudent().getClassSync(acadYear, null, null, null);
+			List<Long> members = db.daoBatch().getMemberIdsSync(batchID, acadYear);
+			cb.onLoaded(batch, all, members);
+		});
+	}
+
+	public interface BatchEditorCallback {
+		void onLoaded(@Nullable EntityBatchDesc batch, @NonNull List<StudentWithYear> allStudents,
+		              @NonNull List<Long> memberIDs);
+	}
+
+	public void updateBatch(long batchID, @NonNull String name, @Nullable String description,
+	                        @NonNull List<Long> studentIDs, @NonNull Runnable onDone) {
+
+		final int acadYear = academicYearValue();
+
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoBatch().renameBatch(batchID, name, description);
+				db.daoBatch().updateBatch(batchID, name, description, acadYear, studentIDs);
 				toastMessage.postValue("Batch updated");
 				onDone.run();
 			} catch (Exception e) {

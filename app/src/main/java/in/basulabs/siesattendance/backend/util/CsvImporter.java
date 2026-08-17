@@ -25,6 +25,12 @@ import in.basulabs.siesattendance.backend.Year;
 /**
  * Parses a student roster CSV and writes it into the database.
  * <p>
+ * Re-importing is the intended way to bulk-edit a roster. A row whose roll number already
+ * exists for that academic year updates the existing student rather than inserting a second
+ * copy, so the file can be corrected in a spreadsheet and uploaded again as many times as
+ * needed. Students absent from a later file are left untouched — an import never removes
+ * anyone, because their attendance history depends on them continuing to exist.
+ * <p>
  * The expected header row is:
  * <pre>rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept</pre>
  * Column order does not matter — the header is read to build a name-to-index map. The
@@ -47,11 +53,19 @@ public final class CsvImporter {
 	 */
 	public static class Result {
 
-		public int imported;
+		/** Rows that created a student who was not already on file. */
+		public int created;
+
+		/** Rows that matched an existing student and overwrote their details. */
+		public int updated;
 
 		public int failed;
 
 		public final List<String> errors = new ArrayList<>();
+
+		public int imported() {
+			return created + updated;
+		}
 
 		public boolean hasErrors() {
 			return failed > 0;
@@ -112,8 +126,11 @@ public final class CsvImporter {
 				}
 
 				try {
-					importRow(db, splitCsvLine(line), columns, academicYear);
-					result.imported++;
+					if (importRow(db, splitCsvLine(line), columns, academicYear)) {
+						result.updated++;
+					} else {
+						result.created++;
+					}
 				} catch (Exception e) {
 					result.failed++;
 					result.errors.add("Line " + lineNo + ": " + e.getMessage());
@@ -128,8 +145,11 @@ public final class CsvImporter {
 		return result;
 	}
 
-	private static void importRow(MainDatabase db, List<String> cells,
-	                              Map<String, Integer> columns, int academicYear) {
+	/**
+	 * @return true if this row updated a student who already existed, false if it created one.
+	 */
+	private static boolean importRow(MainDatabase db, List<String> cells,
+	                                 Map<String, Integer> columns, int academicYear) {
 
 		String rollNo = required(cells, columns, "rollno", "roll number");
 		String name = required(cells, columns, "name", "name");
@@ -158,8 +178,14 @@ public final class CsvImporter {
 
 		EntityStudent student = new EntityStudent(name, pronouns, email);
 
+		// Checked before the upsert so the summary can distinguish new entries from edits,
+		// which is what tells the user whether a re-import did what they expected.
+		boolean existed = db.daoStudent().findStudentIdByRollNo(rollNo, academicYear) != null;
+
 		db.daoStudent().upsertStudentWithYear(student, academicYear, rollNo, year, stream,
 				majorDept, minorDept, oeDept);
+
+		return existed;
 	}
 
 	// ── Parsing helpers ──────────────────────────────────────────────────

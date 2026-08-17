@@ -3,8 +3,6 @@ package in.basulabs.siesattendance.backend;
 import androidx.room.Entity;
 import androidx.room.ForeignKey;
 import androidx.room.Ignore;
-import androidx.room.Index;
-import androidx.room.PrimaryKey;
 
 /**
  * Represents one attendance record. Each student, per lecture, will get one attendance record.

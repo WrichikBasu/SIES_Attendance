@@ -16,6 +16,8 @@ import in.basulabs.siesattendance.backend.EntityBatchDesc;
 public class AdapterBatch extends ListAdapter<EntityBatchDesc, AdapterBatch.Holder> {
 
 	public interface OnAction {
+		void onEdit(EntityBatchDesc batch);
+
 		void onLongPress(EntityBatchDesc batch);
 	}
 
@@ -70,6 +72,12 @@ public class AdapterBatch extends ListAdapter<EntityBatchDesc, AdapterBatch.Hold
 			details.setText(batch.batchDesc == null || batch.batchDesc.isEmpty()
 					? session
 					: session + " · " + batch.batchDesc);
+
+			itemView.setOnClickListener(v -> {
+				if (listener != null) {
+					listener.onEdit(batch);
+				}
+			});
 
 			itemView.setOnLongClickListener(v -> {
 				if (listener != null) {

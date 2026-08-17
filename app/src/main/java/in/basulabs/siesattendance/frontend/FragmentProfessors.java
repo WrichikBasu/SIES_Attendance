@@ -13,7 +13,6 @@ import androidx.navigation.Navigation;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
 import in.basulabs.siesattendance.R;
@@ -59,7 +58,8 @@ public class FragmentProfessors extends Fragment {
 
 			@Override
 			public void onLongPress(EntityProfessor professor) {
-				confirmDelete(professor);
+				// Same as tapping: professors cannot be deleted, only corrected.
+				onEdit(professor);
 			}
 		});
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
@@ -70,21 +70,6 @@ public class FragmentProfessors extends Fragment {
 				.navigate(R.id.action_professors_to_addProfessor));
 
 		observeList();
-	}
-
-	/**
-	 * Courses hold a RESTRICT key onto professors, so a delete may legitimately fail. The DAO
-	 * reports how many courses are blocking it and that message surfaces as a snackbar.
-	 */
-	private void confirmDelete(@NonNull EntityProfessor professor) {
-		new MaterialAlertDialogBuilder(requireContext())
-				.setTitle(R.string.dialog_delete_professor_title)
-				.setMessage(getString(R.string.dialog_delete_generic_message, professor.name))
-				.setPositiveButton(R.string.action_delete, (d, w) ->
-						viewModel.deleteProfessor(professor, () -> {
-						}))
-				.setNegativeButton(R.string.action_cancel, null)
-				.show();
 	}
 
 	private void observeList() {

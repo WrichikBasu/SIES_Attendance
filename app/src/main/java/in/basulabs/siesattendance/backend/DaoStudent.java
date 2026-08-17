@@ -2,7 +2,6 @@ package in.basulabs.siesattendance.backend;
 
 import androidx.lifecycle.LiveData;
 import androidx.room.Dao;
-import androidx.room.Delete;
 import androidx.room.Insert;
 import androidx.room.OnConflictStrategy;
 import androidx.room.Query;
@@ -157,44 +156,14 @@ public abstract class DaoStudent {
 				minorDept, oeDept);
 	}
 
-	@Query("SELECT COUNT(*) FROM attendance WHERE studentID = :studentID")
-	public abstract int countAttendanceRecords(long studentID);
-
-	@Query("SELECT COUNT(*) FROM batch_student_map WHERE studentID = :studentID")
-	public abstract int countBatchMemberships(long studentID);
-
-	@Query("DELETE FROM student_year WHERE studentID = :studentID")
-	public abstract void deleteAllYears(long studentID);
-
-	@Delete
-	public abstract void deleteStudent(EntityStudent student);
-
-	/**
-	 * Removes a student outright. The attendance and batch tables both hold RESTRICT foreign
-	 * keys onto students, so the referencing rows are counted first and the caller is told what
-	 * is blocking rather than being handed a raw constraint violation.
+	/*
+	 * There is deliberately no delete for students.
+	 *
+	 * A student's roll number is the key their attendance history hangs off, and that history
+	 * is the point of the app. Removing a student would either orphan or silently erase every
+	 * record they appear in, which would change past statistics after the fact. Records are
+	 * corrected by editing instead — individually, or by re-importing the roster CSV.
 	 */
-	@Transaction
-	public void deleteStudentCascade(long studentID) {
-
-		int attendance = countAttendanceRecords(studentID);
-		if (attendance > 0) {
-			throw new IllegalStateException("This student has " + attendance
-					+ " attendance record(s). Delete those lectures first.");
-		}
-
-		int memberships = countBatchMemberships(studentID);
-		if (memberships > 0) {
-			throw new IllegalStateException("This student belongs to " + memberships
-					+ " batch(es). Remove them from those batches first.");
-		}
-
-		deleteAllYears(studentID);
-
-		EntityStudent stub = new EntityStudent("", "", null);
-		stub.studentID = studentID;
-		deleteStudent(stub);
-	}
 
 	// ── The roll for a course ────────────────────────────────────────────
 

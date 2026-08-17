@@ -53,7 +53,7 @@ public class FragmentCourseList extends Fragment {
 
 			@Override
 			public void onLongPress(EntityCourse course) {
-				confirmDelete(course);
+				confirmDiscontinue(course);
 			}
 		});
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
@@ -70,16 +70,21 @@ public class FragmentCourseList extends Fragment {
 	}
 
 	/**
-	 * Refused if the course still has lectures; the DAO returns the count so the user knows
-	 * what to clear first.
+	 * Courses are never deleted, because every lecture and attendance record is filed under
+	 * one. A course that is no longer offered is marked discontinued instead, which keeps its
+	 * history readable.
 	 */
-	private void confirmDelete(@NonNull EntityCourse course) {
+	private void confirmDiscontinue(@NonNull EntityCourse course) {
+		if (course.dateDiscontinued != null) {
+			return;
+		}
+
 		new MaterialAlertDialogBuilder(requireContext())
-				.setTitle(R.string.dialog_delete_course_title)
-				.setMessage(getString(R.string.dialog_delete_generic_message,
+				.setTitle(R.string.dialog_discontinue_course_title)
+				.setMessage(getString(R.string.dialog_discontinue_course_message,
 						course.courseCode))
-				.setPositiveButton(R.string.action_delete, (d, w) ->
-						viewModel.deleteCourse(course, () -> {
+				.setPositiveButton(R.string.action_discontinue, (d, w) ->
+						viewModel.discontinueCourse(course.courseID, () -> {
 						}))
 				.setNegativeButton(R.string.action_cancel, null)
 				.show();

@@ -121,9 +121,11 @@
 
     <!-- Dialogs -->
     <string name="dialog_import_title">Import students</string>
-    <string name="dialog_import_message">Students will be added to the %1$d-%2$d academic
-        year. Rows whose roll number already exists for that year will be updated rather than
-        duplicated.</string>
+    <string name="dialog_import_message">Students will be imported into the %1$d-%2$02d academic
+        year.\n\nRows whose roll number already exists for that year update the existing
+        student instead of creating a duplicate, so you can correct the file and upload it
+        again. Students missing from this file are left untouched — importing never removes
+        anyone.</string>
     <string name="dialog_import_result_title">Import finished</string>
     <string name="dialog_csv_format_title">CSV format</string>
     <string name="dialog_csv_format_message">The first row must be a header. Column order does
@@ -167,12 +169,7 @@
     <string name="empty_course_breakdown">This student has not been marked in any lecture
         yet.</string>
 
-    <string name="dialog_delete_student_title">Delete this student?</string>
-    <string name="dialog_delete_student_message">This removes the student and their record for
-        every academic year. It cannot be undone.</string>
-    <string name="dialog_delete_professor_title">Delete this professor?</string>
-    <string name="dialog_delete_course_title">Delete this course?</string>
-    <string name="dialog_delete_batch_title">Delete this batch?</string>
+                <string name="dialog_delete_batch_title">Delete this batch?</string>
     <string name="dialog_delete_batch_message">%1$s will be removed along with its student
         membership and course links.</string>
     <string name="dialog_delete_lecture_title">Delete this lecture?</string>
@@ -197,5 +194,28 @@
 
     <string name="hint_group">Class or batch</string>
     <string name="helper_no_batches_for_course">No batches exist for this class yet</string>
+
+
+    <string name="title_edit_batch">Edit batch</string>
+    <string name="section_batch_members">Members</string>
+    <string name="action_discontinue">Mark discontinued</string>
+    <string name="label_discontinued">Discontinued</string>
+
+    <string name="dialog_discontinue_course_title">Mark this course discontinued?</string>
+    <string name="dialog_discontinue_course_message">%1$s will stop appearing as a current
+        offering, but its lectures and attendance records are kept. Courses are never deleted,
+        because every attendance record is filed under one.</string>
+
+    <string name="import_nothing">Nothing was imported.</string>
+
+    <plurals name="import_created">
+        <item quantity="one">%d student added</item>
+        <item quantity="other">%d students added</item>
+    </plurals>
+
+    <plurals name="import_updated">
+        <item quantity="one">%d existing student updated</item>
+        <item quantity="other">%d existing students updated</item>
+    </plurals>
 
 </resources>

@@ -105,6 +105,21 @@
         <action
             android:id="@+id/action_coursesHub_to_students"
             app:destination="@id/fragmentStudents" />
+        <action
+            android:id="@+id/action_coursesHub_to_editBatch"
+            app:destination="@id/fragmentEditBatch" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentEditBatch"
+        android:name="in.basulabs.siesattendance.frontend.FragmentEditBatch"
+        android:label="@string/title_edit_batch"
+        tools:layout="@layout/fragment_edit_batch">
+
+        <argument
+            android:name="batchID"
+            android:defaultValue="-1L"
+            app:argType="long" />
     </fragment>
 
     <fragment

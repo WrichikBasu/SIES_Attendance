@@ -1,8 +1,60 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
 
-    <color name="stat_short">#B3261E</color>
-    <color name="stat_ok">#1D9E75</color>
+    <!-- Primary: violet. FAB, filled buttons, selected states, headline figures -->
+    <color name="md_primary">#5E45C4</color>
+    <color name="md_on_primary">#FFFFFF</color>
+    <color name="md_primary_container">#E6DEFF</color>
+    <color name="md_on_primary_container">#1E0C61</color>
+    <color name="md_inverse_primary">#C8BEFF</color>
+
+    <!-- Secondary: teal. Tonal buttons, chips, the "all present" action -->
+    <color name="md_secondary">#00696E</color>
+    <color name="md_on_secondary">#FFFFFF</color>
+    <color name="md_secondary_container">#A8EFF5</color>
+    <color name="md_on_secondary_container">#002022</color>
+
+    <!-- Tertiary: coral. Professor avatars and anything needing a warm accent -->
+    <color name="md_tertiary">#B32A5C</color>
+    <color name="md_on_tertiary">#FFFFFF</color>
+    <color name="md_tertiary_container">#FFD9E2</color>
+    <color name="md_on_tertiary_container">#3F0019</color>
+
+    <!-- Error -->
+    <color name="md_error">#BA1A1A</color>
+    <color name="md_on_error">#FFFFFF</color>
+    <color name="md_error_container">#FFDAD6</color>
+    <color name="md_on_error_container">#410002</color>
+
+    <!-- Surfaces and background -->
+    <color name="md_background">#FDFBFF</color>
+    <color name="md_on_background">#1B1B21</color>
+    <color name="md_surface">#FDFBFF</color>
+    <color name="md_on_surface">#1B1B21</color>
+    <color name="md_surface_variant">#E5E0EC</color>
+    <color name="md_on_surface_variant">#47464F</color>
+    <color name="md_inverse_surface">#303036</color>
+    <color name="md_inverse_on_surface">#F3EFF4</color>
+
+    <!-- Surface container tones, lowest to highest, used for card and sheet elevation -->
+    <color name="md_surface_container_lowest">#FFFFFF</color>
+    <color name="md_surface_container_low">#F7F2FA</color>
+    <color name="md_surface_container">#F1ECF4</color>
+    <color name="md_surface_container_high">#ECE6EF</color>
+    <color name="md_surface_container_highest">#E6E1E9</color>
+
+    <!-- Outlines -->
+    <color name="md_outline">#787680</color>
+    <color name="md_outline_variant">#C9C5D0</color>
+
+    <color name="md_scrim">#000000</color>
+
+    <!--
+      Attendance threshold indicators. Deliberately green and red rather than palette roles:
+      these mean "safe" and "short of 75%", and that meaning should not shift if the brand
+      colours change. Green is pushed away from teal so it never reads as the secondary.
+    -->
+    <color name="attendance_ok">#0F7B4F</color>
+    <color name="attendance_short">#C42B1C</color>
+
 </resources>

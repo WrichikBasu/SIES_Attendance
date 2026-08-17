@@ -75,7 +75,7 @@ public class AdapterStudentCourseStat
 			bar.setProgress((int) Math.round(stat.percentage()));
 
 			percentage.setTextColor(ContextCompat.getColor(itemView.getContext(),
-					stat.isShort() ? R.color.stat_short : R.color.stat_ok));
+					stat.isShort() ? R.color.attendance_short : R.color.attendance_ok));
 		}
 	}
 }

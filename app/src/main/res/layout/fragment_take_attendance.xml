@@ -165,7 +165,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="12dp"
                     android:textAppearance="?attr/textAppearanceLabelSmall"
-                    android:textColor="@color/stat_ok"
+                    android:textColor="@color/attendance_ok"
                     tools:text="24 present" />
 
                 <TextView
@@ -173,7 +173,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textAppearance="?attr/textAppearanceLabelSmall"
-                    android:textColor="@color/stat_short"
+                    android:textColor="@color/attendance_short"
                     tools:text="6 absent" />
 
             </LinearLayout>
