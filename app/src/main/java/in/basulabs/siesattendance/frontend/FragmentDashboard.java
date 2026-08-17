@@ -66,6 +66,9 @@ public class FragmentDashboard extends Fragment {
 		view.findViewById(R.id.btnViewStats).setOnClickListener(v ->
 				Navigation.findNavController(v).navigate(R.id.action_dashboard_to_stats));
 
+		view.findViewById(R.id.btnSessions).setOnClickListener(v ->
+				Navigation.findNavController(v).navigate(R.id.action_dashboard_to_sessions));
+
 		view.findViewById(R.id.btnTakeAttendance).setOnClickListener(v ->
 				Navigation.findNavController(v)
 						.navigate(R.id.action_dashboard_to_takeAttendance));

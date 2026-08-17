@@ -20,8 +20,9 @@ import java.util.concurrent.Executors;
 		EntityCourseBatchMap.class,
 		EntityLecture.class,
 		EntityAttendance.class,
-		EntityProfessor.class
-}, version = 2, exportSchema = false)
+		EntityProfessor.class,
+		EntityAcademicYear.class
+}, version = 4, exportSchema = false)
 @TypeConverters({TypeConvertors.class})
 public abstract class MainDatabase extends RoomDatabase {
 
@@ -39,7 +40,12 @@ public abstract class MainDatabase extends RoomDatabase {
 			self = Room.databaseBuilder(
 							context.createDeviceProtectedStorageContext(),
 							MainDatabase.class, ConstantsAndStatics.DATABASE_NAME)
-					.fallbackToDestructiveMigration(true)
+					// Real migrations replace the destructive fallback that was in place during
+					// early development. An upgrade now keeps the data; if a migration is ever
+					// missing, Room throws rather than silently wiping the database, which is
+					// the behaviour you want once real attendance is in there.
+					.addMigrations(Migrations.MIGRATION_1_2, Migrations.MIGRATION_2_3,
+							Migrations.MIGRATION_3_4)
 					.build();
 		}
 		return self;
@@ -58,4 +64,6 @@ public abstract class MainDatabase extends RoomDatabase {
 	public abstract DaoAttendance daoAttendance();
 
 	public abstract DaoStats daoStats();
+
+	public abstract DaoAcademicYear daoAcademicYear();
 }

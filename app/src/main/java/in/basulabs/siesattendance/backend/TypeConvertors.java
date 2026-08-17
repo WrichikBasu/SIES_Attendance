@@ -4,6 +4,7 @@ import androidx.annotation.Nullable;
 import androidx.room.TypeConverter;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 
@@ -37,6 +38,23 @@ public final class TypeConvertors {
 		int nano = Integer.parseInt(parts[1]);
 		ZoneId zone = ZoneId.of(parts[2]);
 		return ZonedDateTime.ofInstant(Instant.ofEpochSecond(epochSecond, nano), zone);
+	}
+
+	// ── LocalDate ────────────────────────────────────────────────────────
+	// Stored as the epoch day: a plain integer count of days since 1970-01-01. A LocalDate has
+	// no time and no zone, so storing it as an instant would invent both and risk shifting the
+	// date across a zone change. The epoch day has neither problem and sorts correctly.
+
+	@TypeConverter
+	@Nullable
+	public static Long fromLocalDate(@Nullable LocalDate date) {
+		return date == null ? null : date.toEpochDay();
+	}
+
+	@TypeConverter
+	@Nullable
+	public static LocalDate toLocalDate(@Nullable Long epochDay) {
+		return epochDay == null ? null : LocalDate.ofEpochDay(epochDay);
 	}
 
 	// ── Department ───────────────────────────────────────────────────────

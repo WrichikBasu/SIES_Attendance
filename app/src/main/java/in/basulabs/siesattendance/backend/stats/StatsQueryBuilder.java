@@ -17,21 +17,31 @@ import java.util.List;
 public final class StatsQueryBuilder {
 
 	/**
-	 * Attendance is the grain of the whole report: one row per student per lecture. Everything
-	 * else hangs off it.
+	 * Attendance is the grain of the whole report: one row per student per lecture.
 	 * <p>
-	 * The join to {@code student_year} is what lets a report be filtered by the student's class
-	 * even though attendance itself knows nothing about departments. Batch and professor are
-	 * left joins because a lecture may have no batch and, in older data, a course may have no
-	 * professor.
+	 * The join to {@code academic_years} is the important one. A lecture carries no session
+	 * column, only a timestamp, so the session is decided by matching that timestamp against
+	 * the session bounds. Everything downstream then follows from the lecture's own date rather
+	 * than from whichever session the user happens to be looking at.
+	 * <p>
+	 * {@code student_year} is joined on that resolved session, so a student appears under the
+	 * roll number and class they held <em>at the time of the lecture</em> — which is what makes
+	 * a report for a past year read correctly after the student has been promoted.
+	 * <p>
+	 * The session join is INNER by design: a lecture outside every defined session has no
+	 * session to be counted in, and silently attributing it to a neighbouring one would be
+	 * worse than leaving it out. {@code DaoAcademicYear.countOrphanLectures} exists to surface
+	 * exactly that case so the sessions can be extended.
 	 */
 	private static final String FROM_CLAUSE =
 			" FROM attendance a"
 					+ " INNER JOIN lectures l ON l.lectureID = a.lectureID"
 					+ " INNER JOIN courses c ON c.courseID = l.courseID"
 					+ " INNER JOIN students s ON s.studentID = a.studentID"
+					+ " INNER JOIN academic_years ay ON " + SqlBits.EPOCH_START
+					+ "    BETWEEN ay.startEpoch AND ay.endEpoch"
 					+ " INNER JOIN student_year y ON y.studentID = a.studentID"
-					+ "    AND y.academicYear = ?"
+					+ "    AND y.academicYear = ay.academicYear"
 					+ " LEFT JOIN batch_desc b ON b.batchID = l.batchID"
 					+ " LEFT JOIN professors p ON p.profID = c.profID";
 
@@ -45,8 +55,6 @@ public final class StatsQueryBuilder {
 	public static SupportSQLiteQuery grouped(@NonNull StatsFilter filter) {
 
 		List<Object> args = new ArrayList<>();
-		args.add(filter.academicYear);
-
 		StringBuilder sql = new StringBuilder();
 
 		sql.append("SELECT ").append(filter.groupBy.idExpr).append(" AS rowId, ")
@@ -73,7 +81,6 @@ public final class StatsQueryBuilder {
 	public static SupportSQLiteQuery summary(@NonNull StatsFilter filter) {
 
 		List<Object> args = new ArrayList<>();
-		args.add(filter.academicYear);
 
 		String sql = "SELECT"
 				+ " SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) AS attended,"
@@ -87,30 +94,13 @@ public final class StatsQueryBuilder {
 		return new SimpleSQLiteQuery(sql, args.toArray());
 	}
 
-	/**
-	 * Counts subjects of the chosen grouping that fall below the threshold. Done as a query over
-	 * the grouped result rather than in Java so the number stays correct even when the caller
-	 * only renders the first page of rows.
+	/*
+	 * There used to be a third query here counting groups below the threshold. It has been
+	 * removed: the groups partition the same rows the grouped query already returns, so the
+	 * count is exactly the number of returned rows below the threshold and can be tallied in
+	 * Java for free. Running it as SQL meant a third full scan per refresh, about a third of
+	 * the report's total cost, for a number already in hand.
 	 */
-	@NonNull
-	public static SupportSQLiteQuery belowThreshold(@NonNull StatsFilter filter) {
-
-		List<Object> args = new ArrayList<>();
-		args.add(filter.academicYear);
-
-		StringBuilder inner = new StringBuilder();
-		inner.append("SELECT SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*)")
-				.append(" AS pct")
-				.append(FROM_CLAUSE)
-				.append(whereClause(filter, args))
-				.append(" GROUP BY ").append(filter.groupBy.groupByExpr);
-
-		args.add(filter.threshold);
-
-		String sql = "SELECT COUNT(*) FROM (" + inner + ") WHERE pct < ?";
-
-		return new SimpleSQLiteQuery(sql, args.toArray());
-	}
 
 	// ── Shared clause construction ───────────────────────────────────────
 
@@ -123,6 +113,13 @@ public final class StatsQueryBuilder {
 	private static String whereClause(@NonNull StatsFilter filter, @NonNull List<Object> args) {
 
 		StringBuilder where = new StringBuilder(" WHERE 1 = 1");
+
+		// A null academic year means every session, which is what lets one report compare
+		// this year against last.
+		if (filter.academicYear != null) {
+			where.append(" AND ay.academicYear = ?");
+			args.add(filter.academicYear);
+		}
 
 		Long fromEpoch = filter.fromEpoch();
 		if (fromEpoch != null) {
@@ -194,6 +191,9 @@ public final class StatsQueryBuilder {
 				return "primaryLabel ASC";
 			case TOTAL_DESC:
 				return "COUNT(*) DESC, primaryLabel ASC";
+			case CHRONOLOGICAL:
+				// Time-based groupings read wrong worst-first; they want oldest to newest.
+				return "primaryLabel ASC";
 			case PERCENT_ASC:
 			default:
 				return percent + " ASC, primaryLabel ASC";

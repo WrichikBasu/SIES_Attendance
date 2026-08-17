@@ -1,25 +1,63 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The report is one scrolling column: summary, grouping, filters, then results. The list uses
-  wrap_content with nested scrolling off so the controls above scroll away rather than pinning
-  a third of the screen. Reports are read top to bottom, so losing recycling is an acceptable
-  trade here; if a grouping ever returns thousands of rows, move the controls into the adapter
-  as a header view type.
+  The results list keeps a bounded height so the RecyclerView actually recycles.
+  An earlier version put everything inside one NestedScrollView with the list at wrap_content,
+  which meant grouping by Student inflated every row up front and grouping by Lecture inflated
+  thousands. That cost far more than the query itself.
+
+  The header scrolls internally when it does not fit, and the filter panel and the results
+  share the remaining space by weight: with filters hidden the list takes everything, and with
+  them open the two split it. A hidden view contributes no weight, so this needs no code.
 -->
-<androidx.core.widget.NestedScrollView
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true">
+    android:focusableInTouchMode="true"
+    android:orientation="vertical">
 
-    <LinearLayout
+    <!-- Fixed header: scope, headline figures and the grouping selector -->
+    <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:focusableInTouchMode="true"
-        android:orientation="vertical"
-        android:paddingBottom="24dp">
+        android:fillViewport="false">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+        <!-- Session selector: the top-level scope every other filter sits inside -->
+        <com.google.android.material.textfield.TextInputLayout
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginTop="12dp"
+            android:hint="@string/label_session">
+
+            <AutoCompleteTextView
+                android:id="@+id/actvSession"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="none" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <TextView
+            android:id="@+id/tvOrphanWarning"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginTop="8dp"
+            android:background="?attr/colorErrorContainer"
+            android:padding="10dp"
+            android:textAppearance="?attr/textAppearanceLabelSmall"
+            android:textColor="?attr/colorOnErrorContainer"
+            android:visibility="gone"
+            tools:text="3 lectures fall outside every session."
+            tools:visibility="visible" />
 
         <!-- Headline figures for whatever the filters currently select -->
         <LinearLayout
@@ -195,14 +233,26 @@
 
         </LinearLayout>
 
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+    <!-- Filter panel: scrolls on its own, shares space with the results when open -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/scrollFilters"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone"
+        tools:visibility="gone">
+
         <LinearLayout
             android:id="@+id/layoutFilters"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:paddingHorizontal="16dp"
-            android:visibility="gone"
-            tools:visibility="visible">
+            >
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -427,19 +477,27 @@
 
         </LinearLayout>
 
+    </androidx.core.widget.NestedScrollView>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/rvStats"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:nestedScrollingEnabled="false"
-            tools:itemCount="5"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingBottom="16dp"
+            tools:itemCount="6"
             tools:listitem="@layout/item_stat_row" />
 
         <TextView
             android:id="@+id/tvEmptyStats"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_gravity="center"
             android:gravity="center"
             android:padding="32dp"
             android:text="@string/empty_stats"
@@ -448,5 +506,6 @@
             android:visibility="gone"
             tools:visibility="visible" />
 
-    </LinearLayout>
-</androidx.core.widget.NestedScrollView>
+    </FrameLayout>
+
+</LinearLayout>

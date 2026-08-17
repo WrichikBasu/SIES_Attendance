@@ -201,6 +201,16 @@
             app:iconGravity="textStart" />
 
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSessions"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/title_sessions"
+            app:icon="@drawable/ic_calendar"
+            app:iconGravity="textStart" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnViewStats"
             style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="match_parent"

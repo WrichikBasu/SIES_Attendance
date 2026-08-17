@@ -28,6 +28,4 @@ public interface DaoStats {
 	@Nullable
 	StatsSummary runSummary(@NonNull SupportSQLiteQuery query);
 
-	@RawQuery
-	int runCount(@NonNull SupportSQLiteQuery query);
 }

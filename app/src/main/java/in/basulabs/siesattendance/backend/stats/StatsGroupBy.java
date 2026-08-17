@@ -12,6 +12,16 @@ import androidx.annotation.NonNull;
  */
 public enum StatsGroupBy {
 
+	/**
+	 * One row per academic session, which is what makes "this year versus last year" a single
+	 * report rather than two.
+	 */
+	ACADEMIC_YEAR("Academic year",
+			"ay.academicYear",
+			"ay.academicYear || '-' || SUBSTR('0' || ((ay.academicYear + 1) % 100), -2)",
+			"''",
+			"ay.academicYear"),
+
 	/** One row per student. */
 	STUDENT("Student",
 			"s.studentID",

@@ -5,6 +5,9 @@ import androidx.annotation.Nullable;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
+
+import in.basulabs.siesattendance.backend.EntityAcademicYear;
 
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
@@ -18,8 +21,12 @@ import in.basulabs.siesattendance.backend.Year;
  */
 public class StatsFilter {
 
-	/** Academic session, as the starting calendar year. Always applied. */
-	public int academicYear;
+	/**
+	 * Academic session, as the starting calendar year. Null means every session, which is what
+	 * a year-on-year comparison needs.
+	 */
+	@Nullable
+	public Integer academicYear;
 
 	public StatsGroupBy groupBy = StatsGroupBy.STUDENT;
 
@@ -68,7 +75,7 @@ public class StatsFilter {
 	/** Attendance threshold used for the "below" count. Most universities use 75. */
 	public double threshold = 75d;
 
-	public StatsFilter(int academicYear) {
+	public StatsFilter(@Nullable Integer academicYear) {
 		this.academicYear = academicYear;
 	}
 
@@ -76,7 +83,8 @@ public class StatsFilter {
 		PERCENT_ASC("Lowest %"),
 		PERCENT_DESC("Highest %"),
 		LABEL_ASC("Name"),
-		TOTAL_DESC("Most lectures");
+		TOTAL_DESC("Most lectures"),
+		CHRONOLOGICAL("Oldest first");
 
 		@NonNull
 		public final String label;
@@ -90,11 +98,11 @@ public class StatsFilter {
 	 * Preset windows. {@link #CUSTOM} keeps whatever {@code from} and {@code to} already hold.
 	 */
 	public enum DateRange {
-		ALL_TIME("All time"),
+		ALL_TIME("Whole session"),
 		THIS_MONTH("This month"),
 		LAST_30_DAYS("Last 30 days"),
-		THIS_SEMESTER("This semester"),
-		THIS_ACADEMIC_YEAR("Academic year"),
+		SESSION_FIRST_HALF("First half of session"),
+		SESSION_SECOND_HALF("Second half of session"),
 		CUSTOM("Custom range");
 
 		@NonNull
@@ -108,12 +116,17 @@ public class StatsFilter {
 	/**
 	 * Recomputes {@link #from} and {@link #to} for the chosen preset.
 	 * <p>
-	 * The semester boundary is taken as June and December: a session running June to November
-	 * is the odd semester and December to May the even one, which is how most Indian
-	 * universities lay the year out. Adjust here if your calendar differs — it is the only
-	 * place the assumption is encoded.
+	 * The half-session presets are derived from the selected session's own dates rather than
+	 * from a hardcoded month, so a college running August to May gets a sensible split without
+	 * any code change. {@code session} may be null when no session is selected, in which case
+	 * the half-session options fall back to leaving the window open.
+	 * <p>
+	 * "Whole session" leaves the date window unset on purpose: the academic year filter already
+	 * bounds the query through the session join, so adding redundant date conditions would only
+	 * be another thing that could disagree with it.
 	 */
-	public void applyDateRange(@NonNull DateRange range) {
+	public void applyDateRange(@NonNull DateRange range,
+	                           @Nullable EntityAcademicYear session) {
 
 		dateRange = range;
 		LocalDate today = LocalDate.now();
@@ -134,21 +147,24 @@ public class StatsFilter {
 				to = today;
 				break;
 
-			case THIS_SEMESTER:
-				if (today.getMonthValue() >= 6 && today.getMonthValue() <= 11) {
-					from = LocalDate.of(today.getYear(), 6, 1);
-					to = LocalDate.of(today.getYear(), 11, 30);
-				} else {
-					int startYear = today.getMonthValue() >= 12
-							? today.getYear() : today.getYear() - 1;
-					from = LocalDate.of(startYear, 12, 1);
-					to = LocalDate.of(startYear + 1, 5, 31);
+			case SESSION_FIRST_HALF:
+			case SESSION_SECOND_HALF:
+				if (session == null) {
+					from = null;
+					to = null;
+					break;
 				}
-				break;
 
-			case THIS_ACADEMIC_YEAR:
-				from = LocalDate.of(academicYear, 6, 1);
-				to = LocalDate.of(academicYear + 1, 5, 31);
+				long days = ChronoUnit.DAYS.between(session.startDate, session.endDate) + 1;
+				LocalDate midpoint = session.startDate.plusDays(days / 2);
+
+				if (range == DateRange.SESSION_FIRST_HALF) {
+					from = session.startDate;
+					to = midpoint.minusDays(1);
+				} else {
+					from = midpoint;
+					to = session.endDate;
+				}
 				break;
 
 			case CUSTOM:
@@ -176,6 +192,13 @@ public class StatsFilter {
 		return from != null || to != null || courseID != null || batchID != null
 				|| professorID != null || studentID != null || courseType != null
 				|| year != null || stream != null || department != null;
+	}
+
+	/**
+	 * True when a date window has been set on top of the session filter.
+	 */
+	public boolean hasDateWindow() {
+		return from != null || to != null;
 	}
 
 	@NonNull

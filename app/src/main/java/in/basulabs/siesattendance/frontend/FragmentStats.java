@@ -33,6 +33,7 @@ import java.util.Locale;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.EntityProfessor;
@@ -72,8 +73,15 @@ public class FragmentStats extends Fragment {
 
 	private TextView tvPercent, tvLectures, tvRecords, tvBelow, tvEmpty, tvActiveFilters;
 
-	private AutoCompleteTextView actvRange, actvSort, actvCourse, actvBatch, actvProfessor,
-			actvCourseType, actvYear, actvStream, actvDept;
+	private AutoCompleteTextView actvSession, actvRange, actvSort, actvCourse, actvBatch,
+			actvProfessor, actvCourseType, actvYear, actvStream, actvDept;
+
+	private TextView tvOrphanWarning;
+
+	private List<EntityAcademicYear> sessions = new ArrayList<>();
+
+	/** Label for the "every session" entry of the session dropdown. */
+	private String allSessionsLabel;
 
 	private TextInputLayout tilFrom, tilTo;
 
@@ -101,6 +109,7 @@ public class FragmentStats extends Fragment {
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
 		anyLabel = getString(R.string.filter_any);
+		allSessionsLabel = getString(R.string.filter_all_sessions);
 
 		bindViews(view);
 		buildGroupChips();
@@ -116,12 +125,29 @@ public class FragmentStats extends Fragment {
 		observe();
 		loadOptions();
 
-		viewModel.runStatsQuery();
+		viewModel.getAcademicYears().observe(getViewLifecycleOwner(), years -> {
+			if (years != null) {
+				bindSessions(years);
+			}
+		});
+
+		// Lectures outside every session are excluded by the session join, so the shortfall is
+		// stated rather than left to look like missing attendance.
+		viewModel.getOrphanLectureCount().observe(getViewLifecycleOwner(), count -> {
+			boolean any = count != null && count > 0;
+			tvOrphanWarning.setVisibility(any ? View.VISIBLE : View.GONE);
+			if (any) {
+				tvOrphanWarning.setText(getResources().getQuantityString(
+						R.plurals.warn_orphan_lectures, count, count));
+			}
+		});
+
+		viewModel.scheduleStatsQuery();
 	}
 
 	private void bindViews(@NonNull View view) {
 		groupChips = view.findViewById(R.id.chipGroupBy);
-		filterPanel = view.findViewById(R.id.layoutFilters);
+		filterPanel = view.findViewById(R.id.scrollFilters);
 		toggleFilters = view.findViewById(R.id.btnToggleFilters);
 
 		tvPercent = view.findViewById(R.id.tvOverallPercentage);
@@ -131,6 +157,8 @@ public class FragmentStats extends Fragment {
 		tvEmpty = view.findViewById(R.id.tvEmptyStats);
 		tvActiveFilters = view.findViewById(R.id.tvActiveFilters);
 
+		actvSession = view.findViewById(R.id.actvSession);
+		tvOrphanWarning = view.findViewById(R.id.tvOrphanWarning);
 		actvRange = view.findViewById(R.id.actvDateRange);
 		actvSort = view.findViewById(R.id.actvSort);
 		actvCourse = view.findViewById(R.id.actvCourse);
@@ -161,7 +189,7 @@ public class FragmentStats extends Fragment {
 
 			chip.setOnClickListener(v -> {
 				viewModel.statsFilter().groupBy = option;
-				viewModel.runStatsQuery();
+				viewModel.scheduleStatsQuery();
 			});
 
 			groupChips.addView(chip);
@@ -186,7 +214,9 @@ public class FragmentStats extends Fragment {
 		actvRange.setText(filter.dateRange.label, false);
 		actvRange.setOnItemClickListener((p, v, position, id) -> {
 			StatsFilter.DateRange range = StatsFilter.DateRange.values()[position];
-			viewModel.statsFilter().applyDateRange(range);
+			// The half-session presets are worked out from the selected session's real dates,
+			// so the session has to be handed in rather than assumed.
+			viewModel.statsFilter().applyDateRange(range, selectedSession());
 			updateDateButtons();
 			rerun();
 		});
@@ -210,6 +240,73 @@ public class FragmentStats extends Fragment {
 				value -> viewModel.statsFilter().stream = (Stream) value);
 		bindEnumDropdown(actvDept, Department.values(),
 				value -> viewModel.statsFilter().department = (Department) value);
+
+		binding = false;
+	}
+
+	/**
+	 * The session object matching the filter's academic year, or null when every session is
+	 * selected.
+	 */
+	@Nullable
+	private EntityAcademicYear selectedSession() {
+		Integer year = viewModel.statsFilter().academicYear;
+		if (year == null) {
+			return null;
+		}
+		for (EntityAcademicYear session : sessions) {
+			if (session.academicYear == year) {
+				return session;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Fills the session dropdown. The first entry selects every session at once, which is what
+	 * makes a year-on-year comparison possible when combined with the Academic year grouping.
+	 */
+	private void bindSessions(@NonNull List<EntityAcademicYear> loaded) {
+
+		binding = true;
+		sessions = loaded;
+
+		List<String> labels = new ArrayList<>();
+		labels.add(allSessionsLabel);
+		for (EntityAcademicYear session : loaded) {
+			labels.add(session.label());
+		}
+
+		actvSession.setAdapter(simple(labels));
+
+		Integer selected = viewModel.statsFilter().academicYear;
+		String current = allSessionsLabel;
+		if (selected != null) {
+			for (EntityAcademicYear session : loaded) {
+				if (session.academicYear == selected) {
+					current = session.label();
+					break;
+				}
+			}
+		}
+		actvSession.setText(current, false);
+
+		actvSession.setOnItemClickListener((p, v, position, id) -> {
+			viewModel.setStatsAcademicYear(position == 0
+					? null : sessions.get(position - 1).academicYear);
+
+			StatsFilter filter = viewModel.statsFilter();
+
+			// A date window set for one session is meaningless in another, so switching
+			// sessions clears it rather than silently returning nothing.
+			if (filter.dateRange != StatsFilter.DateRange.ALL_TIME) {
+				filter.applyDateRange(StatsFilter.DateRange.ALL_TIME, selectedSession());
+				actvRange.setText(StatsFilter.DateRange.ALL_TIME.label, false);
+				updateDateButtons();
+			}
+
+			rerun();
+		});
 
 		binding = false;
 	}
@@ -375,6 +472,8 @@ public class FragmentStats extends Fragment {
 
 	private void setupActions(@NonNull View view) {
 
+		// Hiding the panel hands its layout weight back to the results list, so the list grows
+		// instead of the filters leaving a gap.
 		toggleFilters.setOnClickListener(v -> {
 			boolean showing = filterPanel.getVisibility() == View.VISIBLE;
 			filterPanel.setVisibility(showing ? View.GONE : View.VISIBLE);
@@ -406,9 +505,13 @@ public class FragmentStats extends Fragment {
 		binding = false;
 	}
 
+	/**
+	 * All filter edits go through the debounce rather than querying immediately, so scrolling
+	 * a dropdown does not fire a report per item.
+	 */
 	private void rerun() {
 		if (!binding) {
-			viewModel.runStatsQuery();
+			viewModel.scheduleStatsQuery();
 		}
 	}
 
@@ -504,6 +607,9 @@ public class FragmentStats extends Fragment {
 		StatsFilter filter = viewModel.statsFilter();
 		List<String> parts = new ArrayList<>();
 
+		EntityAcademicYear session = selectedSession();
+		parts.add(session == null ? allSessionsLabel : session.label());
+
 		if (filter.dateRange != StatsFilter.DateRange.ALL_TIME) {
 			if (filter.from != null && filter.to != null) {
 				parts.add(filter.from.format(DATE_LABEL) + " – " + filter.to.format(DATE_LABEL));
@@ -552,10 +658,6 @@ public class FragmentStats extends Fragment {
 			parts.add(filter.department.name());
 		}
 
-		if (parts.isEmpty()) {
-			tvActiveFilters.setText(R.string.stats_no_filters);
-		} else {
-			tvActiveFilters.setText(String.join(" · ", parts));
-		}
+		tvActiveFilters.setText(String.join(" · ", parts));
 	}
 }

@@ -20,6 +20,9 @@
         <action
             android:id="@+id/action_dashboard_to_takeAttendance"
             app:destination="@id/fragmentTakeAttendance" />
+        <action
+            android:id="@+id/action_dashboard_to_sessions"
+            app:destination="@id/fragmentAcademicYears" />
     </fragment>
 
     <fragment
@@ -168,6 +171,12 @@
             android:defaultValue="-1L"
             app:argType="long" />
     </fragment>
+
+    <fragment
+        android:id="@+id/fragmentAcademicYears"
+        android:name="in.basulabs.siesattendance.frontend.FragmentAcademicYears"
+        android:label="@string/title_sessions"
+        tools:layout="@layout/fragment_academic_years" />
 
     <fragment
         android:id="@+id/fragmentStats"

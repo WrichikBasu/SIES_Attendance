@@ -3,12 +3,17 @@ package in.basulabs.siesattendance.backend;
 import androidx.room.Entity;
 import androidx.room.ForeignKey;
 import androidx.room.Ignore;
+import androidx.room.Index;
 
 /**
  * Represents one attendance record. Each student, per lecture, will get one attendance record.
  */
 @Entity(tableName = EntityAttendance.TABLE_NAME,
 		primaryKeys = {"lectureID", "studentID"},
+		// The composite primary key indexes lectureID first, so a lookup by studentID alone
+		// could not use it. Statistics join and filter on studentID constantly, hence the
+		// standalone index.
+		indices = {@Index(value = {"studentID"})},
 		foreignKeys = {
 				@ForeignKey(entity = EntityLecture.class,
 						parentColumns = {"lectureID"},

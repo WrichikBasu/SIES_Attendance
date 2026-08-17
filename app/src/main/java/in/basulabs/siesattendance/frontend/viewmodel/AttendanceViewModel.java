@@ -1,6 +1,8 @@
 package in.basulabs.siesattendance.frontend.viewmodel;
 
 import android.app.Application;
+import android.os.Handler;
+import android.os.Looper;
 import android.net.Uri;
 
 import androidx.annotation.NonNull;
@@ -17,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.EntityAttendance;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
@@ -48,7 +51,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 	private final MainDatabase db;
 
 	/** Current academic year, as the starting calendar year (2025 means 2025-26). */
-	private final MutableLiveData<Integer> academicYear = new MutableLiveData<>(currentYear());
+	private final MutableLiveData<Integer> academicYear =
+			new MutableLiveData<>(provisionalYear());
+
+	/** The session row backing {@link #academicYear}, once the database has been read. */
+	@Nullable
+	private volatile EntityAcademicYear currentSession;
 
 	// Class filter state
 	private final MutableLiveData<Year> filterYear = new MutableLiveData<>(null);
@@ -71,12 +79,52 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public AttendanceViewModel(@NonNull Application application) {
 		super(application);
 		db = MainDatabase.getInstance(application);
+		resolveCurrentSession();
 	}
 
-	private static int currentYear() {
-		LocalDate now = LocalDate.now();
-		// An academic year starting in June: before June we are still in the previous session.
-		return now.getMonthValue() >= 6 ? now.getYear() : now.getYear() - 1;
+	/**
+	 * A provisional guess used only before the sessions table has been read. The real answer
+	 * comes from {@link #resolveCurrentSession()}, which asks the database which session
+	 * contains today.
+	 */
+	private static int provisionalYear() {
+		return EntityAcademicYear.defaultYearFor(LocalDate.now());
+	}
+
+	/**
+	 * Works out the current session from the {@code academic_years} table and publishes it.
+	 * <p>
+	 * If today falls outside every defined session — during a summer break, say, or before the
+	 * next year has been set up — the most recent session is used rather than inventing one, so
+	 * the app keeps showing real data instead of an empty year. Only a completely empty table
+	 * causes a session to be created, seeded on the June default.
+	 */
+	public void resolveCurrentSession() {
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+
+			long now = System.currentTimeMillis() / 1000L;
+			EntityAcademicYear session = db.daoAcademicYear().findContainingSync(now);
+
+			if (session == null) {
+				session = db.daoAcademicYear().getLatestSync();
+			}
+
+			if (session == null) {
+				session = EntityAcademicYear.defaultFor(provisionalYear());
+				db.daoAcademicYear().upsert(session);
+			}
+
+			currentSession = session;
+			academicYear.postValue(session.academicYear);
+
+			// The report is seeded before the database has been read, so unless the user has
+			// since chosen a session themselves, point it at the real one and refresh. The
+			// debounce merges this with the report's own initial load.
+			if (statsFilter != null && !statsYearChosenByUser) {
+				statsFilter.academicYear = session.academicYear;
+				scheduleStatsQuery();
+			}
+		});
 	}
 
 	// ── Simple accessors ─────────────────────────────────────────────────
@@ -87,7 +135,78 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	public int academicYearValue() {
 		Integer value = academicYear.getValue();
-		return value == null ? currentYear() : value;
+		return value == null ? provisionalYear() : value;
+	}
+
+	@Nullable
+	public EntityAcademicYear currentSession() {
+		return currentSession;
+	}
+
+	// ── Academic sessions ────────────────────────────────────────────────
+
+	public LiveData<List<EntityAcademicYear>> getAcademicYears() {
+		return db.daoAcademicYear().getAll();
+	}
+
+	public void loadAcademicYearsSync(
+			@NonNull java.util.function.Consumer<List<EntityAcademicYear>> cb) {
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoAcademicYear().getAllSync()));
+	}
+
+	/**
+	 * Number of lectures that fall outside every defined session. Anything above zero means
+	 * those lectures are invisible to every report, so the screens surface it as a warning
+	 * rather than letting the totals quietly under-count.
+	 */
+	public LiveData<Integer> getOrphanLectureCount() {
+		return db.daoAcademicYear().countOrphanLectures();
+	}
+
+	public void saveAcademicYear(int year, @NonNull LocalDate start, @NonNull LocalDate end,
+	                             @NonNull Runnable onDone) {
+
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+			try {
+				if (!end.isAfter(start)) {
+					toastMessage.postValue("The end date must be after the start date");
+					return;
+				}
+
+				// Overlapping sessions would make a lecture's session ambiguous, and the join
+				// would silently pick one, so the clash is refused up front.
+				for (EntityAcademicYear existing : db.daoAcademicYear().getAllSync()) {
+					if (existing.academicYear == year) {
+						continue;
+					}
+					if (!start.isAfter(existing.endDate) && !end.isBefore(existing.startDate)) {
+						toastMessage.postValue("These dates overlap the "
+								+ existing.label() + " session");
+						return;
+					}
+				}
+
+				db.daoAcademicYear().upsert(EntityAcademicYear.of(year, start, end));
+				toastMessage.postValue("Session saved");
+				resolveCurrentSession();
+				onDone.run();
+			} catch (Exception e) {
+				toastMessage.postValue("Could not save: " + e.getMessage());
+			}
+		});
+	}
+
+	public void deleteAcademicYear(@NonNull EntityAcademicYear year, @NonNull Runnable onDone) {
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+			try {
+				db.daoAcademicYear().delete(year);
+				toastMessage.postValue("Session removed");
+				resolveCurrentSession();
+				onDone.run();
+			} catch (Exception e) {
+				toastMessage.postValue("Could not remove: " + e.getMessage());
+			}
+		});
 	}
 
 	public void setAcademicYear(int year) {
@@ -299,6 +418,76 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	public LiveData<List<LectureDetails>> getAllLectures() {
 		return db.daoLecture().getAllDetails();
+	}
+
+	// ── Lecture list filtering ───────────────────────────────────────────
+
+	/**
+	 * The window the lectures tab is showing. Held here rather than in the fragment so it
+	 * survives the tab being swiped away and back.
+	 */
+	private final MutableLiveData<LectureWindow> lectureWindow =
+			new MutableLiveData<>(new LectureWindow(null, null, LectureWindow.Kind.ALL, null));
+
+	/**
+	 * A date window for the lectures list, plus enough context to label itself.
+	 */
+	public static class LectureWindow {
+
+		public enum Kind {
+			ALL,
+			SESSION,
+			MONTH,
+			CUSTOM
+		}
+
+		@Nullable
+		public final LocalDate from;
+
+		@Nullable
+		public final LocalDate to;
+
+		@NonNull
+		public final Kind kind;
+
+		/** What to show in the filter bar. */
+		@Nullable
+		public final String label;
+
+		public LectureWindow(@Nullable LocalDate from, @Nullable LocalDate to,
+		                     @NonNull Kind kind, @Nullable String label) {
+			this.from = from;
+			this.to = to;
+			this.kind = kind;
+			this.label = label;
+		}
+	}
+
+	public LiveData<LectureWindow> getLectureWindow() {
+		return lectureWindow;
+	}
+
+	public void setLectureWindow(@NonNull LectureWindow window) {
+		lectureWindow.setValue(window);
+	}
+
+	/**
+	 * Lectures inside the current window, re-queried whenever the window changes. An unbounded
+	 * window falls back to the full list rather than binding absurd sentinel epochs.
+	 */
+	public LiveData<List<LectureDetails>> getFilteredLectures() {
+		return Transformations.switchMap(lectureWindow, window -> {
+
+			if (window == null || window.from == null || window.to == null) {
+				return db.daoLecture().getAllDetails();
+			}
+
+			ZoneId zone = ZoneId.systemDefault();
+			long from = window.from.atStartOfDay(zone).toEpochSecond();
+			long to = window.to.plusDays(1).atStartOfDay(zone).toEpochSecond() - 1;
+
+			return db.daoLecture().getDetailsBetween(from, to);
+		});
 	}
 
 	public LiveData<List<LectureDetails>> getLecturesOn(@NonNull LocalDate date) {
@@ -833,15 +1022,35 @@ public class AttendanceViewModel extends AndroidViewModel {
 	private StatsFilter statsFilter;
 
 	/**
+	 * True once the user has picked a session explicitly. Until then the filter tracks whatever
+	 * {@link #resolveCurrentSession()} works out, so the report does not sit on the provisional
+	 * guess made before the database was read.
+	 */
+	private boolean statsYearChosenByUser;
+
+	/** Debounce for report refreshes; see {@link #scheduleStatsQuery()}. */
+	private final Handler statsHandler = new Handler(Looper.getMainLooper());
+
+	private final Runnable statsRunnable = this::runStatsQuery;
+
+	private static final long STATS_DEBOUNCE_MS = 250L;
+
+	/**
 	 * The live filter object. It is mutated in place by the report screen and re-run through
 	 * {@link #runStatsQuery()}, so the screen never has to reassemble it from scratch.
+	 */
+	/**
+	 * The live filter object, mutated in place by the report screen.
+	 * <p>
+	 * The academic year is seeded once and then left alone: overwriting it on every access, as
+	 * an earlier version did, would have made it impossible to select a past session or to
+	 * compare years.
 	 */
 	@NonNull
 	public StatsFilter statsFilter() {
 		if (statsFilter == null) {
 			statsFilter = new StatsFilter(academicYearValue());
 		}
-		statsFilter.academicYear = academicYearValue();
 		return statsFilter;
 	}
 
@@ -857,9 +1066,39 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return statsBelowCount;
 	}
 
+	/**
+	 * Clears the filters but keeps the selected session, which is a filter the user chose
+	 * deliberately rather than one they accumulated by drilling down.
+	 */
 	public void resetStatsFilter() {
+		Integer year = statsFilter().academicYear;
 		statsFilter().clearFilters();
-		runStatsQuery();
+		statsFilter().academicYear = year;
+		scheduleStatsQuery();
+	}
+
+	public void setStatsAcademicYear(@Nullable Integer year) {
+		statsFilter().academicYear = year;
+		statsYearChosenByUser = true;
+	}
+
+	/**
+	 * Coalesces rapid filter changes into a single query.
+	 * <p>
+	 * Each refresh is two full aggregate scans, so firing one per dropdown tap made scrolling
+	 * through a list of courses noticeably slow. Anything within the debounce window collapses
+	 * into one run, which also merges the report's initial load with the re-run that follows the
+	 * session being resolved from the database.
+	 */
+	public void scheduleStatsQuery() {
+		statsHandler.removeCallbacks(statsRunnable);
+		statsHandler.postDelayed(statsRunnable, STATS_DEBOUNCE_MS);
+	}
+
+	@Override
+	protected void onCleared() {
+		statsHandler.removeCallbacks(statsRunnable);
+		super.onCleared();
 	}
 
 	/**
@@ -878,8 +1117,16 @@ public class AttendanceViewModel extends AndroidViewModel {
 						db.daoStats().runGrouped(StatsQueryBuilder.grouped(snapshot));
 				StatsSummary summary =
 						db.daoStats().runSummary(StatsQueryBuilder.summary(snapshot));
-				int below =
-						db.daoStats().runCount(StatsQueryBuilder.belowThreshold(snapshot));
+
+				// The groups partition the same rows, so counting the ones below the threshold
+				// here is exactly what a third aggregate query would have returned, without
+				// scanning the table again.
+				int below = 0;
+				for (StatRow row : rows) {
+					if (row.isBelow(snapshot.threshold)) {
+						below++;
+					}
+				}
 
 				statRows.postValue(rows);
 				statsSummary.postValue(summary == null ? new StatsSummary() : summary);
