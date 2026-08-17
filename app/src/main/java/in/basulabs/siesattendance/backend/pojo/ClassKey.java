@@ -33,7 +33,7 @@ public class ClassKey {
 
 	@NonNull
 	public String label() {
-		return year.name() + " " + stream.name() + " " + majorDept.name();
+		return year + " " + stream + " " + majorDept;
 	}
 
 	@NonNull

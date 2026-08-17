@@ -37,8 +37,16 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textAppearance="?attr/textAppearanceBodySmall"
-            android:textColor="?attr/colorOnSurfaceVariant"
             tools:text="Aarav Patil" />
+
+        <!-- Shown because a batch can mix classes, so the row must say which one -->
+        <TextView
+            android:id="@+id/tvClassLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceLabelSmall"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            tools:text="SY BSc COMPUTER_SCIENCE" />
 
     </LinearLayout>
 

@@ -73,7 +73,7 @@ public class AdapterProfessor
 		void bind(@NonNull EntityProfessor professor) {
 			initials.setText(NameFormat.initials(professor.name));
 			name.setText(NameFormat.properCase(professor.name));
-			info.setText(professor.department.name() + " · " + professor.designation);
+			info.setText(professor.department.toString());
 
 			itemView.setOnClickListener(v -> {
 				if (listener != null) {

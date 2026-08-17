@@ -69,9 +69,9 @@ public class AdapterCourse extends ListAdapter<EntityCourse, AdapterCourse.Holde
 
 		void bind(@NonNull EntityCourse course) {
 			title.setText(course.courseCode + " · " + course.courseTopic);
-			String summary = course.offeringDepartment.name() + " · " + course.stream.name()
-					+ " · " + course.year.name() + " · Sem " + course.semester
-					+ " · " + course.courseType.name();
+			String summary = course.offeringDepartment + " · " + course.stream
+					+ " · " + course.year + " · Sem " + course.semester
+					+ " · " + course.courseType;
 
 			if (course.dateDiscontinued != null) {
 				summary += " · " + itemView.getContext()

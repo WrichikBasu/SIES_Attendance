@@ -70,8 +70,6 @@
     <string name="hint_batch_name">Batch name</string>
     <string name="hint_batch_description">Description (optional)</string>
     <string name="hint_filter_date">Pick a date</string>
-    <string name="hint_batch_from_filter">The batch will contain every student currently matched
-        by the class filter.</string>
 
     <!-- Actions -->
     <string name="action_add_student">Add student</string>
@@ -131,11 +129,8 @@
     <string name="dialog_csv_format_message">The first row must be a header. Column order does
         not matter.\n\nRequired: rollNo, name, year, stream, majorDept\nOptional: pronouns,
         email, minorDept, oeDept\n\nExample:\n\n%1$s</string>
-    <string name="dialog_create_batch_title">Create batch from this class</string>
 
     <!-- Warnings and errors -->
-    <string name="warn_select_class_first">Select a class first, then create a batch from
-        it.</string>
     <string name="error_required">Required</string>
     <string name="error_end_before_start">Must be after the start time</string>
     <string name="import_more_errors">…and %1$d more</string>
@@ -217,5 +212,16 @@
         <item quantity="one">%d existing student updated</item>
         <item quantity="other">%d existing students updated</item>
     </plurals>
+
+
+    <string name="filter_any">Any</string>
+    <string name="section_choose_students">Choose students</string>
+    <string name="hint_batch_cross_class">A batch can mix years, streams and departments. Use
+        the filters to find students, then tick them — switching filters keeps what you have
+        already selected.</string>
+    <string name="action_select_shown">Select shown</string>
+    <string name="action_clear_shown">Clear shown</string>
+    <string name="action_show_selected_only">Selected only</string>
+    <string name="empty_no_matching_students">No students match these filters</string>
 
 </resources>

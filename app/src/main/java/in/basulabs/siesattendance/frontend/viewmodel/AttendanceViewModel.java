@@ -271,45 +271,9 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
-	 * Creates a batch containing every student currently matched by the class filter. This is
-	 * the one-tap path from "SY BSc CS" to a usable batch.
+	 * Creates a batch from an explicit set of students. They may come from any combination of
+	 * years, streams and departments within the academic year.
 	 */
-	public void createBatchFromCurrentFilter(@NonNull String batchName,
-	                                         @Nullable String description,
-	                                         @NonNull Runnable onDone) {
-
-		final int acadYear = academicYearValue();
-		final Year y = filterYear.getValue();
-		final Stream s = filterStream.getValue();
-		final Department d = filterDept.getValue();
-
-		MainDatabase.DB_EXECUTOR.execute(() -> {
-			try {
-				List<StudentWithYear> students =
-						db.daoStudent().getClassSync(acadYear, y, s, d);
-
-				if (students.isEmpty()) {
-					toastMessage.postValue("No students match the current filter");
-					return;
-				}
-
-				List<Long> ids = new ArrayList<>();
-				for (StudentWithYear student : students) {
-					ids.add(student.studentID);
-				}
-
-				EntityBatchDesc batch =
-						new EntityBatchDesc(batchName, acadYear, description);
-				db.daoBatch().createBatchFromStudents(batch, ids);
-
-				toastMessage.postValue("Batch created with " + ids.size() + " students");
-				onDone.run();
-			} catch (Exception e) {
-				toastMessage.postValue("Could not create batch: " + e.getMessage());
-			}
-		});
-	}
-
 	public void createBatch(@NonNull String batchName, @Nullable String description,
 	                        @NonNull List<Long> studentIDs, @NonNull Runnable onDone) {
 
@@ -319,7 +283,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			try {
 				EntityBatchDesc batch = new EntityBatchDesc(batchName, acadYear, description);
 				db.daoBatch().createBatchFromStudents(batch, studentIDs);
-				toastMessage.postValue("Batch created");
+				toastMessage.postValue("Batch created with " + studentIDs.size() + " students");
 				onDone.run();
 			} catch (Exception e) {
 				toastMessage.postValue("Could not create batch: " + e.getMessage());
@@ -728,18 +692,59 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
-	 * Loads every student of the academic year alongside the IDs already in the batch, so the
-	 * edit screen can present one list with the members pre-ticked.
+	 * Students preselected for a batch about to be created, handed over by whichever screen
+	 * started the flow. Consumed once so a later visit starts empty.
+	 */
+	private List<Long> batchSeed;
+
+	public void setBatchSeed(@Nullable List<Long> studentIDs) {
+		batchSeed = studentIDs == null ? null : new ArrayList<>(studentIDs);
+	}
+
+	/**
+	 * Loads every student of the academic year, across all years, streams and departments,
+	 * alongside the IDs already selected. A batch is free to mix classes, so the list is
+	 * deliberately unfiltered here and narrowed in the UI instead.
+	 * <p>
+	 * A {@code batchID} of zero or less means a new batch: there is nothing to load, and the
+	 * preselection comes from the seed if one was set.
 	 */
 	public void loadBatchEditor(long batchID, @NonNull BatchEditorCallback cb) {
 		final int acadYear = academicYearValue();
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
-			EntityBatchDesc batch = db.daoBatch().getByIdSync(batchID);
 			List<StudentWithYear> all =
 					db.daoStudent().getClassSync(acadYear, null, null, null);
+
+			if (batchID <= 0) {
+				List<Long> seed = batchSeed == null ? new ArrayList<>() : batchSeed;
+				batchSeed = null;
+				cb.onLoaded(null, all, seed);
+				return;
+			}
+
+			EntityBatchDesc batch = db.daoBatch().getByIdSync(batchID);
 			List<Long> members = db.daoBatch().getMemberIdsSync(batchID, acadYear);
 			cb.onLoaded(batch, all, members);
+		});
+	}
+
+	/**
+	 * Every student of the academic year, used to seed a batch from the students screen's
+	 * current class filter.
+	 */
+	public void loadFilteredStudentIds(@NonNull java.util.function.Consumer<List<Long>> cb) {
+		final int acadYear = academicYearValue();
+		final Year y = filterYear.getValue();
+		final Stream st = filterStream.getValue();
+		final Department d = filterDept.getValue();
+
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+			List<Long> ids = new ArrayList<>();
+			for (StudentWithYear student : db.daoStudent().getClassSync(acadYear, y, st, d)) {
+				ids.add(student.studentID);
+			}
+			cb.accept(ids);
 		});
 	}
 

@@ -8,7 +8,6 @@ import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.EditText;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -145,7 +144,7 @@ public class FragmentStudents extends Fragment {
 
 		view.findViewById(R.id.btnCsvFormat).setOnClickListener(v -> showFormatHelp());
 
-		view.findViewById(R.id.btnMakeBatch).setOnClickListener(v -> promptCreateBatch());
+		view.findViewById(R.id.btnMakeBatch).setOnClickListener(v -> seedBatchFromFilter());
 	}
 
 	private void observe() {
@@ -293,47 +292,26 @@ public class FragmentStudents extends Fragment {
 	// ── Batch creation from the current filter ───────────────────────────
 
 	/**
-	 * Turns whatever the class filter currently matches into a batch, which is how a lecture
-	 * eventually gets a roll to mark.
+	 * Opens the batch editor with everyone matching the current class filter already ticked.
+	 * This keeps the "SY BSc CS becomes a batch" shortcut while leaving the user free to add
+	 * students from other classes before saving, which a filter-bound create could not do.
 	 */
-	private void promptCreateBatch() {
+	private void seedBatchFromFilter() {
+		viewModel.loadFilteredStudentIds(ids -> {
+			if (!isAdded()) {
+				return;
+			}
+			requireActivity().runOnUiThread(() -> {
+				if (!isAdded()) {
+					return;
+				}
+				viewModel.setBatchSeed(ids);
 
-		if (!hasActiveFilter()) {
-			new AlertDialog.Builder(requireContext())
-					.setMessage(R.string.warn_select_class_first)
-					.setPositiveButton(android.R.string.ok, null)
-					.show();
-			return;
-		}
-
-		View content = LayoutInflater.from(requireContext())
-				.inflate(R.layout.dialog_create_batch, null, false);
-
-		EditText nameField = content.findViewById(R.id.etDialogBatchName);
-		EditText descField = content.findViewById(R.id.etDialogBatchDesc);
-
-		String suggested = (viewModel.getFilterYear() == null ? "" :
-				viewModel.getFilterYear().name())
-				+ " " + (viewModel.getFilterStream() == null ? "" :
-				viewModel.getFilterStream().name())
-				+ " " + (viewModel.getFilterDept() == null ? "" :
-				viewModel.getFilterDept().name());
-		nameField.setText(suggested.trim());
-
-		new AlertDialog.Builder(requireContext())
-				.setTitle(R.string.dialog_create_batch_title)
-				.setView(content)
-				.setPositiveButton(R.string.action_create_batch, (d, w) -> {
-					String name = nameField.getText().toString().trim();
-					if (name.isEmpty()) {
-						return;
-					}
-					String desc = descField.getText().toString().trim();
-					viewModel.createBatchFromCurrentFilter(name,
-							desc.isEmpty() ? null : desc, () -> {
-							});
-				})
-				.setNegativeButton(R.string.action_cancel, null)
-				.show();
+				Bundle args = new Bundle();
+				args.putLong("batchID", -1L);
+				Navigation.findNavController(requireView())
+						.navigate(R.id.action_students_to_editBatch, args);
+			});
+		});
 	}
 }

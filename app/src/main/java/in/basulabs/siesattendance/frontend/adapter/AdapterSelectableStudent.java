@@ -70,13 +70,14 @@ public class AdapterSelectableStudent
 
 		private final MaterialCheckBox checkBox;
 
-		private final TextView rollNo, name;
+		private final TextView rollNo, name, classLabel;
 
 		Holder(@NonNull View itemView) {
 			super(itemView);
 			checkBox = itemView.findViewById(R.id.cbSelected);
 			rollNo = itemView.findViewById(R.id.tvRollNo);
 			name = itemView.findViewById(R.id.tvStudentName);
+			classLabel = itemView.findViewById(R.id.tvClassLabel);
 
 			// The whole row toggles, which is a much larger target than the checkbox itself.
 			itemView.setOnClickListener(v -> toggle());
@@ -108,6 +109,7 @@ public class AdapterSelectableStudent
 		void bind(@NonNull StudentWithYear student) {
 			rollNo.setText(student.rollNo);
 			name.setText(student.displayName());
+			classLabel.setText(student.classLabel());
 			checkBox.setChecked(selected.contains(student.studentID));
 		}
 	}

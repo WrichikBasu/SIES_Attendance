@@ -1,5 +1,7 @@
 package in.basulabs.siesattendance.backend;
 
+import androidx.annotation.NonNull;
+
 public enum Stream {
 
 	BA,
@@ -11,6 +13,14 @@ public enum Stream {
 
 	MA,
 	MSc,
-	MSc_unaided,
+	MSc_unaided;
 
+	@NonNull
+	@Override
+	public String toString() {
+		if (name().contains("_unaided"))
+			return name().substring(0, name().indexOf("_unaided"));
+		else
+			return name();
+	}
 }

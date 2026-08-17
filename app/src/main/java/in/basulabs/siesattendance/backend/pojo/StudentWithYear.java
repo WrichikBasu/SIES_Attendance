@@ -68,7 +68,7 @@ public class StudentWithYear {
 	 */
 	@NonNull
 	public String classLabel() {
-		return year.name() + " " + stream.name() + " " + majorDept.name();
+		return year.name() + " " + stream + " " + majorDept;
 	}
 
 	/**

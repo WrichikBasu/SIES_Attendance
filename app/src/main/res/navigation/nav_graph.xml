@@ -34,6 +34,9 @@
         <action
             android:id="@+id/action_students_to_studentDetail"
             app:destination="@id/fragmentStudentDetail" />
+        <action
+            android:id="@+id/action_students_to_editBatch"
+            app:destination="@id/fragmentEditBatch" />
     </fragment>
 
     <fragment

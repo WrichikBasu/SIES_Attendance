@@ -60,11 +60,14 @@ public class FragmentBatchList extends Fragment {
 		recyclerView.setAdapter(adapter);
 
 		FloatingActionButton fab = view.findViewById(R.id.fabAddBatch);
-		// Batches are normally made from a class filter on the students screen; this shortcut
-		// sends the user there rather than duplicating the picker.
-		fab.setOnClickListener(v -> Navigation.findNavController(
-						requireParentFragment().requireView())
-				.navigate(R.id.action_coursesHub_to_students));
+		fab.setOnClickListener(v -> {
+			// -1 puts the editor in create mode with nothing preselected.
+			Bundle args = new Bundle();
+			args.putLong("batchID", -1L);
+			viewModel.setBatchSeed(null);
+			Navigation.findNavController(requireParentFragment().requireView())
+					.navigate(R.id.action_coursesHub_to_editBatch, args);
+		});
 
 		viewModel.getBatches().observe(getViewLifecycleOwner(), adapter::submitList);
 	}

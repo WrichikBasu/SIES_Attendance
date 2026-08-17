@@ -1,57 +1,54 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dark counterpart to values/colors.xml. The names are identical, so themes.xml needs no night
+  variant: Android picks the right file and the same attribute mapping resolves to the right
+  colour.
+-->
 <resources>
 
-    <!-- Primary: violet, lightened so it reads as an accent on dark surfaces -->
-    <color name="md_primary">#C8BEFF</color>
-    <color name="md_on_primary">#351D8E</color>
-    <color name="md_primary_container">#4A2FA8</color>
-    <color name="md_on_primary_container">#E6DEFF</color>
-    <color name="md_inverse_primary">#5E45C4</color>
+    <color name="md_primary">#A2C9FE</color>
+    <color name="md_on_primary">#003259</color>
+    <color name="md_primary_container">#1C4874</color>
+    <color name="md_on_primary_container">#D2E4FF</color>
+    <color name="md_inverse_primary">#38608F</color>
 
-    <!-- Secondary: teal -->
-    <color name="md_secondary">#52D7E0</color>
-    <color name="md_on_secondary">#00373A</color>
-    <color name="md_secondary_container">#004F53</color>
-    <color name="md_on_secondary_container">#A8EFF5</color>
+    <color name="md_secondary">#BBC7DB</color>
+    <color name="md_on_secondary">#253140</color>
+    <color name="md_secondary_container">#3B4858</color>
+    <color name="md_on_secondary_container">#D7E3F8</color>
 
-    <!-- Tertiary: coral -->
-    <color name="md_tertiary">#FFB1C8</color>
-    <color name="md_on_tertiary">#650034</color>
-    <color name="md_tertiary_container">#8F2A56</color>
-    <color name="md_on_tertiary_container">#FFD9E2</color>
+    <color name="md_tertiary">#D7BEE4</color>
+    <color name="md_on_tertiary">#3B2948</color>
+    <color name="md_tertiary_container">#523F5F</color>
+    <color name="md_on_tertiary_container">#F3DAFF</color>
 
-    <!-- Error -->
     <color name="md_error">#FFB4AB</color>
     <color name="md_on_error">#690005</color>
     <color name="md_error_container">#93000A</color>
     <color name="md_on_error_container">#FFDAD6</color>
 
-    <!-- Surfaces and background -->
-    <color name="md_background">#131318</color>
-    <color name="md_on_background">#E5E1E9</color>
-    <color name="md_surface">#131318</color>
-    <color name="md_on_surface">#E5E1E9</color>
-    <color name="md_surface_variant">#47464F</color>
-    <color name="md_on_surface_variant">#C9C5D0</color>
-    <color name="md_inverse_surface">#E5E1E9</color>
-    <color name="md_inverse_on_surface">#303036</color>
+    <color name="md_background">#111418</color>
+    <color name="md_on_background">#E1E2E9</color>
+    <color name="md_surface">#111418</color>
+    <color name="md_on_surface">#E1E2E9</color>
+    <color name="md_surface_variant">#43474E</color>
+    <color name="md_on_surface_variant">#C3C6CF</color>
+    <color name="md_inverse_surface">#E1E2E9</color>
+    <color name="md_inverse_on_surface">#2E3135</color>
 
-    <!-- Surface container tones. Lowest is darker than the background, so a recessed
-         surface still reads as recessed rather than disappearing into it. -->
-    <color name="md_surface_container_lowest">#0E0E13</color>
-    <color name="md_surface_container_low">#1B1B21</color>
-    <color name="md_surface_container">#1F1F25</color>
-    <color name="md_surface_container_high">#2A292F</color>
-    <color name="md_surface_container_highest">#35343A</color>
+    <color name="md_surface_container_lowest">#0C0E12</color>
+    <color name="md_surface_container_low">#191C20</color>
+    <color name="md_surface_container">#1D2024</color>
+    <color name="md_surface_container_high">#272A2F</color>
+    <color name="md_surface_container_highest">#32353A</color>
 
-    <!-- Outlines -->
-    <color name="md_outline">#928F9A</color>
-    <color name="md_outline_variant">#47464F</color>
+    <color name="md_outline">#8D9199</color>
+    <color name="md_outline_variant">#43474E</color>
 
     <color name="md_scrim">#000000</color>
 
-    <!-- Threshold indicators, lightened to stay legible on a dark surface -->
-    <color name="attendance_ok">#5BE0A0</color>
+    <!-- Lightened so they stay legible against a dark surface -->
+    <color name="attendance_ok">#6FDBA4</color>
     <color name="attendance_short">#FFB4AB</color>
 
 </resources>
