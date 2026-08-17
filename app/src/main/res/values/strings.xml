@@ -224,4 +224,24 @@
     <string name="action_show_selected_only">Selected only</string>
     <string name="empty_no_matching_students">No students match these filters</string>
 
+
+    <!-- Statistics -->
+    <string name="label_group_by">Group by</string>
+    <string name="label_period">Period</string>
+    <string name="label_sort_by">Sort by</string>
+    <string name="label_from">From</string>
+    <string name="label_to">To</string>
+    <string name="label_restrict_to_class">Restrict to a class</string>
+    <string name="action_show_filters">Show filters</string>
+    <string name="action_hide_filters">Hide filters</string>
+    <string name="action_clear_filters">Clear</string>
+    <string name="stats_no_filters">All attendance this academic year</string>
+    <string name="stat_present_of">%1$d of %2$d present</string>
+    <string name="empty_stats">No attendance matches these filters.</string>
+
+    <plurals name="lecture_count">
+        <item quantity="one">%d lecture</item>
+        <item quantity="other">%d lectures</item>
+    </plurals>
+
 </resources>

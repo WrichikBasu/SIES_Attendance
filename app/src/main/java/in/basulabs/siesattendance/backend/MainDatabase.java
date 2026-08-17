@@ -56,4 +56,6 @@ public abstract class MainDatabase extends RoomDatabase {
 	public abstract DaoLecture daoLecture();
 
 	public abstract DaoAttendance daoAttendance();
+
+	public abstract DaoStats daoStats();
 }

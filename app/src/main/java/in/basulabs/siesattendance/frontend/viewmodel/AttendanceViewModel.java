@@ -31,7 +31,11 @@ import in.basulabs.siesattendance.backend.pojo.ClassKey;
 import in.basulabs.siesattendance.backend.pojo.CourseAttendanceStat;
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
 import in.basulabs.siesattendance.backend.pojo.StudentAttendanceStat;
+import in.basulabs.siesattendance.backend.pojo.StatRow;
+import in.basulabs.siesattendance.backend.pojo.StatsSummary;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
+import in.basulabs.siesattendance.backend.stats.StatsFilter;
+import in.basulabs.siesattendance.backend.stats.StatsQueryBuilder;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
 
@@ -816,5 +820,94 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	public LiveData<Integer> countCourses() {
 		return db.daoCourse().countCourses();
+	}
+
+	// ── Flexible statistics ──────────────────────────────────────────────
+
+	private final MutableLiveData<List<StatRow>> statRows = new MutableLiveData<>();
+
+	private final MutableLiveData<StatsSummary> statsSummary = new MutableLiveData<>();
+
+	private final MutableLiveData<Integer> statsBelowCount = new MutableLiveData<>(0);
+
+	private StatsFilter statsFilter;
+
+	/**
+	 * The live filter object. It is mutated in place by the report screen and re-run through
+	 * {@link #runStatsQuery()}, so the screen never has to reassemble it from scratch.
+	 */
+	@NonNull
+	public StatsFilter statsFilter() {
+		if (statsFilter == null) {
+			statsFilter = new StatsFilter(academicYearValue());
+		}
+		statsFilter.academicYear = academicYearValue();
+		return statsFilter;
+	}
+
+	public LiveData<List<StatRow>> getStatRows() {
+		return statRows;
+	}
+
+	public LiveData<StatsSummary> getStatsSummary() {
+		return statsSummary;
+	}
+
+	public LiveData<Integer> getStatsBelowCount() {
+		return statsBelowCount;
+	}
+
+	public void resetStatsFilter() {
+		statsFilter().clearFilters();
+		runStatsQuery();
+	}
+
+	/**
+	 * Runs the grouped report, its summary and the below-threshold count together. A snapshot of
+	 * the filter is taken first so an edit made while the query is in flight cannot produce a
+	 * result that matches neither the old filter nor the new one.
+	 */
+	public void runStatsQuery() {
+
+		final StatsFilter snapshot = statsFilter().copy();
+		busy.setValue(true);
+
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+			try {
+				List<StatRow> rows =
+						db.daoStats().runGrouped(StatsQueryBuilder.grouped(snapshot));
+				StatsSummary summary =
+						db.daoStats().runSummary(StatsQueryBuilder.summary(snapshot));
+				int below =
+						db.daoStats().runCount(StatsQueryBuilder.belowThreshold(snapshot));
+
+				statRows.postValue(rows);
+				statsSummary.postValue(summary == null ? new StatsSummary() : summary);
+				statsBelowCount.postValue(below);
+			} catch (Exception e) {
+				toastMessage.postValue("Could not run report: " + e.getMessage());
+				statRows.postValue(new ArrayList<>());
+				statsSummary.postValue(new StatsSummary());
+				statsBelowCount.postValue(0);
+			} finally {
+				busy.postValue(false);
+			}
+		});
+	}
+
+	/**
+	 * Loads the lists the report filters pick from, in one pass so the screen can populate all
+	 * of its dropdowns at once.
+	 */
+	public void loadStatsFilterOptions(@NonNull StatsOptionsCallback cb) {
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.onLoaded(
+				db.daoCourse().getAllSync(),
+				db.daoBatch().getAllSync(),
+				db.daoProfessor().getAllSync()));
+	}
+
+	public interface StatsOptionsCallback {
+		void onLoaded(@NonNull List<EntityCourse> courses, @NonNull List<EntityBatchDesc> batches,
+		              @NonNull List<EntityProfessor> professors);
 	}
 }
