@@ -59,10 +59,6 @@ public class AttendanceViewModel extends AndroidViewModel {
 	private volatile EntityAcademicYear currentSession;
 
 	// Class filter state
-	private final MutableLiveData<Year> filterYear = new MutableLiveData<>(null);
-	private final MutableLiveData<Stream> filterStream = new MutableLiveData<>(null);
-	private final MutableLiveData<Department> filterDept = new MutableLiveData<>(null);
-	private final MutableLiveData<String> searchQuery = new MutableLiveData<>("");
 
 	private final MutableLiveData<List<StudentWithYear>> filteredStudents =
 			new MutableLiveData<>(new ArrayList<>());
@@ -123,6 +119,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 			if (statsFilter != null && !statsYearChosenByUser) {
 				statsFilter.academicYear = session.academicYear;
 				scheduleStatsQuery();
+			}
+
+			if (!studentYearChosenByUser) {
+				studentFilter().academicYear = session.academicYear;
+				studentFilterYear.postValue(session.academicYear);
+				refreshStudents();
 			}
 		});
 	}
@@ -236,24 +238,116 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	// ── Students and class filtering ─────────────────────────────────────
 
+	/**
+	 * The students screen's filter. Held as one object so a screen can change any dimension
+	 * without the others needing separate setters.
+	 */
+	public static class StudentFilter {
+
+		/**
+		 * Which session's roll to show. Separate from the app-wide academic year on purpose:
+		 * browsing last year's students should not silently change the session that new
+		 * attendance gets filed under.
+		 */
+		public int academicYear;
+
+		@Nullable
+		public Year year;
+
+		@Nullable
+		public Stream stream;
+
+		@Nullable
+		public Department majorDept;
+
+		@Nullable
+		public Department minorDept;
+
+		@Nullable
+		public Department oeDept;
+
+		@Nullable
+		public Long batchID;
+
+		@NonNull
+		public String query = "";
+
+		public StudentFilter(int academicYear) {
+			this.academicYear = academicYear;
+		}
+
+		/** True when anything beyond the session is narrowing the list. */
+		public boolean hasActiveFilters() {
+			return year != null || stream != null || majorDept != null || minorDept != null
+					|| oeDept != null || batchID != null;
+		}
+
+		public void clear() {
+			year = null;
+			stream = null;
+			majorDept = null;
+			minorDept = null;
+			oeDept = null;
+			batchID = null;
+			query = "";
+		}
+	}
+
+	private StudentFilter studentFilter;
+
+	/** True once the user has picked a session on the students screen themselves. */
+	private boolean studentYearChosenByUser;
+
+	@NonNull
+	public StudentFilter studentFilter() {
+		if (studentFilter == null) {
+			studentFilter = new StudentFilter(academicYearValue());
+		}
+		return studentFilter;
+	}
+
 	public LiveData<List<StudentWithYear>> getFilteredStudents() {
 		return filteredStudents;
 	}
 
+	/** Mirrors {@link StudentFilter#academicYear} so the class chips can react to it. */
+	private final MutableLiveData<Integer> studentFilterYear =
+			new MutableLiveData<>(provisionalYear());
+
+	public LiveData<Integer> getStudentFilterYear() {
+		return studentFilterYear;
+	}
+
+	/**
+	 * The classes present in whichever session the students screen is showing, which is not
+	 * necessarily the current one.
+	 */
 	public LiveData<List<ClassKey>> getClasses() {
-		return Transformations.switchMap(academicYear, db.daoStudent()::getClassesForYear);
+		return Transformations.switchMap(studentFilterYear,
+				db.daoStudent()::getClassesForYear);
+	}
+
+	public void setStudentAcademicYear(int academicYear) {
+		studentFilter().academicYear = academicYear;
+		studentYearChosenByUser = true;
+
+		// The batch and class filters name things that belong to one session, so they cannot
+		// survive a switch to another.
+		studentFilter().batchID = null;
+		studentFilterYear.setValue(academicYear);
+		refreshStudents();
 	}
 
 	public Year getFilterYear() {
-		return filterYear.getValue();
+		return studentFilter().year;
 	}
 
 	public Stream getFilterStream() {
-		return filterStream.getValue();
+		return studentFilter().stream;
 	}
 
 	public Department getFilterDept() {
-		return filterDept.getValue();
+		return studentFilter().majorDept;
 	}
 
 	/**
@@ -262,45 +356,51 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 */
 	public void setClassFilter(@Nullable Year year, @Nullable Stream stream,
 	                           @Nullable Department dept) {
-		filterYear.setValue(year);
-		filterStream.setValue(stream);
-		filterDept.setValue(dept);
+		studentFilter().year = year;
+		studentFilter().stream = stream;
+		studentFilter().majorDept = dept;
 		refreshStudents();
 	}
 
 	public void setSearchQuery(@Nullable String query) {
-		searchQuery.setValue(query == null ? "" : query.trim());
+		studentFilter().query = query == null ? "" : query.trim();
 		refreshStudents();
 	}
 
 	public void clearFilters() {
-		filterYear.setValue(null);
-		filterStream.setValue(null);
-		filterDept.setValue(null);
-		searchQuery.setValue("");
+		studentFilter().clear();
 		refreshStudents();
 	}
 
+	/**
+	 * Runs the students query. All narrowing now happens in SQL rather than by filtering the
+	 * result in Java, which matters once minor department, open elective and batch are in play.
+	 */
 	public void refreshStudents() {
-		final int year = academicYearValue();
-		final Year y = filterYear.getValue();
-		final Stream s = filterStream.getValue();
-		final Department d = filterDept.getValue();
-		final String q = searchQuery.getValue() == null ? "" : searchQuery.getValue();
 
-		MainDatabase.DB_EXECUTOR.execute(() -> {
-			List<StudentWithYear> all = db.daoStudent().getClassSync(year, y, s, d);
-			List<StudentWithYear> out = new ArrayList<>();
+		final StudentFilter f = studentFilter();
+		final int acadYear = f.academicYear;
+		final Year y = f.year;
+		final Stream st = f.stream;
+		final Department major = f.majorDept;
+		final Department minor = f.minorDept;
+		final Department oe = f.oeDept;
+		final Long batch = f.batchID;
+		final String q = f.query;
 
-			for (StudentWithYear student : all) {
-				if (q.isEmpty()
-						|| student.name.toLowerCase().contains(q.toLowerCase())
-						|| student.rollNo.toLowerCase().contains(q.toLowerCase())) {
-					out.add(student);
-				}
-			}
-			filteredStudents.postValue(out);
-		});
+		MainDatabase.DB_EXECUTOR.execute(() -> filteredStudents.postValue(
+				db.daoStudent().filterStudentsSync(acadYear, y, st, major, minor, oe,
+						batch, q)));
+	}
+
+	/**
+	 * Batches belonging to the session the students screen is showing, for its batch filter.
+	 */
+	public void loadBatchesForStudentFilter(
+			@NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
+		final int acadYear = studentFilter().academicYear;
+		MainDatabase.DB_EXECUTOR.execute(() ->
+				cb.accept(db.daoBatch().getAllForYearSync(acadYear)));
 	}
 
 	public void addStudent(@NonNull EntityStudent student, @NonNull String rollNo,
@@ -308,7 +408,9 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                       @NonNull Department majorDept, @Nullable Department minorDept,
 	                       @Nullable Department oeDept, @NonNull Runnable onDone) {
 
-		final int acadYear = academicYearValue();
+		// New students land in the session the screen is showing, which is what someone
+		// entering last year's late admission expects.
+		final int acadYear = studentFilter().academicYear;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
@@ -327,7 +429,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	public void importCsv(@NonNull Uri uri) {
 		busy.setValue(true);
-		final int acadYear = academicYearValue();
+		final int acadYear = studentFilter().academicYear;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			CsvImporter.Result result =
@@ -400,7 +502,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void createBatch(@NonNull String batchName, @Nullable String description,
 	                        @NonNull List<Long> studentIDs, @NonNull Runnable onDone) {
 
-		final int acadYear = academicYearValue();
+		final int acadYear = studentFilter().academicYear;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
@@ -744,7 +846,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	public void loadStudentSync(long studentID,
 	                            @NonNull java.util.function.Consumer<StudentWithYear> cb) {
-		final int acadYear = academicYearValue();
+		final int acadYear = studentFilter().academicYear;
 		MainDatabase.DB_EXECUTOR.execute(() ->
 				cb.accept(db.daoStudent().getOneSync(studentID, acadYear)));
 	}
@@ -754,7 +856,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                          @NonNull Department majorDept, @Nullable Department minorDept,
 	                          @Nullable Department oeDept, @NonNull Runnable onDone) {
 
-		final int acadYear = academicYearValue();
+		final int acadYear = studentFilter().academicYear;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
@@ -903,9 +1005,17 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * preselection comes from the seed if one was set.
 	 */
 	public void loadBatchEditor(long batchID, @NonNull BatchEditorCallback cb) {
-		final int acadYear = academicYearValue();
+
+		final int fallbackYear = studentFilter().academicYear;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
+
+			// A batch belongs to one session. For an existing batch that is the batch's own
+			// session; for a new one it is whichever session the students screen was showing,
+			// so a batch seeded from a past year lists that year's students. Resolved here
+			// rather than at the call site because it reads the database.
+			int acadYear = batchID > 0 ? batchSessionYear(batchID, fallbackYear) : fallbackYear;
+
 			List<StudentWithYear> all =
 					db.daoStudent().getClassSync(acadYear, null, null, null);
 
@@ -927,18 +1037,27 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * current class filter.
 	 */
 	public void loadFilteredStudentIds(@NonNull java.util.function.Consumer<List<Long>> cb) {
-		final int acadYear = academicYearValue();
-		final Year y = filterYear.getValue();
-		final Stream st = filterStream.getValue();
-		final Department d = filterDept.getValue();
+
+		final StudentFilter f = studentFilter();
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			List<Long> ids = new ArrayList<>();
-			for (StudentWithYear student : db.daoStudent().getClassSync(acadYear, y, st, d)) {
+			for (StudentWithYear student : db.daoStudent().filterStudentsSync(
+					f.academicYear, f.year, f.stream, f.majorDept, f.minorDept, f.oeDept,
+					f.batchID, f.query)) {
 				ids.add(student.studentID);
 			}
 			cb.accept(ids);
 		});
+	}
+
+	/**
+	 * The session a batch belongs to, falling back to the supplied year if the row cannot be
+	 * read. Reads the database, so it must be called off the main thread.
+	 */
+	private int batchSessionYear(long batchID, int fallbackYear) {
+		EntityBatchDesc batch = db.daoBatch().getByIdSync(batchID);
+		return batch == null ? fallbackYear : batch.academicYear;
 	}
 
 	public interface BatchEditorCallback {
@@ -949,10 +1068,11 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void updateBatch(long batchID, @NonNull String name, @Nullable String description,
 	                        @NonNull List<Long> studentIDs, @NonNull Runnable onDone) {
 
-		final int acadYear = academicYearValue();
+		final int fallbackYear = studentFilter().academicYear;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
+				int acadYear = batchSessionYear(batchID, fallbackYear);
 				db.daoBatch().updateBatch(batchID, name, description, acadYear, studentIDs);
 				toastMessage.postValue("Batch updated");
 				onDone.run();

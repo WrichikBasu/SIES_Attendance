@@ -8,6 +8,8 @@ import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
+import android.widget.AutoCompleteTextView;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -20,14 +22,21 @@ import androidx.navigation.Navigation;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.android.material.textfield.TextInputEditText;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.EntityAcademicYear;
+import in.basulabs.siesattendance.backend.EntityBatchDesc;
+import in.basulabs.siesattendance.backend.Stream;
+import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.pojo.ClassKey;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.frontend.adapter.AdapterStudent;
@@ -51,7 +60,23 @@ public class FragmentStudents extends Fragment {
 
 	private ChipGroup classChips;
 
-	private TextView resultCount;
+	private TextView resultCount, pastSessionNotice;
+
+	private AutoCompleteTextView actvSession, actvYear, actvStream, actvMajor, actvMinor,
+			actvOe, actvBatch;
+
+	private View filterPanel;
+
+	private MaterialButton toggleFilters;
+
+	private List<EntityAcademicYear> sessions = new ArrayList<>();
+
+	private List<EntityBatchDesc> batches = new ArrayList<>();
+
+	private String anyLabel;
+
+	/** Suppresses re-queries while dropdowns are populated in code. */
+	private boolean binding;
 
 	/**
 	 * Launcher for the system file picker. Registered at construction time because
@@ -77,11 +102,25 @@ public class FragmentStudents extends Fragment {
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
 
+		anyLabel = getString(R.string.filter_any);
+
 		recyclerView = view.findViewById(R.id.rvStudents);
 		emptyState = view.findViewById(R.id.layoutEmptyState);
 		emptySubtitle = view.findViewById(R.id.tvEmptySubtitle);
 		classChips = view.findViewById(R.id.chipGroupClasses);
 		resultCount = view.findViewById(R.id.tvResultCount);
+		pastSessionNotice = view.findViewById(R.id.tvPastSessionNotice);
+
+		actvSession = view.findViewById(R.id.actvSession);
+		actvYear = view.findViewById(R.id.actvYear);
+		actvStream = view.findViewById(R.id.actvStream);
+		actvMajor = view.findViewById(R.id.actvMajorDept);
+		actvMinor = view.findViewById(R.id.actvMinorDept);
+		actvOe = view.findViewById(R.id.actvOeDept);
+		actvBatch = view.findViewById(R.id.actvBatch);
+
+		filterPanel = view.findViewById(R.id.scrollFilters);
+		toggleFilters = view.findViewById(R.id.btnToggleFilters);
 
 		adapter = new AdapterStudent(new AdapterStudent.OnClick() {
 
@@ -108,6 +147,7 @@ public class FragmentStudents extends Fragment {
 
 		setupSearch(view);
 		setupButtons(view);
+		setupFilterDropdowns();
 		observe();
 
 		viewModel.refreshStudents();
@@ -132,6 +172,164 @@ public class FragmentStudents extends Fragment {
 		});
 	}
 
+	/**
+	 * Wires the detailed filters. Each dropdown's first entry is "Any", which clears that one
+	 * dimension without disturbing the others.
+	 */
+	private void setupFilterDropdowns() {
+
+		binding = true;
+
+		bindEnum(actvYear, Year.values(),
+				value -> viewModel.studentFilter().year = (Year) value);
+		bindEnum(actvStream, Stream.values(),
+				value -> viewModel.studentFilter().stream = (Stream) value);
+		bindEnum(actvMajor, Department.values(),
+				value -> viewModel.studentFilter().majorDept = (Department) value);
+		bindEnum(actvMinor, Department.values(),
+				value -> viewModel.studentFilter().minorDept = (Department) value);
+		bindEnum(actvOe, Department.values(),
+				value -> viewModel.studentFilter().oeDept = (Department) value);
+
+		binding = false;
+	}
+
+	private interface EnumSetter {
+		void set(@Nullable Enum<?> value);
+	}
+
+	private <E extends Enum<E>> void bindEnum(@NonNull AutoCompleteTextView field,
+	                                          @NonNull E[] values, @NonNull EnumSetter setter) {
+		List<String> items = new ArrayList<>();
+		items.add(anyLabel);
+		for (E value : values) {
+			items.add(value.name());
+		}
+
+		field.setAdapter(new ArrayAdapter<>(requireContext(),
+				android.R.layout.simple_list_item_1, items));
+		field.setText(anyLabel, false);
+
+		field.setOnItemClickListener((p, v, position, id) -> {
+			setter.set(position == 0 ? null : values[position - 1]);
+			// The chips express a class as one unit, so a dimension changed here would leave
+			// them showing a selection that no longer matches.
+			syncChipsToFilter();
+			rerun();
+		});
+	}
+
+	/**
+	 * Fills the session dropdown and keeps the notice in step. Changing session reloads the
+	 * batch list too, because a batch belongs to exactly one session.
+	 */
+	private void bindSessions(@NonNull List<EntityAcademicYear> loaded) {
+
+		binding = true;
+		sessions = loaded;
+
+		List<String> labels = new ArrayList<>();
+		for (EntityAcademicYear session : loaded) {
+			labels.add(session.label());
+		}
+
+		actvSession.setAdapter(new ArrayAdapter<>(requireContext(),
+				android.R.layout.simple_list_item_1, labels));
+
+		int selected = viewModel.studentFilter().academicYear;
+		for (EntityAcademicYear session : loaded) {
+			if (session.academicYear == selected) {
+				actvSession.setText(session.label(), false);
+				break;
+			}
+		}
+
+		actvSession.setOnItemClickListener((p, v, position, id) -> {
+			viewModel.setStudentAcademicYear(sessions.get(position).academicYear);
+			actvBatch.setText(anyLabel, false);
+			loadBatches();
+			updateSessionNotice();
+		});
+
+		binding = false;
+		updateSessionNotice();
+		loadBatches();
+	}
+
+	/**
+	 * A past session is easy to forget you are in, and additions land there, so it is stated
+	 * rather than left implicit.
+	 */
+	private void updateSessionNotice() {
+
+		int viewing = viewModel.studentFilter().academicYear;
+		boolean isCurrent = viewing == viewModel.academicYearValue();
+
+		pastSessionNotice.setVisibility(isCurrent ? View.GONE : View.VISIBLE);
+
+		if (!isCurrent) {
+			String label = viewing + "-" + String.format("%02d", (viewing + 1) % 100);
+			pastSessionNotice.setText(getString(R.string.notice_viewing_session, label));
+		}
+	}
+
+	private void loadBatches() {
+		viewModel.loadBatchesForStudentFilter(loaded -> {
+			if (!isAdded()) {
+				return;
+			}
+			requireActivity().runOnUiThread(() -> {
+				if (!isAdded()) {
+					return;
+				}
+
+				binding = true;
+				batches = loaded;
+
+				List<String> labels = new ArrayList<>();
+				labels.add(anyLabel);
+				for (EntityBatchDesc batch : loaded) {
+					labels.add(batch.batchName);
+				}
+
+				actvBatch.setAdapter(new ArrayAdapter<>(requireContext(),
+						android.R.layout.simple_list_item_1, labels));
+
+				actvBatch.setOnItemClickListener((p, v, position, id) -> {
+					viewModel.studentFilter().batchID =
+							position == 0 ? null : batches.get(position - 1).batchID;
+					rerun();
+				});
+
+				binding = false;
+			});
+		});
+	}
+
+	private void rerun() {
+		if (!binding) {
+			viewModel.refreshStudents();
+		}
+	}
+
+	/** Puts every filter control back to "Any" after a clear. */
+	private void resetFilterControls() {
+		binding = true;
+		for (AutoCompleteTextView field : new AutoCompleteTextView[]{
+				actvYear, actvStream, actvMajor, actvMinor, actvOe, actvBatch}) {
+			field.setText(anyLabel, false);
+		}
+		binding = false;
+	}
+
+	/**
+	 * Reflects the year, stream and department dropdowns onto the class chips, since the two
+	 * controls describe the same three dimensions.
+	 */
+	private void syncChipsToFilter() {
+		classChips.clearCheck();
+	}
+
 	private void setupButtons(@NonNull View view) {
 
 		FloatingActionButton fab = view.findViewById(R.id.fabAddStudent);
@@ -145,6 +343,19 @@ public class FragmentStudents extends Fragment {
 		view.findViewById(R.id.btnCsvFormat).setOnClickListener(v -> showFormatHelp());
 
 		view.findViewById(R.id.btnMakeBatch).setOnClickListener(v -> seedBatchFromFilter());
+
+		toggleFilters.setOnClickListener(v -> {
+			boolean showing = filterPanel.getVisibility() == View.VISIBLE;
+			filterPanel.setVisibility(showing ? View.GONE : View.VISIBLE);
+			toggleFilters.setText(showing ? R.string.action_show_filters
+					: R.string.action_hide_filters);
+		});
+
+		view.findViewById(R.id.btnClearFilters).setOnClickListener(v -> {
+			viewModel.clearFilters();
+			resetFilterControls();
+			classChips.clearCheck();
+		});
 	}
 
 	private void observe() {
@@ -169,6 +380,12 @@ public class FragmentStudents extends Fragment {
 		});
 
 		viewModel.getClasses().observe(getViewLifecycleOwner(), this::buildClassChips);
+
+		viewModel.getAcademicYears().observe(getViewLifecycleOwner(), years -> {
+			if (years != null && !years.isEmpty()) {
+				bindSessions(years);
+			}
+		});
 
 		viewModel.getImportResult().observe(getViewLifecycleOwner(), result -> {
 			if (result != null) {
@@ -199,6 +416,11 @@ public class FragmentStudents extends Fragment {
 		allChip.setChecked(!hasActiveFilter());
 		allChip.setOnClickListener(v -> {
 			viewModel.setClassFilter(null, null, null);
+			binding = true;
+			actvYear.setText(anyLabel, false);
+			actvStream.setText(anyLabel, false);
+			actvMajor.setText(anyLabel, false);
+			binding = false;
 			buildClassChips(classes);
 		});
 		classChips.addView(allChip);
@@ -217,6 +439,11 @@ public class FragmentStudents extends Fragment {
 
 			chip.setOnClickListener(v -> {
 				viewModel.setClassFilter(key.year, key.stream, key.majorDept);
+				binding = true;
+				actvYear.setText(key.year.name(), false);
+				actvStream.setText(key.stream.name(), false);
+				actvMajor.setText(key.majorDept.name(), false);
+				binding = false;
 				buildClassChips(classes);
 			});
 			classChips.addView(chip);
@@ -229,8 +456,8 @@ public class FragmentStudents extends Fragment {
 		new AlertDialog.Builder(requireContext())
 				.setTitle(R.string.dialog_import_title)
 				.setMessage(getString(R.string.dialog_import_message,
-						viewModel.academicYearValue(),
-						(viewModel.academicYearValue() + 1) % 100))
+						viewModel.studentFilter().academicYear,
+						(viewModel.studentFilter().academicYear + 1) % 100))
 				.setPositiveButton(R.string.action_import, (d, w) -> viewModel.importCsv(uri))
 				.setNegativeButton(R.string.action_cancel, null)
 				.show();

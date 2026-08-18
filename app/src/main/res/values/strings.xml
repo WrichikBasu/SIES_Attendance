@@ -278,4 +278,10 @@
             from all reports.</item>
     </plurals>
 
+
+    <string name="hint_minor_department_filter">Minor department</string>
+    <string name="hint_oe_department_filter">Open elective department</string>
+    <string name="notice_viewing_session">Viewing %1$s. New students and imports go into this
+        session.</string>
+
 </resources>

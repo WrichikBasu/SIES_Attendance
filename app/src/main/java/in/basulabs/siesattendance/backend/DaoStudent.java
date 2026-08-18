@@ -106,6 +106,38 @@ public abstract class DaoStudent {
 	                                                   Stream stream, Department dept);
 
 	/**
+	 * The students screen's full filter, in one query.
+	 * <p>
+	 * Every dimension is optional: a null argument leaves that dimension open, so the same
+	 * statement serves "everyone in this session" and "SY BSc Physics majors taking Statistics
+	 * as a minor who are in Batch A". Batch membership is tested with EXISTS rather than a join,
+	 * so a student in a batch cannot be returned twice.
+	 * <p>
+	 * The search term matches name or roll number and is passed as an empty string, not null,
+	 * when unused.
+	 */
+	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept " +
+			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
+			"WHERE y.academicYear = :academicYear " +
+			"AND (:year IS NULL OR y.year = :year) " +
+			"AND (:stream IS NULL OR y.stream = :stream) " +
+			"AND (:majorDept IS NULL OR y.majorDept = :majorDept) " +
+			"AND (:minorDept IS NULL OR y.minorDept = :minorDept) " +
+			"AND (:oeDept IS NULL OR y.oeDept = :oeDept) " +
+			"AND (:batchID IS NULL OR EXISTS (" +
+			"   SELECT 1 FROM batch_student_map m WHERE m.studentID = s.studentID " +
+			"   AND m.batchID = :batchID AND m.academicYear = :academicYear)) " +
+			"AND (:query = '' OR s.name LIKE '%' || :query || '%' " +
+			"     OR y.rollNo LIKE '%' || :query || '%') " +
+			"ORDER BY y.rollNo ASC")
+	public abstract List<StudentWithYear> filterStudentsSync(int academicYear, Year year,
+	                                                         Stream stream, Department majorDept,
+	                                                         Department minorDept,
+	                                                         Department oeDept, Long batchID,
+	                                                         String query);
+
+	/**
 	 * Every distinct class present in the database for the given academic year, with a head
 	 * count. This drives the class picker chips.
 	 */

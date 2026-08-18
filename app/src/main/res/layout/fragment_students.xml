@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Header, then the list. The filter panel and the list share the remaining space by weight, so
+  hiding the filters hands their space back to the list and the list always has a bounded
+  height, which keeps the RecyclerView recycling.
+-->
 <androidx.coordinatorlayout.widget.CoordinatorLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -9,16 +14,47 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:focusableInTouchMode="true"
         android:orientation="vertical">
 
-        <!-- Search -->
+        <!-- Which session's roll is being shown -->
         <com.google.android.material.textfield.TextInputLayout
-            android:id="@+id/tilSearch"
-            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="12dp"
             android:layout_marginTop="12dp"
+            android:hint="@string/label_session">
+
+            <AutoCompleteTextView
+                android:id="@+id/actvSession"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="none" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <!-- Shown when the chosen session is not the live one, so an edit is never a surprise -->
+        <TextView
+            android:id="@+id/tvPastSessionNotice"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="12dp"
+            android:layout_marginTop="6dp"
+            android:background="?attr/colorSecondaryContainer"
+            android:padding="10dp"
+            android:textAppearance="?attr/textAppearanceLabelSmall"
+            android:textColor="?attr/colorOnSecondaryContainer"
+            android:visibility="gone"
+            tools:text="Viewing 2024-25. New students and imports go into this session."
+            tools:visibility="visible" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="12dp"
+            android:layout_marginTop="8dp"
             android:hint="@string/hint_search_students"
             app:startIconDrawable="@drawable/ic_search">
 
@@ -31,12 +67,67 @@
 
         </com.google.android.material.textfield.TextInputLayout>
 
-        <!-- CSV import + batch actions -->
+        <!-- Quick class picker; the panel below covers everything else -->
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:paddingHorizontal="12dp"
+            android:scrollbars="none">
+
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/chipGroupClasses"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:singleLine="true"
+                app:singleSelection="true" />
+
+        </HorizontalScrollView>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="8dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnToggleFilters"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/action_show_filters"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
+                app:icon="@drawable/ic_search"
+                app:iconGravity="textStart" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnClearFilters"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/action_clear_filters"
+                android:textAppearance="?attr/textAppearanceLabelSmall" />
+
+            <TextView
+                android:id="@+id/tvResultCount"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:gravity="end"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                tools:text="30 students" />
+
+        </LinearLayout>
+
+        <!-- Bulk actions -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="12dp"
-            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
             android:orientation="horizontal">
 
             <com.google.android.material.button.MaterialButton
@@ -47,7 +138,7 @@
                 android:layout_marginEnd="4dp"
                 android:layout_weight="1"
                 android:text="@string/action_import_csv"
-                android:textAppearance="?attr/textAppearanceLabelMedium"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
                 app:icon="@drawable/ic_upload"
                 app:iconGravity="textStart" />
 
@@ -59,7 +150,7 @@
                 android:layout_marginStart="4dp"
                 android:layout_weight="1"
                 android:text="@string/action_make_batch"
-                android:textAppearance="?attr/textAppearanceLabelMedium"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
                 app:icon="@drawable/ic_people"
                 app:iconGravity="textStart" />
 
@@ -74,38 +165,127 @@
             android:text="@string/action_csv_format"
             android:textAppearance="?attr/textAppearanceLabelSmall" />
 
-        <!-- Class filter chips -->
-        <HorizontalScrollView
+        <!-- Detailed filters, sharing space with the list when open -->
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/scrollFilters"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingHorizontal="12dp"
-            android:scrollbars="none">
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:visibility="gone">
 
-            <com.google.android.material.chip.ChipGroup
-                android:id="@+id/chipGroupClasses"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:singleLine="true"
-                app:singleSelection="true" />
+                android:orientation="vertical"
+                android:paddingHorizontal="12dp"
+                android:paddingBottom="8dp">
 
-        </HorizontalScrollView>
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
 
-        <TextView
-            android:id="@+id/tvResultCount"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="4dp"
-            android:textAppearance="?attr/textAppearanceLabelSmall"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            android:visibility="gone"
-            tools:text="30 students"
-            tools:visibility="visible" />
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:layout_weight="1"
+                        android:hint="@string/hint_year">
+
+                        <AutoCompleteTextView
+                            android:id="@+id/actvYear"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none" />
+
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="1"
+                        android:hint="@string/hint_stream">
+
+                        <AutoCompleteTextView
+                            android:id="@+id/actvStream"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none" />
+
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                </LinearLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="@string/hint_major_department">
+
+                    <AutoCompleteTextView
+                        android:id="@+id/actvMajorDept"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="none" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="@string/hint_minor_department_filter">
+
+                    <AutoCompleteTextView
+                        android:id="@+id/actvMinorDept"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="none" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="@string/hint_oe_department_filter">
+
+                    <AutoCompleteTextView
+                        android:id="@+id/actvOeDept"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="none" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="@string/hint_batch">
+
+                    <AutoCompleteTextView
+                        android:id="@+id/actvBatch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="none" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+            </LinearLayout>
+        </androidx.core.widget.NestedScrollView>
 
         <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="match_parent">
+            android:layout_height="0dp"
+            android:layout_weight="1">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/rvStudents"

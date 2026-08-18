@@ -30,6 +30,9 @@ public abstract class DaoBatch {
 	@Query("SELECT * FROM batch_desc ORDER BY academicYear DESC, batchName")
 	public abstract List<EntityBatchDesc> getAllSync();
 
+	@Query("SELECT * FROM batch_desc WHERE academicYear = :academicYear ORDER BY batchName")
+	public abstract List<EntityBatchDesc> getAllForYearSync(int academicYear);
+
 	@Query("SELECT * FROM batch_desc WHERE batchID = :batchID")
 	public abstract EntityBatchDesc getByIdSync(long batchID);
 
