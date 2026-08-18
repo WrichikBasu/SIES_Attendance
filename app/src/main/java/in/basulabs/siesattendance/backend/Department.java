@@ -1,68 +1,62 @@
 package in.basulabs.siesattendance.backend;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
+/**
+ * A teaching department.
+ * <p>
+ * {@link #name()} is what gets stored and what SQL compares against, and must never change.
+ * {@link #toString()} is the human label and is the only thing that should ever be shown.
+ */
 public enum Department {
 
-	PHYSICS,
-	CHEMISTRY,
-	MATHEMATICS,
-	BOTANY,
-	ZOOLOGY,
-	BIOCHEMISTRY,
-	STATISTICS,
-	BIOANALYTICAL_SCIENCES,
-	MICROBIOLOGY,
-	FOOD_TECH_NUTRACEUTICALS,
+	PHYSICS("Physics"),
+	CHEMISTRY("Chemistry"),
+	MATHEMATICS("Mathematics"),
+	BOTANY("Botany"),
+	ZOOLOGY("Zoology"),
+	BIOCHEMISTRY("Biochemistry"),
+	STATISTICS("Statistics"),
+	BIOANALYTICAL_SCIENCES("Bioanalytical Sciences"),
+	MICROBIOLOGY("Microbiology"),
+	FTN("FTN"),
 
-	COMPUTER_SCIENCE,
-	DATA_SCIENCE,
-	INFORMATION_TECHNOLOGY,
-	ENVIRONMENTAL_SCIENCE,
+	COMPUTER_SCIENCE("CS"),
+	DATA_SCIENCE("DS"),
+	INFORMATION_TECHNOLOGY("IT"),
+	ENVIRONMENTAL_SCIENCE("EVS"),
 
-	ENGLISH,
-	HINDI,
-	POLITICAL_SCIENCE,
-	ECONOMICS,
-	MANAGEMENT_STUDIES,
-	MASS_MEDIA,
-	HISTORY,
-	PHILOSOPHY,
-	PSYCHOLOGY,
-	COMMERCE;
+	ENGLISH("English"),
+	HINDI("Hindi"),
+	POLITICAL_SCIENCE("Pol. Sc."),
+	ECONOMICS("Economics"),
+	MANAGEMENT_STUDIES("Management Studies"),
+	MASS_MEDIA("Mass Media"),
+	HISTORY("History"),
+	PHILOSOPHY("Philosophy"),
+	PSYCHOLOGY("Psychology"),
+	COMMERCE("Commerce");
 
 	@NonNull
+	private final String label;
+
+	Department(@NonNull String label) {
+		this.label = label;
+	}
+
+	@NonNull
+	@Override
 	public String toString() {
+		return label;
+	}
 
-		switch (name()) {
-
-			case "COMPUTER_SCIENCE":
-				return "CS";
-			case "DATA_SCIENCE":
-				return "DS";
-			case "INFORMATION_TECHNOLOGY":
-				return "IT";
-			case "ENVIRONMENTAL_SCIENCE":
-				return "EVS";
-			case "FOOD_TECH_NUTRACEUTICALS":
-				return "FTN";
-			case "POLITICAL_SCIENCE":
-				return "Pol. Sc.";
-
-			default:
-
-				if (name().contains("_")) {
-
-					int ind = name().indexOf('_');
-					return name().charAt(0) + name().substring(1, ind).toLowerCase() + " "
-							+ name().charAt(ind + 1) + name().substring(ind + 2).toLowerCase();
-
-
-				} else {
-					return name().charAt(0) + name().substring(1).toLowerCase();
-				}
-		}
-
-
+	/**
+	 * Resolves a value from stored data or user input. Accepts the constant name, the display
+	 * label, and loose spacing or punctuation, so a CSV written by hand still imports.
+	 */
+	@Nullable
+	public static Department fromAny(@Nullable String raw) {
+		return EnumLookup.find(Department.class, raw);
 	}
 }

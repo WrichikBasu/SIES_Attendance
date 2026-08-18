@@ -19,6 +19,7 @@ import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import in.basulabs.siesattendance.R;
@@ -28,6 +29,7 @@ import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
+import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -50,6 +52,20 @@ public class FragmentAddCourse extends Fragment {
 
 	/** Professor to select once the dropdown finishes loading, used when editing. */
 	private long pendingProfID = -1L;
+
+	// Tracked as values because the stream list depends on the department and "BSc" alone
+	// cannot say whether the aided or unaided constant is meant.
+	@Nullable
+	private Department chosenDept;
+
+	@Nullable
+	private Stream chosenStream;
+
+	@Nullable
+	private Year chosenYear;
+
+	@Nullable
+	private CourseType chosenType;
 
 	@Nullable
 	@Override
@@ -128,11 +144,14 @@ public class FragmentAddCourse extends Fragment {
 				etCode.setText(course.courseCode);
 				etTopic.setText(course.courseTopic);
 				etRemarks.setText(course.remarks);
-				actvStream.setText(course.stream.name(), false);
-				actvDept.setText(course.offeringDepartment.name(), false);
-				actvYear.setText(course.year.name(), false);
 				actvSemester.setText(String.valueOf(course.semester), false);
-				actvType.setText(course.courseType.name(), false);
+
+				chosenDept = course.offeringDepartment;
+				chosenStream = course.stream;
+				chosenYear = course.year;
+				chosenType = course.courseType;
+				bindDropdowns();
+
 				pendingProfID = course.profID;
 				applyPendingProfessor();
 			});
@@ -150,18 +169,29 @@ public class FragmentAddCourse extends Fragment {
 		for (EntityProfessor professor : professors) {
 			if (professor.profID == pendingProfID) {
 				actvProfessor.setText(
-						professor.name + " (" + professor.department.name() + ")", false);
+						professor.name + " (" + professor.department + ")", false);
 				return;
 			}
 		}
 	}
 
+	/**
+	 * The offering department decides the stream, so the two are linked here exactly as they
+	 * are on the student form: a Mass Media course can only be BAMMC.
+	 */
 	private void bindDropdowns() {
 
-		actvStream.setAdapter(names(Stream.values()));
-		actvDept.setAdapter(names(Department.values()));
-		actvYear.setAdapter(names(Year.values()));
-		actvType.setAdapter(names(CourseType.values()));
+		DropdownBinder.linkDepartmentAndStream(actvDept, actvStream, actvYear,
+				Arrays.asList(Department.values()), null,
+				chosenDept, chosenStream, chosenYear,
+				(department, stream, year) -> {
+					chosenDept = department;
+					chosenStream = stream;
+					chosenYear = year;
+				});
+
+		DropdownBinder.bind(actvType, Arrays.asList(CourseType.values()), null,
+				chosenType, value -> chosenType = value);
 
 		List<String> semesters = new ArrayList<>();
 		for (int i = 1; i <= 6; i++) {
@@ -175,21 +205,12 @@ public class FragmentAddCourse extends Fragment {
 			professors = list;
 			List<String> labels = new ArrayList<>();
 			for (EntityProfessor professor : list) {
-				labels.add(professor.name + " (" + professor.department.name() + ")");
+				labels.add(professor.name + " (" + professor.department + ")");
 			}
 			actvProfessor.setAdapter(new ArrayAdapter<>(requireContext(),
 					android.R.layout.simple_list_item_1, labels));
 			applyPendingProfessor();
 		}));
-	}
-
-	private <E extends Enum<E>> ArrayAdapter<String> names(E[] values) {
-		List<String> items = new ArrayList<>();
-		for (E value : values) {
-			items.add(value.name());
-		}
-		return new ArrayAdapter<>(requireContext(),
-				android.R.layout.simple_list_item_1, items);
 	}
 
 	private void onSave(@NonNull View button) {
@@ -209,10 +230,10 @@ public class FragmentAddCourse extends Fragment {
 			return;
 		}
 
-		Stream stream = pick(Stream.class, actvStream.getText().toString());
-		Department dept = pick(Department.class, actvDept.getText().toString());
-		Year year = pick(Year.class, actvYear.getText().toString());
-		CourseType type = pick(CourseType.class, actvType.getText().toString());
+		Stream stream = chosenStream;
+		Department dept = chosenDept;
+		Year year = chosenYear;
+		CourseType type = chosenType;
 
 		if (stream == null || dept == null || year == null || type == null) {
 			return;
@@ -258,7 +279,7 @@ public class FragmentAddCourse extends Fragment {
 		String selected = actvProfessor.getText().toString().trim();
 		for (int i = 0; i < professors.size(); i++) {
 			EntityProfessor professor = professors.get(i);
-			String label = professor.name + " (" + professor.department.name() + ")";
+			String label = professor.name + " (" + professor.department + ")";
 			if (label.equals(selected)) {
 				return i;
 			}
@@ -266,16 +287,4 @@ public class FragmentAddCourse extends Fragment {
 		return -1;
 	}
 
-	@Nullable
-	private <E extends Enum<E>> E pick(@NonNull Class<E> type, @Nullable String raw) {
-		if (raw == null || raw.trim().isEmpty()) {
-			return null;
-		}
-		for (E constant : type.getEnumConstants()) {
-			if (constant.name().equals(raw.trim())) {
-				return constant;
-			}
-		}
-		return null;
-	}
 }

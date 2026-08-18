@@ -69,7 +69,13 @@ public class AdapterCourse extends ListAdapter<EntityCourse, AdapterCourse.Holde
 
 		void bind(@NonNull EntityCourse course) {
 			title.setText(course.courseCode + " · " + course.courseTopic);
-			String summary = course.offeringDepartment + " · " + course.stream
+
+			String stream = course.stream.toString();
+			if (course.stream.isUnaided()) {
+				stream = stream.replace(" (unaided)", "");
+			}
+
+			String summary = course.offeringDepartment + " · " + stream
 					+ " · " + course.year + " · Sem " + course.semester
 					+ " · " + course.courseType;
 

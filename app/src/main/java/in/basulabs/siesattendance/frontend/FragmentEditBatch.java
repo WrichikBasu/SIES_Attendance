@@ -6,7 +6,6 @@ import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.TextView;
 
@@ -15,6 +14,7 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
+import androidx.recyclerview.widget.ConcatAdapter;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -24,6 +24,7 @@ import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -33,7 +34,9 @@ import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
+import in.basulabs.siesattendance.frontend.adapter.AdapterHeader;
 import in.basulabs.siesattendance.frontend.adapter.AdapterSelectableStudent;
+import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -68,7 +71,13 @@ public class FragmentEditBatch extends Fragment {
 
 	private MaterialButton save;
 
+	private AdapterHeader headerAdapter;
+
 	private long batchID;
+
+	/** Kept so the header can be filled in if it is created after the load finishes. */
+	@Nullable
+	private in.basulabs.siesattendance.backend.EntityBatchDesc loadedBatch;
 
 	/** Every student of the academic year, unfiltered. */
 	private final List<StudentWithYear> allStudents = new ArrayList<>();
@@ -100,36 +109,69 @@ public class FragmentEditBatch extends Fragment {
 		batchID = getArguments() == null ? -1L : getArguments().getLong("batchID", -1L);
 		anyLabel = getString(R.string.filter_any);
 
-		etName = view.findViewById(R.id.etBatchName);
-		etDescription = view.findViewById(R.id.etBatchDesc);
-		etSearch = view.findViewById(R.id.etSearch);
-		tilName = view.findViewById(R.id.tilBatchName);
-
-		actvYear = view.findViewById(R.id.actvFilterYear);
-		actvStream = view.findViewById(R.id.actvFilterStream);
-		actvDept = view.findViewById(R.id.actvFilterDept);
-
-		selectedCount = view.findViewById(R.id.tvSelectedCount);
-		emptyMessage = view.findViewById(R.id.tvNoMatches);
-		chipShowSelected = view.findViewById(R.id.chipShowSelected);
-
 		RecyclerView recyclerView = view.findViewById(R.id.rvStudents);
-		adapter = new AdapterSelectableStudent(this::onStudentToggled);
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
-		recyclerView.setAdapter(adapter);
 
+		adapter = new AdapterSelectableStudent(this::onStudentToggled);
+
+		// Bound before the header is wired: onHeaderReady calls updateCount, which enables or
+		// disables this button according to how many students are selected.
 		save = view.findViewById(R.id.btnSaveBatch);
 		save.setText(isCreating() ? R.string.action_create_batch : R.string.action_save_changes);
 		save.setOnClickListener(this::onSave);
 
-		view.findViewById(R.id.btnSelectShown).setOnClickListener(v -> setAllShown(true));
-		view.findViewById(R.id.btnClearShown).setOnClickListener(v -> setAllShown(false));
+		// Fields and filters as the list's first item, so the screen scrolls as one piece. The
+		// header is wired before the adapter is attached: onHeaderReady calls applyFilter,
+		// which notifies the student adapter, and doing that mid-layout throws.
+		View header = getLayoutInflater()
+				.inflate(R.layout.view_edit_batch_header, recyclerView, false);
+		onHeaderReady(header);
+
+		headerAdapter = new AdapterHeader(header);
+		recyclerView.setAdapter(new ConcatAdapter(headerAdapter, adapter));
+
+		load();
+	}
+
+	/**
+	 * Wires the header's controls.
+	 * <p>
+	 * The list and the save button are not among them: both live in the fragment's own layout
+	 * and are set up in onViewCreated. Re-resolving the RecyclerView here would have found
+	 * nothing, and reassigning its adapter would have replaced the concatenated pair with the
+	 * student adapter alone, taking the header off screen.
+	 */
+	private void onHeaderReady(@NonNull View header) {
+
+		etName = header.findViewById(R.id.etBatchName);
+		etDescription = header.findViewById(R.id.etBatchDesc);
+		etSearch = header.findViewById(R.id.etSearch);
+		tilName = header.findViewById(R.id.tilBatchName);
+
+		actvYear = header.findViewById(R.id.actvFilterYear);
+		actvStream = header.findViewById(R.id.actvFilterStream);
+		actvDept = header.findViewById(R.id.actvFilterDept);
+
+		selectedCount = header.findViewById(R.id.tvSelectedCount);
+		emptyMessage = header.findViewById(R.id.tvNoMatches);
+		chipShowSelected = header.findViewById(R.id.chipShowSelected);
+
+		header.findViewById(R.id.btnSelectShown).setOnClickListener(v -> setAllShown(true));
+		header.findViewById(R.id.btnClearShown).setOnClickListener(v -> setAllShown(false));
 
 		chipShowSelected.setOnCheckedChangeListener((v, checked) -> applyFilter());
 
+		if (loadedBatch != null) {
+			etName.setText(loadedBatch.batchName);
+			etDescription.setText(loadedBatch.batchDesc);
+		}
+
 		setupFilters();
 		setupSearch();
-		load();
+
+		// The data may already have loaded before the header existed.
+		applyFilter();
+		updateCount();
 	}
 
 	private boolean isCreating() {
@@ -138,43 +180,22 @@ public class FragmentEditBatch extends Fragment {
 
 	// ── Filters ──────────────────────────────────────────────────────────
 
+	/**
+	 * The three filters are linked the same way as everywhere else: a department narrows the
+	 * stream list to what it offers. Each has an "Any" entry so a dimension can be relaxed
+	 * without disturbing the others.
+	 */
 	private void setupFilters() {
 
-		actvYear.setAdapter(labelledAdapter(Year.values()));
-		actvStream.setAdapter(labelledAdapter(Stream.values()));
-		actvDept.setAdapter(labelledAdapter(Department.values()));
-
-		actvYear.setText(anyLabel, false);
-		actvStream.setText(anyLabel, false);
-		actvDept.setText(anyLabel, false);
-
-		actvYear.setOnItemClickListener((p, v, position, id) -> {
-			filterYear = position == 0 ? null : Year.values()[position - 1];
-			applyFilter();
-		});
-
-		actvStream.setOnItemClickListener((p, v, position, id) -> {
-			filterStream = position == 0 ? null : Stream.values()[position - 1];
-			applyFilter();
-		});
-
-		actvDept.setOnItemClickListener((p, v, position, id) -> {
-			filterDept = position == 0 ? null : Department.values()[position - 1];
-			applyFilter();
-		});
-	}
-
-	/**
-	 * Builds a dropdown whose first entry clears that dimension, so each filter can be relaxed
-	 * without clearing the others.
-	 */
-	private <E extends Enum<E>> ArrayAdapter<String> labelledAdapter(E[] values) {
-		List<String> items = new ArrayList<>();
-		items.add(anyLabel);
-		for (E value : values) {
-			items.add(value.name());
-		}
-		return new ArrayAdapter<>(requireContext(), android.R.layout.simple_list_item_1, items);
+		DropdownBinder.linkDepartmentAndStream(actvDept, actvStream, actvYear,
+				Arrays.asList(Department.values()), anyLabel,
+				filterDept, filterStream, filterYear,
+				(department, stream, year) -> {
+					filterDept = department;
+					filterStream = stream;
+					filterYear = year;
+					applyFilter();
+				});
 	}
 
 	private void setupSearch() {
@@ -206,10 +227,11 @@ public class FragmentEditBatch extends Fragment {
 					return;
 				}
 
-				if (batch != null) {
+				if (batch != null && etName != null) {
 					etName.setText(batch.batchName);
 					etDescription.setText(batch.batchDesc);
 				}
+				loadedBatch = batch;
 
 				allStudents.clear();
 				allStudents.addAll(students);
@@ -235,7 +257,7 @@ public class FragmentEditBatch extends Fragment {
 
 		// Rows disappear as they are unticked while the selected-only view is on, so the list
 		// has to be rebuilt; otherwise the tick can just be left where it is.
-		if (chipShowSelected.isChecked()) {
+		if (chipShowSelected != null && chipShowSelected.isChecked()) {
 			applyFilter();
 		}
 	}
@@ -260,10 +282,14 @@ public class FragmentEditBatch extends Fragment {
 
 	private List<StudentWithYear> visibleStudents() {
 
+		if (etSearch == null) {
+			return new ArrayList<>(allStudents);
+		}
+
 		String needle = etSearch.getText() == null
 				? "" : etSearch.getText().toString().trim().toLowerCase();
 
-		boolean selectedOnly = chipShowSelected.isChecked();
+		boolean selectedOnly = chipShowSelected != null && chipShowSelected.isChecked();
 		List<StudentWithYear> visible = new ArrayList<>();
 
 		for (StudentWithYear student : allStudents) {
@@ -295,20 +321,31 @@ public class FragmentEditBatch extends Fragment {
 	private void applyFilter() {
 		List<StudentWithYear> visible = visibleStudents();
 		adapter.submit(visible, selected);
-		emptyMessage.setVisibility(visible.isEmpty() ? View.VISIBLE : View.GONE);
+		if (emptyMessage != null) {
+			emptyMessage.setVisibility(visible.isEmpty() ? View.VISIBLE : View.GONE);
+		}
 	}
 
 	private void updateCount() {
+		save.setEnabled(!selected.isEmpty());
+		if (selectedCount == null) {
+			return;
+		}
 		selectedCount.setText(getResources().getQuantityString(
 				R.plurals.student_count, selected.size(), selected.size()));
-		save.setEnabled(!selected.isEmpty());
 	}
 
 	// ── Save ─────────────────────────────────────────────────────────────
 
 	private void onSave(@NonNull View button) {
 
-		tilName.setError(null);
+		if (tilName != null) {
+			tilName.setError(null);
+		}
+
+		if (etName == null) {
+			return;
+		}
 
 		String name = etName.getText() == null ? "" : etName.getText().toString().trim();
 		if (name.isEmpty()) {

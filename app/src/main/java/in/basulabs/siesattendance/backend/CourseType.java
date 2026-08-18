@@ -1,28 +1,33 @@
 package in.basulabs.siesattendance.backend;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 public enum CourseType {
 
-	MAJOR,
-	MINOR,
-	MAJOR_PRACTICALS,
-	MINOR_PRACTICALS,
-	OE,
-	AEC,
-	IKS;
+	MAJOR("Major"),
+	MINOR("Minor"),
+	MAJOR_PRACTICALS("Major practicals"),
+	MINOR_PRACTICALS("Minor practicals"),
+	OE("Open elective"),
+	AEC("AEC"),
+	IKS("IKS");
 
 	@NonNull
-	public String toString() {
+	private final String label;
 
-		if (name().equals("MAJOR") | name().equals("MINOR"))
-			return name().charAt(0) + name().substring(1).toLowerCase();
-
-		else if (name().equals("MINOR_PRACTICALS") | name().equals("MAJOR_PRACTICALS"))
-			return name().charAt(0) + name().substring(1, name().indexOf('_')).toLowerCase() + " (Prac)";
-
-		else
-			return name();
+	CourseType(@NonNull String label) {
+		this.label = label;
 	}
 
+	@NonNull
+	@Override
+	public String toString() {
+		return label;
+	}
+
+	@Nullable
+	public static CourseType fromAny(@Nullable String raw) {
+		return EnumLookup.find(CourseType.class, raw);
+	}
 }

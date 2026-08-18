@@ -16,7 +16,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.EnumLookup;
 import in.basulabs.siesattendance.backend.EntityStudent;
 import in.basulabs.siesattendance.backend.MainDatabase;
 import in.basulabs.siesattendance.backend.Stream;
@@ -171,6 +173,18 @@ public final class CsvImporter {
 		Department majorDept = parseEnum(Department.class,
 				required(cells, columns, "majordept", "major department"), "major department");
 
+		// A file saying "COMPUTER_SCIENCE,BSc" means the unaided BSc, because that is the only
+		// BSc that department runs, so the label is resolved against the department. A stream
+		// the department does not offer at all is reported as a bad row rather than corrected:
+		// "COMMERCE,BSc" is a mistake in the file and should be seen, not quietly filed as
+		// BCom.
+		Stream requested = stream;
+		stream = AcademicRules.resolveRequested(majorDept, requested);
+
+		if (stream == null) {
+			throw new IllegalArgumentException(majorDept + " is not offered as " + requested);
+		}
+
 		Department minorDept = parseOptionalEnum(Department.class,
 				optional(cells, columns, "minordept"), "minor department");
 		Department oeDept = parseOptionalEnum(Department.class,
@@ -267,6 +281,10 @@ public final class CsvImporter {
 		return value;
 	}
 
+	/**
+	 * Accepts either the constant name or the display label, loosely matched. A roster typed by
+	 * hand is as likely to say "Computer Science" as "COMPUTER_SCIENCE", and both should work.
+	 */
 	@Nullable
 	private static <E extends Enum<E>> E parseOptionalEnum(Class<E> type, @Nullable String raw,
 	                                                       String label) {
@@ -274,14 +292,11 @@ public final class CsvImporter {
 			return null;
 		}
 
-		String normalised = raw.trim().replace(' ', '_').replace('-', '_');
-
-		for (E constant : type.getEnumConstants()) {
-			if (constant.name().equalsIgnoreCase(normalised)) {
-				return constant;
-			}
+		E value = EnumLookup.find(type, raw);
+		if (value == null) {
+			throw new IllegalArgumentException("Unrecognised " + label + ": " + raw);
 		}
-		throw new IllegalArgumentException("Unrecognised " + label + ": " + raw);
+		return value;
 	}
 
 	/**

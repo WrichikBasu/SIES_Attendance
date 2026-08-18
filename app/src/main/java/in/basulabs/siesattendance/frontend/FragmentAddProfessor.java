@@ -17,12 +17,12 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Arrays;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityProfessor;
+import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -39,6 +39,9 @@ public class FragmentAddProfessor extends Fragment {
 	private TextInputLayout tilName, tilEmail;
 
 	private AutoCompleteTextView actvDepartment, actvDesignation;
+
+	@Nullable
+	private Department chosenDepartment;
 
 	private static final String[] DESIGNATIONS = {
 			"Professor", "Associate Professor", "Assistant Professor",
@@ -67,13 +70,8 @@ public class FragmentAddProfessor extends Fragment {
 		actvDepartment = view.findViewById(R.id.actvDepartment);
 		actvDesignation = view.findViewById(R.id.actvDesignation);
 
-		List<String> departments = new ArrayList<>();
-		for (Department department : Department.values()) {
-			departments.add(department.name());
-		}
-
-		actvDepartment.setAdapter(new ArrayAdapter<>(requireContext(),
-				android.R.layout.simple_list_item_1, departments));
+		DropdownBinder.bind(actvDepartment, Arrays.asList(Department.values()), null,
+				chosenDepartment, value -> chosenDepartment = value);
 		actvDesignation.setAdapter(new ArrayAdapter<>(requireContext(),
 				android.R.layout.simple_list_item_1, DESIGNATIONS));
 
@@ -89,7 +87,8 @@ public class FragmentAddProfessor extends Fragment {
 				requireActivity().runOnUiThread(() -> {
 					etName.setText(professor.name);
 					etEmail.setText(professor.email);
-					actvDepartment.setText(professor.department.name(), false);
+					chosenDepartment = professor.department;
+					DropdownBinder.setSelection(actvDepartment, professor.department, null);
 					actvDesignation.setText(professor.designation, false);
 				});
 			});
@@ -113,14 +112,7 @@ public class FragmentAddProfessor extends Fragment {
 			return;
 		}
 
-		Department department = null;
-		String raw = actvDepartment.getText().toString().trim();
-		for (Department value : Department.values()) {
-			if (value.name().equals(raw)) {
-				department = value;
-				break;
-			}
-		}
+		Department department = chosenDepartment;
 
 		if (department == null) {
 			((TextInputLayout) requireView().findViewById(R.id.tilDepartment))

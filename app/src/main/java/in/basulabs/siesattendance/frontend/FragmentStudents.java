@@ -19,28 +19,30 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
+import androidx.recyclerview.widget.ConcatAdapter;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
-import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.android.material.textfield.TextInputEditText;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
-import in.basulabs.siesattendance.backend.Stream;
-import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.pojo.ClassKey;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
+import in.basulabs.siesattendance.frontend.adapter.AdapterHeader;
 import in.basulabs.siesattendance.frontend.adapter.AdapterStudent;
+import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
+import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel.StudentFilter;
 
 /**
  * The students screen. Holds three entry points: manual add, CSV import, and the class filter
@@ -51,6 +53,8 @@ public class FragmentStudents extends Fragment {
 	private AttendanceViewModel viewModel;
 
 	private AdapterStudent adapter;
+
+	private AdapterHeader headerAdapter;
 
 	private RecyclerView recyclerView;
 
@@ -105,22 +109,7 @@ public class FragmentStudents extends Fragment {
 		anyLabel = getString(R.string.filter_any);
 
 		recyclerView = view.findViewById(R.id.rvStudents);
-		emptyState = view.findViewById(R.id.layoutEmptyState);
-		emptySubtitle = view.findViewById(R.id.tvEmptySubtitle);
-		classChips = view.findViewById(R.id.chipGroupClasses);
-		resultCount = view.findViewById(R.id.tvResultCount);
-		pastSessionNotice = view.findViewById(R.id.tvPastSessionNotice);
-
-		actvSession = view.findViewById(R.id.actvSession);
-		actvYear = view.findViewById(R.id.actvYear);
-		actvStream = view.findViewById(R.id.actvStream);
-		actvMajor = view.findViewById(R.id.actvMajorDept);
-		actvMinor = view.findViewById(R.id.actvMinorDept);
-		actvOe = view.findViewById(R.id.actvOeDept);
-		actvBatch = view.findViewById(R.id.actvBatch);
-
-		filterPanel = view.findViewById(R.id.scrollFilters);
-		toggleFilters = view.findViewById(R.id.btnToggleFilters);
+		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
 
 		adapter = new AdapterStudent(new AdapterStudent.OnClick() {
 
@@ -134,7 +123,6 @@ public class FragmentStudents extends Fragment {
 
 			@Override
 			public void onStudentLongPressed(StudentWithYear student) {
-				// Straight to edit: there is no delete, so a chooser would have one entry.
 				Bundle args = new Bundle();
 				args.putLong("studentID", student.studentID);
 				Navigation.findNavController(view)
@@ -142,18 +130,55 @@ public class FragmentStudents extends Fragment {
 			}
 		});
 
-		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
-		recyclerView.setAdapter(adapter);
+		// The controls are the list's first item, so the screen scrolls as one piece while the
+		// student rows still recycle. The header is inflated and wired here, before the adapter
+		// is attached: wiring it later, from inside onCreateViewHolder, would run during a
+		// layout pass and any resulting notify would throw.
+		View header = getLayoutInflater()
+				.inflate(R.layout.view_students_header, recyclerView, false);
+		onHeaderReady(header);
 
-		setupSearch(view);
-		setupButtons(view);
-		setupFilterDropdowns();
+		headerAdapter = new AdapterHeader(header);
+		recyclerView.setAdapter(new ConcatAdapter(headerAdapter, adapter));
+
+		view.findViewById(R.id.fabAddStudent).setOnClickListener(v ->
+				Navigation.findNavController(v).navigate(R.id.action_students_to_addStudent));
+
 		observe();
-
 		viewModel.refreshStudents();
 	}
 
-	private void setupSearch(@NonNull View view) {
+	/**
+	 * Wires the header's controls. Called once, when the RecyclerView creates it.
+	 */
+	private void onHeaderReady(@NonNull View header) {
+		emptyState = header.findViewById(R.id.layoutEmptyState);
+		emptySubtitle = header.findViewById(R.id.tvEmptySubtitle);
+		classChips = header.findViewById(R.id.chipGroupClasses);
+		resultCount = header.findViewById(R.id.tvResultCount);
+		pastSessionNotice = header.findViewById(R.id.tvPastSessionNotice);
+
+		actvSession = header.findViewById(R.id.actvSession);
+		actvYear = header.findViewById(R.id.actvYear);
+		actvStream = header.findViewById(R.id.actvStream);
+		actvMajor = header.findViewById(R.id.actvMajorDept);
+		actvMinor = header.findViewById(R.id.actvMinorDept);
+		actvOe = header.findViewById(R.id.actvOeDept);
+		actvBatch = header.findViewById(R.id.actvBatch);
+
+		filterPanel = header.findViewById(R.id.scrollFilters);
+		toggleFilters = header.findViewById(R.id.btnToggleFilters);
+
+		setupSearchIn(header);
+		setupButtonsIn(header);
+		setupFilterDropdowns();
+
+		// The list may already have loaded before the header existed.
+		bindPendingState();
+	}
+
+
+	private void setupSearchIn(@NonNull View view) {
 		TextInputEditText search = view.findViewById(R.id.etSearch);
 
 		search.addTextChangedListener(new TextWatcher() {
@@ -173,56 +198,47 @@ public class FragmentStudents extends Fragment {
 	}
 
 	/**
-	 * Wires the detailed filters. Each dropdown's first entry is "Any", which clears that one
-	 * dimension without disturbing the others.
+	 * Wires the detailed filters.
+	 * <p>
+	 * Major department, stream and year move together: choosing a department narrows the stream
+	 * list to what that department actually offers, fixes it outright when there is only one,
+	 * and drops the master's years for departments running no postgraduate course. Minor and
+	 * open elective are plain department choices, since a student's minor has no bearing on the
+	 * stream they are enrolled under.
 	 */
 	private void setupFilterDropdowns() {
 
 		binding = true;
 
-		bindEnum(actvYear, Year.values(),
-				value -> viewModel.studentFilter().year = (Year) value);
-		bindEnum(actvStream, Stream.values(),
-				value -> viewModel.studentFilter().stream = (Stream) value);
-		bindEnum(actvMajor, Department.values(),
-				value -> viewModel.studentFilter().majorDept = (Department) value);
-		bindEnum(actvMinor, Department.values(),
-				value -> viewModel.studentFilter().minorDept = (Department) value);
-		bindEnum(actvOe, Department.values(),
-				value -> viewModel.studentFilter().oeDept = (Department) value);
+		StudentFilter f = viewModel.studentFilter();
+
+		DropdownBinder.linkDepartmentAndStream(actvMajor, actvStream, actvYear,
+				Arrays.asList(Department.values()), anyLabel,
+				f.majorDept, f.stream, f.year,
+				(department, stream, year) -> {
+					StudentFilter filter = viewModel.studentFilter();
+					filter.majorDept = department;
+					filter.stream = stream;
+					filter.year = year;
+					classChips.clearCheck();
+					rerun();
+				});
+
+		DropdownBinder.bind(actvMinor, Arrays.asList(Department.values()), anyLabel,
+				f.minorDept, value -> {
+					viewModel.studentFilter().minorDept = value;
+					rerun();
+				});
+
+		DropdownBinder.bind(actvOe, Arrays.asList(Department.values()), anyLabel,
+				f.oeDept, value -> {
+					viewModel.studentFilter().oeDept = value;
+					rerun();
+				});
 
 		binding = false;
 	}
 
-	private interface EnumSetter {
-		void set(@Nullable Enum<?> value);
-	}
-
-	private <E extends Enum<E>> void bindEnum(@NonNull AutoCompleteTextView field,
-	                                          @NonNull E[] values, @NonNull EnumSetter setter) {
-		List<String> items = new ArrayList<>();
-		items.add(anyLabel);
-		for (E value : values) {
-			items.add(value.name());
-		}
-
-		field.setAdapter(new ArrayAdapter<>(requireContext(),
-				android.R.layout.simple_list_item_1, items));
-		field.setText(anyLabel, false);
-
-		field.setOnItemClickListener((p, v, position, id) -> {
-			setter.set(position == 0 ? null : values[position - 1]);
-			// The chips express a class as one unit, so a dimension changed here would leave
-			// them showing a selection that no longer matches.
-			syncChipsToFilter();
-			rerun();
-		});
-	}
-
-	/**
-	 * Fills the session dropdown and keeps the notice in step. Changing session reloads the
-	 * batch list too, because a batch belongs to exactly one session.
-	 */
 	private void bindSessions(@NonNull List<EntityAcademicYear> loaded) {
 
 		binding = true;
@@ -323,18 +339,11 @@ public class FragmentStudents extends Fragment {
 	}
 
 	/**
-	 * Reflects the year, stream and department dropdowns onto the class chips, since the two
-	 * controls describe the same three dimensions.
+	 * Wires the header's buttons. The add-student FAB is deliberately not among them: it lives
+	 * in the fragment's own layout, floating above the list rather than scrolling with it, and
+	 * is wired in onViewCreated.
 	 */
-	private void syncChipsToFilter() {
-		classChips.clearCheck();
-	}
-
-	private void setupButtons(@NonNull View view) {
-
-		FloatingActionButton fab = view.findViewById(R.id.fabAddStudent);
-		fab.setOnClickListener(v -> Navigation.findNavController(v)
-				.navigate(R.id.action_students_to_addStudent));
+	private void setupButtonsIn(@NonNull View view) {
 
 		view.findViewById(R.id.btnImportCsv).setOnClickListener(v ->
 				csvPicker.launch(new String[]{"text/csv", "text/comma-separated-values",
@@ -358,31 +367,28 @@ public class FragmentStudents extends Fragment {
 		});
 	}
 
+	/** Latest result, kept so the header can catch up if it is created after the first load. */
+	@Nullable
+	private List<StudentWithYear> lastResult;
+
 	private void observe() {
 
 		viewModel.getFilteredStudents().observe(getViewLifecycleOwner(), students -> {
+			lastResult = students;
 			adapter.submitList(students);
+			bindPendingState();
+		});
 
-			boolean empty = students == null || students.isEmpty();
-			emptyState.setVisibility(empty ? View.VISIBLE : View.GONE);
-			recyclerView.setVisibility(empty ? View.GONE : View.VISIBLE);
-
-			if (!empty) {
-				resultCount.setVisibility(View.VISIBLE);
-				resultCount.setText(getResources().getQuantityString(
-						R.plurals.student_count, students.size(), students.size()));
-			} else {
-				resultCount.setVisibility(View.GONE);
-				emptySubtitle.setText(hasActiveFilter()
-						? R.string.empty_students_filtered
-						: R.string.empty_students);
+		viewModel.getClasses().observe(getViewLifecycleOwner(), classes -> {
+			lastClasses = classes;
+			if (classChips != null) {
+				buildClassChips(classes);
 			}
 		});
 
-		viewModel.getClasses().observe(getViewLifecycleOwner(), this::buildClassChips);
-
 		viewModel.getAcademicYears().observe(getViewLifecycleOwner(), years -> {
-			if (years != null && !years.isEmpty()) {
+			lastSessions = years;
+			if (actvSession != null && years != null && !years.isEmpty()) {
 				bindSessions(years);
 			}
 		});
@@ -393,6 +399,46 @@ public class FragmentStudents extends Fragment {
 				viewModel.clearImportResult();
 			}
 		});
+	}
+
+	@Nullable
+	private List<ClassKey> lastClasses;
+
+	@Nullable
+	private List<EntityAcademicYear> lastSessions;
+
+	/**
+	 * Applies whatever has already been loaded to the header. The list and the header are
+	 * created independently, so either can arrive first.
+	 */
+	private void bindPendingState() {
+
+		if (resultCount == null) {
+			return;
+		}
+
+		List<StudentWithYear> students = lastResult;
+		boolean empty = students == null || students.isEmpty();
+
+		emptyState.setVisibility(empty ? View.VISIBLE : View.GONE);
+
+		if (empty) {
+			resultCount.setText("");
+			emptySubtitle.setText(hasActiveFilter()
+					? R.string.empty_students_filtered
+					: R.string.empty_students);
+		} else {
+			resultCount.setText(getResources().getQuantityString(
+					R.plurals.student_count, students.size(), students.size()));
+		}
+
+		if (lastClasses != null) {
+			buildClassChips(lastClasses);
+		}
+
+		if (lastSessions != null && !lastSessions.isEmpty()) {
+			bindSessions(lastSessions);
+		}
 	}
 
 	private boolean hasActiveFilter() {
@@ -417,9 +463,9 @@ public class FragmentStudents extends Fragment {
 		allChip.setOnClickListener(v -> {
 			viewModel.setClassFilter(null, null, null);
 			binding = true;
-			actvYear.setText(anyLabel, false);
-			actvStream.setText(anyLabel, false);
-			actvMajor.setText(anyLabel, false);
+			DropdownBinder.setSelection(actvYear, null, anyLabel);
+			DropdownBinder.setSelection(actvStream, null, anyLabel);
+			DropdownBinder.setSelection(actvMajor, null, anyLabel);
 			binding = false;
 			buildClassChips(classes);
 		});
@@ -440,9 +486,9 @@ public class FragmentStudents extends Fragment {
 			chip.setOnClickListener(v -> {
 				viewModel.setClassFilter(key.year, key.stream, key.majorDept);
 				binding = true;
-				actvYear.setText(key.year.name(), false);
-				actvStream.setText(key.stream.name(), false);
-				actvMajor.setText(key.majorDept.name(), false);
+				DropdownBinder.setSelection(actvYear, key.year, anyLabel);
+				DropdownBinder.setSelection(actvStream, key.stream, anyLabel);
+				DropdownBinder.setSelection(actvMajor, key.majorDept, anyLabel);
 				binding = false;
 				buildClassChips(classes);
 			});

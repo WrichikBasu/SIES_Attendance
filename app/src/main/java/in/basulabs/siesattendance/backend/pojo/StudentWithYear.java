@@ -68,7 +68,9 @@ public class StudentWithYear {
 	 */
 	@NonNull
 	public String classLabel() {
-		return year.name() + " " + stream + " " + majorDept;
+		return year + " " +
+				(stream.isUnaided() ? stream.toString().replace(" (unaided)", "") : stream)
+				+ " " + majorDept;
 	}
 
 	/**

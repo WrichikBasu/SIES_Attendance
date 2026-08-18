@@ -247,8 +247,8 @@ public class FragmentTakeAttendance extends Fragment {
 		}
 
 		String groupLabel = selectedBatchID == null
-				? selectedCourse.year.name() + " " + selectedCourse.stream.name() + " "
-				+ selectedCourse.offeringDepartment.name()
+				? selectedCourse.year + " " + selectedCourse.stream + " "
+				+ selectedCourse.offeringDepartment
 				: actvBatch.getText().toString();
 
 		rollHeader.setText(getString(R.string.roll_header_for, groupLabel));

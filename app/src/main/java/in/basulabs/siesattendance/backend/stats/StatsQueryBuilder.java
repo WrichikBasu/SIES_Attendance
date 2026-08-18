@@ -55,23 +55,20 @@ public final class StatsQueryBuilder {
 	public static SupportSQLiteQuery grouped(@NonNull StatsFilter filter) {
 
 		List<Object> args = new ArrayList<>();
-		StringBuilder sql = new StringBuilder();
 
-		sql.append("SELECT ").append(filter.groupBy.idExpr).append(" AS rowId, ")
-				.append(filter.groupBy.primaryExpr).append(" AS primaryLabel, ")
-				.append(filter.groupBy.secondaryExpr).append(" AS secondaryLabel, ")
-				.append("SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) AS attended, ")
-				.append("COUNT(*) AS total, ")
-				.append("COUNT(DISTINCT l.lectureID) AS lectures, ")
-				.append("COUNT(DISTINCT a.studentID) AS students");
+		String sql = "SELECT " + filter.groupBy.idExpr + " AS rowId, " +
+				filter.groupBy.primaryExpr + " AS primaryLabel, " +
+				filter.groupBy.secondaryExpr + " AS secondaryLabel, " +
+				"SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) AS attended, " +
+				"COUNT(*) AS total, " +
+				"COUNT(DISTINCT l.lectureID) AS lectures, " +
+				"COUNT(DISTINCT a.studentID) AS students" +
+				FROM_CLAUSE +
+				whereClause(filter, args) +
+				" GROUP BY " + filter.groupBy.groupByExpr +
+				" ORDER BY " + orderByClause(filter);
 
-		sql.append(FROM_CLAUSE);
-		sql.append(whereClause(filter, args));
-
-		sql.append(" GROUP BY ").append(filter.groupBy.groupByExpr);
-		sql.append(" ORDER BY ").append(orderByClause(filter));
-
-		return new SimpleSQLiteQuery(sql.toString(), args.toArray());
+		return new SimpleSQLiteQuery(sql, args.toArray());
 	}
 
 	/**
@@ -153,7 +150,8 @@ public final class StatsQueryBuilder {
 			args.add(filter.studentID);
 		}
 
-		// Enums are stored as their constant names, so the bound value is the name string.
+		// Enums are stored by name(), so name() is what gets bound. Never toString(): the
+		// label is for display and is not unique across constants.
 		if (filter.courseType != null) {
 			where.append(" AND c.courseType = ?");
 			args.add(filter.courseType.name());
@@ -184,19 +182,14 @@ public final class StatsQueryBuilder {
 		// not accept an aggregate alias in ORDER BY on every version.
 		String percent = "(SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*))";
 
-		switch (filter.sortOrder) {
-			case PERCENT_DESC:
-				return percent + " DESC, primaryLabel ASC";
-			case LABEL_ASC:
-				return "primaryLabel ASC";
-			case TOTAL_DESC:
-				return "COUNT(*) DESC, primaryLabel ASC";
-			case CHRONOLOGICAL:
+		return switch (filter.sortOrder) {
+			case PERCENT_DESC -> percent + " DESC, primaryLabel ASC";
+			case LABEL_ASC -> "primaryLabel ASC";
+			case TOTAL_DESC -> "COUNT(*) DESC, primaryLabel ASC";
+			case CHRONOLOGICAL ->
 				// Time-based groupings read wrong worst-first; they want oldest to newest.
-				return "primaryLabel ASC";
-			case PERCENT_ASC:
-			default:
-				return percent + " ASC, primaryLabel ASC";
-		}
+					"primaryLabel ASC";
+			default -> percent + " ASC, primaryLabel ASC";
+		};
 	}
 }

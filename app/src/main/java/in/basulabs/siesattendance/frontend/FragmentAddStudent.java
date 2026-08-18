@@ -4,7 +4,6 @@ import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 
 import androidx.annotation.NonNull;
@@ -17,14 +16,14 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Arrays;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityStudent;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
+import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -49,6 +48,18 @@ public class FragmentAddStudent extends Fragment {
 
 	/** Sentinel shown at the top of the optional department dropdowns. */
 	private static final String NONE = "— none —";
+
+	// Selections are tracked as values rather than read back from the fields, because the
+	// stream field's contents depend on the department and a label alone can be ambiguous:
+	// "BSc" means the aided stream for Physics and the unaided one for Computer Science.
+	@Nullable
+	private Department chosenMajor, chosenMinor, chosenOe;
+
+	@Nullable
+	private Stream chosenStream;
+
+	@Nullable
+	private Year chosenYear;
 
 	@Nullable
 	@Override
@@ -110,39 +121,41 @@ public class FragmentAddStudent extends Fragment {
 				etPronouns.setText(student.pronouns);
 				etEmail.setText(student.email);
 				etRollNo.setText(student.rollNo);
-				actvYear.setText(student.year.name(), false);
-				actvStream.setText(student.stream.name(), false);
-				actvMajor.setText(student.majorDept.name(), false);
-				actvMinor.setText(student.minorDept == null
-						? NONE : student.minorDept.name(), false);
-				actvOe.setText(student.oeDept == null
-						? NONE : student.oeDept.name(), false);
+
+				chosenMajor = student.majorDept;
+				chosenStream = student.stream;
+				chosenYear = student.year;
+				chosenMinor = student.minorDept;
+				chosenOe = student.oeDept;
+
+				// Rebuilt rather than just filled in, so the stream list matches the loaded
+				// department before the selection is applied.
+				bindDropdowns();
 			});
 		});
 	}
 
+	/**
+	 * Wires the dropdowns. The major department drives the stream and year fields: a Commerce
+	 * student can only be BCom, so the stream is filled in and locked rather than offered as a
+	 * choice, and departments with no master's course do not list the master's years.
+	 */
 	private void bindDropdowns() {
 
-		actvYear.setAdapter(enumAdapter(Year.values(), false));
-		actvStream.setAdapter(enumAdapter(Stream.values(), false));
-		actvMajor.setAdapter(enumAdapter(Department.values(), false));
-		actvMinor.setAdapter(enumAdapter(Department.values(), true));
-		actvOe.setAdapter(enumAdapter(Department.values(), true));
+		DropdownBinder.linkDepartmentAndStream(actvMajor, actvStream, actvYear,
+				Arrays.asList(Department.values()), null,
+				chosenMajor, chosenStream, chosenYear,
+				(department, stream, year) -> {
+					chosenMajor = department;
+					chosenStream = stream;
+					chosenYear = year;
+				});
 
-		actvMinor.setText(NONE, false);
-		actvOe.setText(NONE, false);
-	}
+		DropdownBinder.bind(actvMinor, Arrays.asList(Department.values()), NONE,
+				chosenMinor, value -> chosenMinor = value);
 
-	private <E extends Enum<E>> ArrayAdapter<String> enumAdapter(E[] values, boolean nullable) {
-		List<String> items = new ArrayList<>();
-		if (nullable) {
-			items.add(NONE);
-		}
-		for (E value : values) {
-			items.add(value.name());
-		}
-		return new ArrayAdapter<>(requireContext(),
-				android.R.layout.simple_list_item_1, items);
+		DropdownBinder.bind(actvOe, Arrays.asList(Department.values()), NONE,
+				chosenOe, value -> chosenOe = value);
 	}
 
 	private void onSave(@NonNull View button) {
@@ -162,9 +175,9 @@ public class FragmentAddStudent extends Fragment {
 			return;
 		}
 
-		Year year = pickEnum(Year.class, actvYear.getText().toString());
-		Stream stream = pickEnum(Stream.class, actvStream.getText().toString());
-		Department major = pickEnum(Department.class, actvMajor.getText().toString());
+		Year year = chosenYear;
+		Stream stream = chosenStream;
+		Department major = chosenMajor;
 
 		if (year == null) {
 			((TextInputLayout) requireView().findViewById(R.id.tilYear))
@@ -182,8 +195,8 @@ public class FragmentAddStudent extends Fragment {
 			return;
 		}
 
-		Department minor = pickEnum(Department.class, actvMinor.getText().toString());
-		Department oe = pickEnum(Department.class, actvOe.getText().toString());
+		Department minor = chosenMinor;
+		Department oe = chosenOe;
 
 		String pronouns = text(etPronouns);
 		if (pronouns.isEmpty()) {
@@ -215,16 +228,4 @@ public class FragmentAddStudent extends Fragment {
 		return field.getText() == null ? "" : field.getText().toString().trim();
 	}
 
-	@Nullable
-	private <E extends Enum<E>> E pickEnum(@NonNull Class<E> type, @Nullable String raw) {
-		if (raw == null || raw.trim().isEmpty() || NONE.equals(raw)) {
-			return null;
-		}
-		for (E constant : type.getEnumConstants()) {
-			if (constant.name().equals(raw.trim())) {
-				return constant;
-			}
-		}
-		return null;
-	}
 }

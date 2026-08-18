@@ -13,6 +13,7 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
+import androidx.recyclerview.widget.ConcatAdapter;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -27,6 +28,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -37,13 +39,13 @@ import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.EntityProfessor;
-import in.basulabs.siesattendance.backend.Stream;
-import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.pojo.StatRow;
 import in.basulabs.siesattendance.backend.pojo.StatsSummary;
 import in.basulabs.siesattendance.backend.stats.StatsFilter;
 import in.basulabs.siesattendance.backend.stats.StatsGroupBy;
+import in.basulabs.siesattendance.frontend.adapter.AdapterHeader;
 import in.basulabs.siesattendance.frontend.adapter.AdapterStatRow;
+import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -111,22 +113,26 @@ public class FragmentStats extends Fragment {
 		anyLabel = getString(R.string.filter_any);
 		allSessionsLabel = getString(R.string.filter_all_sessions);
 
-		bindViews(view);
-		buildGroupChips();
-		buildStaticDropdowns();
-		setupDateButtons();
-		setupActions(view);
-
-		RecyclerView recyclerView = view.findViewById(R.id.rvStats);
+		RecyclerView recyclerView = (RecyclerView) view;
 		adapter = new AdapterStatRow(this::onRowClicked);
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
-		recyclerView.setAdapter(adapter);
+
+		// Controls as the list's first item: the report scrolls as one piece and the rows below
+		// still recycle, which matters when grouping by Lecture returns thousands of them. The
+		// header is wired before the adapter is attached, so nothing it does lands inside a
+		// layout pass.
+		View header = getLayoutInflater()
+				.inflate(R.layout.view_stats_header, recyclerView, false);
+		onHeaderReady(header);
+
+		headerAdapter = new AdapterHeader(header);
+		recyclerView.setAdapter(new ConcatAdapter(headerAdapter, adapter));
 
 		observe();
-		loadOptions();
 
 		viewModel.getAcademicYears().observe(getViewLifecycleOwner(), years -> {
-			if (years != null) {
+			lastSessions = years;
+			if (actvSession != null && years != null) {
 				bindSessions(years);
 			}
 		});
@@ -134,15 +140,55 @@ public class FragmentStats extends Fragment {
 		// Lectures outside every session are excluded by the session join, so the shortfall is
 		// stated rather than left to look like missing attendance.
 		viewModel.getOrphanLectureCount().observe(getViewLifecycleOwner(), count -> {
-			boolean any = count != null && count > 0;
-			tvOrphanWarning.setVisibility(any ? View.VISIBLE : View.GONE);
-			if (any) {
-				tvOrphanWarning.setText(getResources().getQuantityString(
-						R.plurals.warn_orphan_lectures, count, count));
-			}
+			lastOrphanCount = count == null ? 0 : count;
+			bindOrphanWarning();
 		});
 
 		viewModel.scheduleStatsQuery();
+	}
+
+	private AdapterHeader headerAdapter;
+
+	@Nullable
+	private List<EntityAcademicYear> lastSessions;
+
+	private int lastOrphanCount;
+
+	/**
+	 * Wires the header once the RecyclerView has created it. Data may already have loaded by
+	 * then, so whatever arrived first is applied here.
+	 */
+	private void onHeaderReady(@NonNull View header) {
+
+		bindViews(header);
+		buildGroupChips();
+		buildStaticDropdowns();
+		setupDateButtons();
+		setupActions(header);
+		loadOptions();
+
+		if (lastSessions != null) {
+			bindSessions(lastSessions);
+		}
+
+		bindOrphanWarning();
+		bindSummary(viewModel.getStatsSummary().getValue());
+		updateFilterSummary();
+
+		List<StatRow> rows = viewModel.getStatRows().getValue();
+		tvEmpty.setVisibility(rows == null || rows.isEmpty() ? View.VISIBLE : View.GONE);
+	}
+
+	private void bindOrphanWarning() {
+		if (tvOrphanWarning == null) {
+			return;
+		}
+		boolean any = lastOrphanCount > 0;
+		tvOrphanWarning.setVisibility(any ? View.VISIBLE : View.GONE);
+		if (any) {
+			tvOrphanWarning.setText(getResources().getQuantityString(
+					R.plurals.warn_orphan_lectures, lastOrphanCount, lastOrphanCount));
+		}
 	}
 
 	private void bindViews(@NonNull View view) {
@@ -232,14 +278,26 @@ public class FragmentStats extends Fragment {
 			rerun();
 		});
 
-		bindEnumDropdown(actvCourseType, CourseType.values(),
-				value -> viewModel.statsFilter().courseType = (CourseType) value);
-		bindEnumDropdown(actvYear, Year.values(),
-				value -> viewModel.statsFilter().year = (Year) value);
-		bindEnumDropdown(actvStream, Stream.values(),
-				value -> viewModel.statsFilter().stream = (Stream) value);
-		bindEnumDropdown(actvDept, Department.values(),
-				value -> viewModel.statsFilter().department = (Department) value);
+		DropdownBinder.bind(actvCourseType, Arrays.asList(CourseType.values()), anyLabel,
+				null, value -> {
+					viewModel.statsFilter().courseType = value;
+					rerun();
+				});
+
+		// Department, stream and year are linked here too, so a report cannot be asked for
+		// something like Commerce students on a BSc stream.
+		DropdownBinder.linkDepartmentAndStream(actvDept, actvStream, actvYear,
+				Arrays.asList(Department.values()), anyLabel, null, null, null,
+				(department, stream, year) -> {
+					// Named distinctly from the enclosing method's local: a lambda body shares
+					// the enclosing scope, so reusing "filter" here would be shadowing, which
+					// Java rejects.
+					StatsFilter current = viewModel.statsFilter();
+					current.department = department;
+					current.stream = stream;
+					current.year = year;
+					rerun();
+				});
 
 		binding = false;
 	}
@@ -309,30 +367,6 @@ public class FragmentStats extends Fragment {
 		});
 
 		binding = false;
-	}
-
-	private interface EnumSetter {
-		void set(@Nullable Enum<?> value);
-	}
-
-	/**
-	 * Wires a dropdown whose first entry is "Any" and clears that filter.
-	 */
-	private <E extends Enum<E>> void bindEnumDropdown(@NonNull AutoCompleteTextView field,
-	                                                  @NonNull E[] values,
-	                                                  @NonNull EnumSetter setter) {
-		List<String> items = new ArrayList<>();
-		items.add(anyLabel);
-		for (E value : values) {
-			items.add(value.name());
-		}
-
-		field.setAdapter(simple(items));
-		field.setText(anyLabel, false);
-		field.setOnItemClickListener((p, v, position, id) -> {
-			setter.set(position == 0 ? null : values[position - 1]);
-			rerun();
-		});
 	}
 
 	/**
@@ -542,6 +576,10 @@ public class FragmentStats extends Fragment {
 	 */
 	private void syncControlsToFilter() {
 
+		if (groupChips == null) {
+			return;
+		}
+
 		binding = true;
 		StatsFilter filter = viewModel.statsFilter();
 
@@ -574,17 +612,30 @@ public class FragmentStats extends Fragment {
 			adapter.setContext(viewModel.statsFilter().groupBy,
 					viewModel.statsFilter().threshold);
 			adapter.submitList(rows);
-			tvEmpty.setVisibility(rows == null || rows.isEmpty() ? View.VISIBLE : View.GONE);
-			updateFilterSummary();
+
+			// The header is created by the RecyclerView, so it may not exist on the first
+			// emission; onHeaderReady applies the current state once it does.
+			if (tvEmpty != null) {
+				tvEmpty.setVisibility(rows == null || rows.isEmpty()
+						? View.VISIBLE : View.GONE);
+				updateFilterSummary();
+			}
 		});
 
 		viewModel.getStatsSummary().observe(getViewLifecycleOwner(), this::bindSummary);
 
-		viewModel.getStatsBelowCount().observe(getViewLifecycleOwner(), count ->
-				tvBelow.setText(String.valueOf(count == null ? 0 : count)));
+		viewModel.getStatsBelowCount().observe(getViewLifecycleOwner(), count -> {
+			if (tvBelow != null) {
+				tvBelow.setText(String.valueOf(count == null ? 0 : count));
+			}
+		});
 	}
 
 	private void bindSummary(@Nullable StatsSummary summary) {
+
+		if (tvPercent == null) {
+			return;
+		}
 
 		if (summary == null || summary.isEmpty()) {
 			tvPercent.setText("—");
@@ -603,6 +654,10 @@ public class FragmentStats extends Fragment {
 	 * never mistaken for the whole picture.
 	 */
 	private void updateFilterSummary() {
+
+		if (tvActiveFilters == null) {
+			return;
+		}
 
 		StatsFilter filter = viewModel.statsFilter();
 		List<String> parts = new ArrayList<>();
@@ -646,16 +701,16 @@ public class FragmentStats extends Fragment {
 		}
 
 		if (filter.courseType != null) {
-			parts.add(filter.courseType.name());
+			parts.add(filter.courseType.toString());
 		}
 		if (filter.year != null) {
-			parts.add(filter.year.name());
+			parts.add(filter.year.toString());
 		}
 		if (filter.stream != null) {
-			parts.add(filter.stream.name());
+			parts.add(filter.stream.toString());
 		}
 		if (filter.department != null) {
-			parts.add(filter.department.name());
+			parts.add(filter.department.toString());
 		}
 
 		tvActiveFilters.setText(String.join(" · ", parts));

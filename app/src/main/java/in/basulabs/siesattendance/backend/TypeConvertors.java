@@ -57,6 +57,11 @@ public final class TypeConvertors {
 		return epochDay == null ? null : LocalDate.ofEpochDay(epochDay);
 	}
 
+	// ── Enums ────────────────────────────────────────────────────────────
+	// Enums are stored by name(), never by toString(). The display label is free to change,
+	// and does not even have to be unique — Stream.BSc and Stream.BSc_unaided both read "BSc"
+	// — so storing labels would corrupt the database the first time one was reworded.
+
 	// ── Department ───────────────────────────────────────────────────────
 
 	@TypeConverter

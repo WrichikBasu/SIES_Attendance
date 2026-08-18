@@ -26,7 +26,7 @@ public class AdapterStudent
 	private final OnClick listener;
 
 	private static final DiffUtil.ItemCallback<StudentWithYear> DIFF =
-			new DiffUtil.ItemCallback<StudentWithYear>() {
+			new DiffUtil.ItemCallback<>() {
 				@Override
 				public boolean areItemsTheSame(@NonNull StudentWithYear a,
 				                               @NonNull StudentWithYear b) {
