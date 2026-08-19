@@ -145,6 +145,29 @@ public final class Migrations {
 		}
 	};
 
+	/**
+	 * Version 4 to 5: indexes the three foreign key columns Room warned about.
+	 * <p>
+	 * A foreign key column with no index means every change to the parent table triggers a full
+	 * scan of the child to enforce the constraint. Two of these are composite-key columns that
+	 * do not lead their key, so the key's own index cannot serve them; the third had no index at
+	 * all. No data changes.
+	 */
+	public static final Migration MIGRATION_4_5 = new Migration(4, 5) {
+		@Override
+		public void migrate(@NonNull SupportSQLiteDatabase db) {
+
+			db.execSQL("CREATE INDEX IF NOT EXISTS `index_courses_profID` "
+					+ "ON `courses` (`profID`)");
+
+			db.execSQL("CREATE INDEX IF NOT EXISTS `index_batch_student_map_studentID` "
+					+ "ON `batch_student_map` (`studentID`)");
+
+			db.execSQL("CREATE INDEX IF NOT EXISTS `index_course_batch_map_batchID` "
+					+ "ON `course_batch_map` (`batchID`)");
+		}
+	};
+
 	private static void collectYears(@NonNull SupportSQLiteDatabase db, @NonNull String sql,
 	                                 @NonNull Set<Integer> into) {
 		try (Cursor cursor = db.query(sql)) {

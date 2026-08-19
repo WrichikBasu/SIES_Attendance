@@ -185,6 +185,13 @@ public final class CsvImporter {
 			throw new IllegalArgumentException(majorDept + " is not offered as " + requested);
 		}
 
+		// The same backstop the forms use, so a file cannot introduce a combination the UI
+		// would refuse: a BSc student in Masters Part 1, for instance.
+		String problem = AcademicRules.validate(majorDept, stream, year, null);
+		if (problem != null) {
+			throw new IllegalArgumentException(problem);
+		}
+
 		Department minorDept = parseOptionalEnum(Department.class,
 				optional(cells, columns, "minordept"), "minor department");
 		Department oeDept = parseOptionalEnum(Department.class,

@@ -8,7 +8,7 @@
     <fragment
         android:id="@+id/fragmentDashboard"
         android:name="in.basulabs.siesattendance.frontend.FragmentDashboard"
-        android:label="@string/nav_home"
+        android:label="@string/app_bar_title"
         tools:layout="@layout/fragment_dashboard">
 
         <action

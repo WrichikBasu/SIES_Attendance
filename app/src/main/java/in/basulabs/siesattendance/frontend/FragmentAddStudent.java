@@ -19,6 +19,9 @@ import com.google.android.material.textfield.TextInputLayout;
 import java.util.Arrays;
 
 import in.basulabs.siesattendance.R;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+
+import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityStudent;
 import in.basulabs.siesattendance.backend.Stream;
@@ -197,6 +200,18 @@ public class FragmentAddStudent extends Fragment {
 
 		Department minor = chosenMinor;
 		Department oe = chosenOe;
+
+		// The dropdowns narrow one way only, so a stale value can survive a change made above
+		// it. This is the backstop that stops an impossible combination being stored.
+		String problem = AcademicRules.validate(major, stream, year, null);
+		if (problem != null) {
+			new MaterialAlertDialogBuilder(requireContext())
+					.setTitle(R.string.dialog_invalid_combination)
+					.setMessage(problem)
+					.setPositiveButton(android.R.string.ok, null)
+					.show();
+			return;
+		}
 
 		String pronouns = text(etPronouns);
 		if (pronouns.isEmpty()) {

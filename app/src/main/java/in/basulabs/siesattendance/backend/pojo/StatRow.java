@@ -3,6 +3,7 @@ package in.basulabs.siesattendance.backend.pojo;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import in.basulabs.siesattendance.backend.stats.StatsGroupBy;
 import in.basulabs.siesattendance.backend.util.NameFormat;
 
 /**
@@ -44,16 +45,25 @@ public class StatRow {
 	}
 
 	/**
-	 * Student names arrive raw from the roster, so the label is case-corrected for display.
-	 * Other groupings produce labels that are already formatted and pass through unchanged.
+	 * Names arrive raw from the roster, so whichever label holds one is case-corrected for
+	 * display. Which label that is depends on the grouping — for students the name is the
+	 * secondary label, for professors the primary — so the grouping is asked rather than
+	 * assumed.
 	 */
 	@NonNull
-	public String displayPrimary(boolean isPersonName) {
-		return isPersonName ? NameFormat.properCase(primaryLabel) : primaryLabel;
+	public String displayPrimary(@NonNull StatsGroupBy.NameField nameField) {
+		return nameField == StatsGroupBy.NameField.PRIMARY
+				? NameFormat.properCase(primaryLabel)
+				: primaryLabel;
 	}
 
 	@Nullable
-	public String displaySecondary() {
-		return secondaryLabel.isEmpty() ? null : secondaryLabel;
+	public String displaySecondary(@NonNull StatsGroupBy.NameField nameField) {
+		if (secondaryLabel.isEmpty()) {
+			return null;
+		}
+		return nameField == StatsGroupBy.NameField.SECONDARY
+				? NameFormat.properCase(secondaryLabel)
+				: secondaryLabel;
 	}
 }

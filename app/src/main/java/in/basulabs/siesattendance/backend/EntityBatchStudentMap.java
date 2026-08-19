@@ -2,6 +2,7 @@ package in.basulabs.siesattendance.backend;
 
 import androidx.room.Entity;
 import androidx.room.ForeignKey;
+import androidx.room.Index;
 import androidx.room.Ignore;
 
 /**
@@ -12,6 +13,9 @@ import androidx.room.Ignore;
  */
 @Entity(tableName = EntityBatchStudentMap.TABLE_NAME,
 		primaryKeys = {"batchID", "studentID", "academicYear"},
+		// The composite key indexes batchID first, so studentID needs its own index to serve
+		// the foreign key onto students.
+		indices = {@Index(value = {"studentID"})},
 		foreignKeys = {
 				@ForeignKey(entity = EntityBatchDesc.class,
 						parentColumns = "batchID",

@@ -30,7 +30,11 @@ public class StatsFilter {
 
 	public StatsGroupBy groupBy = StatsGroupBy.STUDENT;
 
-	public SortOrder sortOrder = SortOrder.PERCENT_ASC;
+	/**
+	 * Ordering by the primary label is the default. For the student grouping that label is the
+	 * roll number, so a report opens in register order, which is how a class list is read.
+	 */
+	public SortOrder sortOrder = SortOrder.LABEL_ASC;
 
 	// ── Date window ──────────────────────────────────────────────────────
 
@@ -82,7 +86,7 @@ public class StatsFilter {
 	public enum SortOrder {
 		PERCENT_ASC("Lowest %"),
 		PERCENT_DESC("Highest %"),
-		LABEL_ASC("Name"),
+		LABEL_ASC("Roll no. / name"),
 		TOTAL_DESC("Most lectures"),
 		CHRONOLOGICAL("Oldest first");
 

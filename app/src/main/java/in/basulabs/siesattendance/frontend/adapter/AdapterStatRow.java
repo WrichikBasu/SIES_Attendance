@@ -94,12 +94,9 @@ public class AdapterStatRow extends ListAdapter<StatRow, AdapterStatRow.Holder> 
 
 		void bind(@NonNull StatRow row) {
 
-			boolean isPerson = groupBy == StatsGroupBy.STUDENT
-					|| groupBy == StatsGroupBy.PROFESSOR;
+			primary.setText(row.displayPrimary(groupBy.nameField));
 
-			primary.setText(row.displayPrimary(isPerson));
-
-			String sub = row.displaySecondary();
+			String sub = row.displaySecondary(groupBy.nameField);
 			secondary.setText(sub);
 			secondary.setVisibility(sub == null ? View.GONE : View.VISIBLE);
 

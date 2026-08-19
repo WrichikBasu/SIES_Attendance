@@ -30,7 +30,10 @@ import java.time.ZonedDateTime;
  * however, do not use the alphanumeric ID as the primary key in the database.
  */
 @Entity(tableName = EntityCourse.TABLE_NAME,
-		indices = {@Index(value = {"courseCode"}, unique = true)},
+		indices = {@Index(value = {"courseCode"}, unique = true),
+				// Indexed because it is a foreign key: without it, any change to the
+				// professors table forces a full scan of courses to check the constraint.
+				@Index(value = {"profID"})},
 		foreignKeys = {
 				@ForeignKey(entity = EntityProfessor.class,
 						parentColumns = "profID",

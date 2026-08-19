@@ -18,9 +18,14 @@ import java.util.Map;
  * means the pairing cannot be got wrong from any screen, and the stream dropdown collapses to a
  * single unambiguous choice for most departments.
  * <p>
- * The relationship is used in both directions. Choosing a department narrows the stream list,
- * and choosing a stream narrows the department list, so the two fields can be filled in
- * whichever order suits the person using them.
+ * The narrowing runs one way only: department, then stream, then year, then semester. Each
+ * choice restricts the ones after it and leaves the ones before it alone. Making it
+ * bidirectional meant a later field could rewrite an earlier one under the user, which is
+ * disorienting when you are simply correcting a typo further down the form.
+ * <p>
+ * Because narrowing is one-directional, a form can still be left holding a combination that
+ * does not exist — a stream chosen before the department, say. {@link #validate} is the
+ * backstop, and every screen calls it before saving.
  */
 public final class AcademicRules {
 
@@ -107,26 +112,55 @@ public final class AcademicRules {
 	}
 
 	/**
-	 * Keeps a chosen department consistent with a stream, the counterpart to
-	 * {@link #reconcile}. Returns the department unchanged when the pairing is valid, the
-	 * stream's only department when there is one, and otherwise null so the field clears
-	 * rather than silently holding something the stream does not permit.
+	 * Checks a whole selection and describes the first problem found, or returns null when the
+	 * combination is sound.
+	 * <p>
+	 * This is the guard that makes one-way narrowing safe. The dropdowns steer the user towards
+	 * valid combinations, but nothing stops a stale value surviving a change made above it, so
+	 * the pairing is confirmed here rather than trusted.
+	 *
+	 * @param semester may be null on screens without one
 	 */
 	@Nullable
-	public static Department reconcileDepartment(@Nullable Stream stream,
-	                                             @Nullable Department current) {
+	public static String validate(@Nullable Department department, @Nullable Stream stream,
+	                              @Nullable Year year, @Nullable Integer semester) {
 
-		if (stream == null) {
-			return current;
+		if (department != null && stream != null && !isValid(department, stream)) {
+			return department + " is not offered as " + stream;
 		}
 
-		List<Department> allowed = departmentsFor(stream);
-
-		if (current != null && allowed.contains(current)) {
-			return current;
+		if (year != null && stream != null && year.isMasters() != stream.isMasters()) {
+			return stream + " does not have a " + year + " year";
 		}
 
-		return allowed.size() == 1 ? allowed.get(0) : null;
+		if (year != null && department != null
+				&& !yearsFor(department, stream).contains(year)) {
+			return department + " does not run " + year;
+		}
+
+		if (semester != null && year != null && !semestersFor(year).contains(semester)) {
+			return year + " covers semester "
+					+ joinSemesters(semestersFor(year)) + ", not " + semester;
+		}
+
+		if (semester != null && year == null && stream != null
+				&& !semestersFor(null, stream).contains(semester)) {
+			return stream + " has no semester " + semester;
+		}
+
+		return null;
+	}
+
+	@NonNull
+	private static String joinSemesters(@NonNull List<Integer> semesters) {
+		StringBuilder out = new StringBuilder();
+		for (int i = 0; i < semesters.size(); i++) {
+			if (i > 0) {
+				out.append(i == semesters.size() - 1 ? " or " : ", ");
+			}
+			out.append(semesters.get(i));
+		}
+		return out.toString();
 	}
 
 	public static boolean isValid(@Nullable Department department, @Nullable Stream stream) {
@@ -250,6 +284,90 @@ public final class AcademicRules {
 			}
 		}
 		return null;
+	}
+
+	// ── Semesters ────────────────────────────────────────────────────────
+
+	/**
+	 * The semesters a year of study covers.
+	 * <p>
+	 * Semesters run consecutively through a degree, so the year fixes the pair: first year is
+	 * 1 and 2, second is 3 and 4, third is 5 and 6. A master's course restarts the count, so
+	 * Part 1 is 1 and 2 again and Part 2 is 3 and 4; there is no fifth or sixth master's
+	 * semester.
+	 */
+	@NonNull
+	public static List<Integer> semestersFor(@Nullable Year year) {
+
+		if (year == null) {
+			return Arrays.asList(1, 2, 3, 4, 5, 6);
+		}
+
+		switch (year) {
+			case FY:
+			case Masters_P1:
+				return Arrays.asList(1, 2);
+			case SY:
+			case Masters_P2:
+				return Arrays.asList(3, 4);
+			case TY:
+			default:
+				return Arrays.asList(5, 6);
+		}
+	}
+
+	/**
+	 * The years a semester can belong to: the inverse of {@link #semestersFor}. Semesters 1 and
+	 * 2 are ambiguous between FY and Masters Part 1, which is why this returns a list rather
+	 * than a single year.
+	 */
+	@NonNull
+	public static List<Year> yearsForSemester(@Nullable Integer semester) {
+
+		if (semester == null) {
+			return Arrays.asList(Year.values());
+		}
+
+		List<Year> years = new ArrayList<>();
+		for (Year year : Year.values()) {
+			if (semestersFor(year).contains(semester)) {
+				years.add(year);
+			}
+		}
+		return years;
+	}
+
+	/**
+	 * The semesters available for a year and stream together, which is what a dropdown should
+	 * offer. With no year chosen the stream still rules some out: a master's course has no
+	 * semester 5 or 6.
+	 */
+	@NonNull
+	public static List<Integer> semestersFor(@Nullable Year year, @Nullable Stream stream) {
+
+		if (year != null) {
+			return semestersFor(year);
+		}
+
+		if (stream != null && stream.isMasters()) {
+			return Arrays.asList(1, 2, 3, 4);
+		}
+
+		return Arrays.asList(1, 2, 3, 4, 5, 6);
+	}
+
+	/**
+	 * Drops a semester the current year no longer permits, so moving a course from TY to FY
+	 * does not leave semester 5 showing.
+	 */
+	@Nullable
+	public static Integer reconcileSemester(@Nullable Year year, @Nullable Stream stream,
+	                                        @Nullable Integer current) {
+
+		if (current == null) {
+			return null;
+		}
+		return semestersFor(year, stream).contains(current) ? current : null;
 	}
 
 	@NonNull

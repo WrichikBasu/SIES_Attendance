@@ -33,7 +33,9 @@ public class ClassKey {
 
 	@NonNull
 	public String label() {
-		return year + " " + stream + " " + majorDept;
+		return year + " "
+				+ (stream.isUnaided() ? stream.toString().replace(" (unaided)", "") : stream)
+				+ " " + majorDept;
 	}
 
 	@NonNull

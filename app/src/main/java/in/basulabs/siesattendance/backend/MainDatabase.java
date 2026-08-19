@@ -22,7 +22,7 @@ import java.util.concurrent.Executors;
 		EntityAttendance.class,
 		EntityProfessor.class,
 		EntityAcademicYear.class
-}, version = 4, exportSchema = false)
+}, version = 5, exportSchema = false)
 @TypeConverters({TypeConvertors.class})
 public abstract class MainDatabase extends RoomDatabase {
 
@@ -45,7 +45,8 @@ public abstract class MainDatabase extends RoomDatabase {
 					// missing, Room throws rather than silently wiping the database, which is
 					// the behaviour you want once real attendance is in there.
 					.addMigrations(Migrations.MIGRATION_1_2, Migrations.MIGRATION_2_3,
-							Migrations.MIGRATION_3_4)
+							Migrations.MIGRATION_3_4,
+							Migrations.MIGRATION_4_5)
 					.build();
 		}
 		return self;

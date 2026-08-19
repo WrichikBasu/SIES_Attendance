@@ -284,4 +284,8 @@
     <string name="notice_viewing_session">Viewing %1$s. New students and imports go into this
         session.</string>
 
+
+    <string name="dialog_invalid_combination">That combination does not exist</string>
+    <string name="app_bar_title">SIES Attendance</string>
+
 </resources>

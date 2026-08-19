@@ -85,12 +85,14 @@ public final class DropdownBinder {
 	 * Ties a department field, a stream field and optionally a year field together, in both
 	 * directions.
 	 * <p>
-	 * Choosing a department narrows the stream list to what that department offers and selects
-	 * it outright when there is only one, so Commerce never asks whether the student is doing a
-	 * BSc. Choosing a stream narrows the department list the same way, so the fields can be
-	 * filled in whichever order suits the user. The year list follows both: a department with no
-	 * postgraduate course drops the master's years, and a postgraduate stream drops the
-	 * undergraduate ones.
+	 * Narrowing runs one way: department, then stream, then year. Choosing a department
+	 * restricts the stream list to what it offers and selects it outright when there is only
+	 * one, so Commerce never asks whether the student is doing a BSc; choosing a stream
+	 * restricts the year list. A later choice never rewrites an earlier one, so correcting the
+	 * year cannot silently change the department.
+	 * <p>
+	 * The cost of that is that a stale value can survive a change made above it, which is why
+	 * every caller runs {@link AcademicRules#validate} before saving.
 	 *
 	 * @param yearField may be null on screens with no year field
 	 * @param onChanged receives the reconciled department, stream and year after any change
@@ -105,26 +107,54 @@ public final class DropdownBinder {
 	                                           @Nullable Year year,
 	                                           @NonNull Linked onChanged) {
 
-		final Holder state = new Holder(department, stream, year);
+		linkAcademicFields(departmentField, streamField, yearField, null, departments, anyLabel,
+				department, stream, year, null,
+				(dept, str, yr, semester) -> onChanged.onChanged(dept, str, yr));
+	}
+
+	/**
+	 * The full linkage, including semester.
+	 * <p>
+	 * Semester follows year the way stream follows department: first year covers semesters 1
+	 * and 2, second 3 and 4, third 5 and 6, with a master's course restarting the count.
+	 * Choosing a semester does not alter the year, in keeping with the one-way rule.
+	 *
+	 * @param semesterField may be null on screens with no semester
+	 */
+	public static void linkAcademicFields(@NonNull AutoCompleteTextView departmentField,
+	                                      @NonNull AutoCompleteTextView streamField,
+	                                      @Nullable AutoCompleteTextView yearField,
+	                                      @Nullable AutoCompleteTextView semesterField,
+	                                      @NonNull List<Department> departments,
+	                                      @Nullable String anyLabel,
+	                                      @Nullable Department department,
+	                                      @Nullable Stream stream,
+	                                      @Nullable Year year,
+	                                      @Nullable Integer semester,
+	                                      @NonNull LinkedFull onChanged) {
+
+		final Holder state = new Holder(department, stream, year, semester);
 
 		// Every field rebuilds all three lists, because a change to any one of them can alter
 		// what the other two may contain.
 		Runnable rebuild = () -> rebuildAll(departmentField, streamField, yearField,
-				departments, anyLabel, state);
+				semesterField, departments, anyLabel, state);
 
 		departmentField.setOnItemClickListener((parent, view, position, id) -> {
 
-			List<Department> shown = visibleDepartments(departments, state.stream);
+			// The department list is never narrowed, so it is always the full supplied list.
 			int offset = anyLabel == null ? 0 : 1;
-			state.department = position < offset ? null : shown.get(position - offset);
+			state.department = position < offset ? null : departments.get(position - offset);
 
 			// The stream already chosen may not exist for this department, so it is kept,
 			// replaced by the sole option, or reduced to the equivalent level.
 			state.stream = AcademicRules.reconcile(state.department, state.stream);
 			state.year = reconcileYear(state);
+			state.semester = AcademicRules.reconcileSemester(state.year, state.stream,
+					state.semester);
 
 			rebuild.run();
-			onChanged.onChanged(state.department, state.stream, state.year);
+			notifyChanged(state, onChanged);
 		});
 
 		streamField.setOnItemClickListener((parent, view, position, id) -> {
@@ -135,25 +165,50 @@ public final class DropdownBinder {
 
 			// The mirror of the above: a department that does not offer this stream is
 			// cleared, or replaced when the stream leaves only one possibility.
-			state.department =
-					AcademicRules.reconcileDepartment(state.stream, state.department);
+			// Deliberately leaves the department alone: narrowing is one-way.
 			state.year = reconcileYear(state);
+			state.semester = AcademicRules.reconcileSemester(state.year, state.stream,
+					state.semester);
 
 			rebuild.run();
-			onChanged.onChanged(state.department, state.stream, state.year);
+			notifyChanged(state, onChanged);
 		});
 
 		if (yearField != null) {
 			yearField.setOnItemClickListener((parent, view, position, id) -> {
-				List<Year> allowed =
-						AcademicRules.yearsFor(state.department, state.stream);
+
+				List<Year> allowed = AcademicRules.yearsFor(state.department, state.stream);
 				int offset = anyLabel == null ? 0 : 1;
 				state.year = position < offset ? null : allowed.get(position - offset);
-				onChanged.onChanged(state.department, state.stream, state.year);
+
+				// A semester left over from another year is dropped rather than kept as an
+				// impossible pairing such as FY with semester 5.
+				state.semester = AcademicRules.reconcileSemester(state.year, state.stream,
+						state.semester);
+
+				rebuild.run();
+				notifyChanged(state, onChanged);
+			});
+		}
+
+		if (semesterField != null) {
+			semesterField.setOnItemClickListener((parent, view, position, id) -> {
+
+				List<Integer> allowed =
+						AcademicRules.semestersFor(state.year, state.stream);
+				int offset = anyLabel == null ? 0 : 1;
+				state.semester = position < offset ? null : allowed.get(position - offset);
+
+				rebuild.run();
+				notifyChanged(state, onChanged);
 			});
 		}
 
 		rebuild.run();
+	}
+
+	private static void notifyChanged(@NonNull Holder state, @NonNull LinkedFull onChanged) {
+		onChanged.onChanged(state.department, state.stream, state.year, state.semester);
 	}
 
 	/**
@@ -171,41 +226,20 @@ public final class DropdownBinder {
 	}
 
 	/**
-	 * The departments on offer, narrowed by the chosen stream and intersected with whatever the
-	 * caller supplied.
-	 */
-	@NonNull
-	private static List<Department> visibleDepartments(@NonNull List<Department> supplied,
-	                                                   @Nullable Stream stream) {
-		if (stream == null) {
-			return supplied;
-		}
-
-		List<Department> allowed = AcademicRules.departmentsFor(stream);
-		List<Department> out = new ArrayList<>();
-		for (Department department : supplied) {
-			if (allowed.contains(department)) {
-				out.add(department);
-			}
-		}
-		return out;
-	}
-
-	/**
 	 * Rebuilds all three adapters for the current state and reapplies the selections, without
 	 * firing any callback.
 	 */
 	private static void rebuildAll(@NonNull AutoCompleteTextView departmentField,
 	                               @NonNull AutoCompleteTextView streamField,
 	                               @Nullable AutoCompleteTextView yearField,
+	                               @Nullable AutoCompleteTextView semesterField,
 	                               @NonNull List<Department> departments,
 	                               @Nullable String anyLabel,
 	                               @NonNull Holder state) {
 
 		Context context = streamField.getContext();
 
-		setItems(departmentField, visibleDepartments(departments, state.stream), anyLabel,
-				state.department, context);
+		setItems(departmentField, departments, anyLabel, state.department, context);
 
 		List<Stream> streams = AcademicRules.streamsFor(state.department);
 		setItems(streamField, streams, anyLabel, state.stream, context);
@@ -217,6 +251,27 @@ public final class DropdownBinder {
 		if (yearField != null) {
 			setItems(yearField, AcademicRules.yearsFor(state.department, state.stream),
 					anyLabel, state.year, context);
+		}
+
+		if (semesterField != null) {
+
+			List<Integer> semesters =
+					AcademicRules.semestersFor(state.year, state.stream);
+
+			List<String> labels = new ArrayList<>();
+			if (anyLabel != null) {
+				labels.add(anyLabel);
+			}
+			for (Integer value : semesters) {
+				labels.add(String.valueOf(value));
+			}
+
+			semesterField.setAdapter(new ArrayAdapter<>(context,
+					android.R.layout.simple_list_item_1, labels));
+
+			semesterField.setText(state.semester == null
+					? (anyLabel == null ? "" : anyLabel)
+					: String.valueOf(state.semester), false);
 		}
 	}
 
@@ -243,6 +298,11 @@ public final class DropdownBinder {
 		               @Nullable Year year);
 	}
 
+	public interface LinkedFull {
+		void onChanged(@Nullable Department department, @Nullable Stream stream,
+		               @Nullable Year year, @Nullable Integer semester);
+	}
+
 	/** Mutable selection state shared by the linked fields. */
 	private static class Holder {
 
@@ -255,10 +315,15 @@ public final class DropdownBinder {
 		@Nullable
 		Year year;
 
-		Holder(@Nullable Department department, @Nullable Stream stream, @Nullable Year year) {
+		@Nullable
+		Integer semester;
+
+		Holder(@Nullable Department department, @Nullable Stream stream, @Nullable Year year,
+		       @Nullable Integer semester) {
 			this.department = department;
 			this.stream = stream;
 			this.year = year;
+			this.semester = semester;
 		}
 	}
 }

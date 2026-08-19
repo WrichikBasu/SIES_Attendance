@@ -23,6 +23,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityCourse;
@@ -66,6 +67,12 @@ public class FragmentAddCourse extends Fragment {
 
 	@Nullable
 	private CourseType chosenType;
+
+	// Semester is bound to the year: FY covers 1 and 2, SY 3 and 4, TY 5 and 6, with a
+	// master's course restarting the count. Tracked as a value for the same reason as the
+	// others, since the dropdown's contents depend on the year.
+	@Nullable
+	private Integer chosenSemester;
 
 	@Nullable
 	@Override
@@ -144,12 +151,14 @@ public class FragmentAddCourse extends Fragment {
 				etCode.setText(course.courseCode);
 				etTopic.setText(course.courseTopic);
 				etRemarks.setText(course.remarks);
-				actvSemester.setText(String.valueOf(course.semester), false);
-
 				chosenDept = course.offeringDepartment;
 				chosenStream = course.stream;
 				chosenYear = course.year;
+				chosenSemester = course.semester;
 				chosenType = course.courseType;
+
+				// Rebuilt rather than just filled in, so each list matches the loaded values
+				// before the selections are applied.
 				bindDropdowns();
 
 				pendingProfID = course.profID;
@@ -181,24 +190,18 @@ public class FragmentAddCourse extends Fragment {
 	 */
 	private void bindDropdowns() {
 
-		DropdownBinder.linkDepartmentAndStream(actvDept, actvStream, actvYear,
+		DropdownBinder.linkAcademicFields(actvDept, actvStream, actvYear, actvSemester,
 				Arrays.asList(Department.values()), null,
-				chosenDept, chosenStream, chosenYear,
-				(department, stream, year) -> {
+				chosenDept, chosenStream, chosenYear, chosenSemester,
+				(department, stream, year, semester) -> {
 					chosenDept = department;
 					chosenStream = stream;
 					chosenYear = year;
+					chosenSemester = semester;
 				});
 
 		DropdownBinder.bind(actvType, Arrays.asList(CourseType.values()), null,
 				chosenType, value -> chosenType = value);
-
-		List<String> semesters = new ArrayList<>();
-		for (int i = 1; i <= 6; i++) {
-			semesters.add(String.valueOf(i));
-		}
-		actvSemester.setAdapter(new ArrayAdapter<>(requireContext(),
-				android.R.layout.simple_list_item_1, semesters));
 
 		// Professors are loaded off the main thread, then the dropdown is populated back on it.
 		viewModel.loadProfessorsSync(list -> requireActivity().runOnUiThread(() -> {
@@ -217,6 +220,7 @@ public class FragmentAddCourse extends Fragment {
 
 		tilCode.setError(null);
 		tilTopic.setError(null);
+		((TextInputLayout) requireView().findViewById(R.id.tilSemester)).setError(null);
 
 		String code = etCode.getText() == null ? "" : etCode.getText().toString().trim();
 		String topic = etTopic.getText() == null ? "" : etTopic.getText().toString().trim();
@@ -239,10 +243,21 @@ public class FragmentAddCourse extends Fragment {
 			return;
 		}
 
-		int semester;
-		try {
-			semester = Integer.parseInt(actvSemester.getText().toString().trim());
-		} catch (NumberFormatException e) {
+		if (chosenSemester == null) {
+			((TextInputLayout) requireView().findViewById(R.id.tilSemester))
+					.setError(getString(R.string.error_required));
+			return;
+		}
+
+		int semester = chosenSemester;
+
+		String problem = AcademicRules.validate(dept, stream, year, semester);
+		if (problem != null) {
+			new MaterialAlertDialogBuilder(requireContext())
+					.setTitle(R.string.dialog_invalid_combination)
+					.setMessage(problem)
+					.setPositiveButton(android.R.string.ok, null)
+					.show();
 			return;
 		}
 

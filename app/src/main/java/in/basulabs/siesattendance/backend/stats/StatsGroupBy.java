@@ -22,12 +22,19 @@ public enum StatsGroupBy {
 			"''",
 			"ay.academicYear"),
 
-	/** One row per student. */
+	/**
+	 * One row per student.
+	 * <p>
+	 * The roll number is the primary label and the name the secondary, matching the student
+	 * list elsewhere in the app: the roll number is what a register is read by, and it is also
+	 * what the default sort orders on.
+	 */
 	STUDENT("Student",
 			"s.studentID",
-			"s.name",
 			"y.rollNo",
-			"s.studentID, s.name, y.rollNo"),
+			"s.name",
+			"s.studentID, s.name, y.rollNo",
+			NameField.SECONDARY),
 
 	/** One row per course. */
 	COURSE("Course",
@@ -94,7 +101,8 @@ public enum StatsGroupBy {
 			"p.profID",
 			"p.name",
 			"p.department",
-			"p.profID, p.name, p.department"),
+			"p.profID, p.name, p.department",
+			NameField.PRIMARY),
 
 	/** One row per day of the week, to expose a slot that is chronically poorly attended. */
 	WEEKDAY("Day of week",
@@ -117,6 +125,16 @@ public enum StatsGroupBy {
 			"COALESCE(b.batchName, 'Whole class')",
 			"l.lectureID, c.courseCode, l.startDateTime, b.batchName");
 
+	/**
+	 * Which label, if either, holds a person's name and therefore needs case correction on
+	 * display. Rosters arrive in whatever case the office typed them.
+	 */
+	public enum NameField {
+		NONE,
+		PRIMARY,
+		SECONDARY
+	}
+
 	/** Shown on the group-by chip. */
 	@NonNull
 	public final String label;
@@ -137,13 +155,23 @@ public enum StatsGroupBy {
 	@NonNull
 	public final String groupByExpr;
 
+	@NonNull
+	public final NameField nameField;
+
 	StatsGroupBy(@NonNull String label, @NonNull String idExpr, @NonNull String primaryExpr,
 	             @NonNull String secondaryExpr, @NonNull String groupByExpr) {
+		this(label, idExpr, primaryExpr, secondaryExpr, groupByExpr, NameField.NONE);
+	}
+
+	StatsGroupBy(@NonNull String label, @NonNull String idExpr, @NonNull String primaryExpr,
+	             @NonNull String secondaryExpr, @NonNull String groupByExpr,
+	             @NonNull NameField nameField) {
 		this.label = label;
 		this.idExpr = idExpr;
 		this.primaryExpr = primaryExpr;
 		this.secondaryExpr = secondaryExpr;
 		this.groupByExpr = groupByExpr;
+		this.nameField = nameField;
 	}
 
 	/**

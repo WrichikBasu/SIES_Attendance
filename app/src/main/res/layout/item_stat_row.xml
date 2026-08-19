@@ -19,18 +19,21 @@
             android:layout_weight="1"
             android:orientation="vertical">
 
+            <!-- Sized to match item_student: the roll number leads, the name supports it -->
             <TextView
                 android:id="@+id/tvPrimary"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textAppearance="?attr/textAppearanceTitleSmall"
+                android:textAppearance="?attr/textAppearanceTitleMedium"
+                android:textColor="?attr/colorOnSurface"
                 tools:text="Aarav Patil" />
 
             <TextView
                 android:id="@+id/tvSecondary"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:layout_marginTop="1dp"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
                 android:textColor="?attr/colorOnSurfaceVariant"
                 tools:text="2024CS032" />
 
