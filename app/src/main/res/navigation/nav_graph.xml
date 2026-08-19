@@ -23,6 +23,9 @@
         <action
             android:id="@+id/action_dashboard_to_sessions"
             app:destination="@id/fragmentAcademicYears" />
+        <action
+            android:id="@+id/action_dashboard_to_backup"
+            app:destination="@id/fragmentBackup" />
     </fragment>
 
     <fragment
@@ -188,5 +191,11 @@
             android:id="@+id/action_stats_to_studentDetail"
             app:destination="@id/fragmentStudentDetail" />
     </fragment>
+
+    <fragment
+        android:id="@+id/fragmentBackup"
+        android:name="in.basulabs.siesattendance.frontend.FragmentBackup"
+        android:label="@string/title_backup"
+        tools:layout="@layout/fragment_backup" />
 
 </navigation>

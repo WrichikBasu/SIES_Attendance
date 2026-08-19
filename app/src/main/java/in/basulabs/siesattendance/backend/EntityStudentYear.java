@@ -60,10 +60,21 @@ public class EntityStudentYear {
 	@Nullable
 	public Department oeDept;
 
+	/**
+	 * Which semester of {@link #year} the student is in.
+	 * <p>
+	 * Nullable because the year already narrows it to a pair and the app worked without it for
+	 * five schema versions; rows predating the column have no honest value to carry. Where it
+	 * is set, it must agree with the year, which {@code AcademicRules.validate} enforces on
+	 * every write path.
+	 */
+	@Nullable
+	public Integer semester;
+
 	public EntityStudentYear(long studentID, int academicYear, @NonNull String rollNo,
 	                         @NonNull Year year, @NonNull Stream stream,
 	                         @NonNull Department majorDept, @Nullable Department minorDept,
-	                         @Nullable Department oeDept) {
+	                         @Nullable Department oeDept, @Nullable Integer semester) {
 		this.studentID = studentID;
 		this.academicYear = academicYear;
 		this.rollNo = rollNo;
@@ -72,5 +83,6 @@ public class EntityStudentYear {
 		this.majorDept = majorDept;
 		this.minorDept = minorDept;
 		this.oeDept = oeDept;
+		this.semester = semester;
 	}
 }

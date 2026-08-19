@@ -45,11 +45,15 @@ public class StudentWithYear {
 	@Nullable
 	public Department oeDept;
 
+	/** Null for records created before the semester was asked for. */
+	@Nullable
+	public Integer semester;
+
 	public StudentWithYear(long studentID, @NonNull String name, @NonNull String pronouns,
 	                       @Nullable String email, @NonNull String rollNo, int academicYear,
 	                       @NonNull Year year, @NonNull Stream stream,
 	                       @NonNull Department majorDept, @Nullable Department minorDept,
-	                       @Nullable Department oeDept) {
+	                       @Nullable Department oeDept, @Nullable Integer semester) {
 		this.studentID = studentID;
 		this.name = name;
 		this.pronouns = pronouns;
@@ -61,6 +65,7 @@ public class StudentWithYear {
 		this.majorDept = majorDept;
 		this.minorDept = minorDept;
 		this.oeDept = oeDept;
+		this.semester = semester;
 	}
 
 	/**

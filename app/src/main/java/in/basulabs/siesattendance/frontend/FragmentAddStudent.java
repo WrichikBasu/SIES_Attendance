@@ -5,6 +5,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AutoCompleteTextView;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -47,7 +48,11 @@ public class FragmentAddStudent extends Fragment {
 
 	private TextInputLayout tilName, tilRollNo;
 
-	private AutoCompleteTextView actvYear, actvStream, actvMajor, actvMinor, actvOe;
+	private AutoCompleteTextView actvYear, actvStream, actvSemester, actvMajor, actvMinor,
+			actvOe;
+
+	/** Shows the first cross-check failure as soon as one exists, rather than at save time. */
+	private TextView combinationWarning;
 
 	/** Sentinel shown at the top of the optional department dropdowns. */
 	private static final String NONE = "— none —";
@@ -63,6 +68,9 @@ public class FragmentAddStudent extends Fragment {
 
 	@Nullable
 	private Year chosenYear;
+
+	@Nullable
+	private Integer chosenSemester;
 
 	@Nullable
 	@Override
@@ -91,6 +99,8 @@ public class FragmentAddStudent extends Fragment {
 
 		actvYear = view.findViewById(R.id.actvYear);
 		actvStream = view.findViewById(R.id.actvStream);
+		actvSemester = view.findViewById(R.id.actvSemester);
+		combinationWarning = view.findViewById(R.id.tvCombinationWarning);
 		actvMajor = view.findViewById(R.id.actvMajorDept);
 		actvMinor = view.findViewById(R.id.actvMinorDept);
 		actvOe = view.findViewById(R.id.actvOeDept);
@@ -128,6 +138,7 @@ public class FragmentAddStudent extends Fragment {
 				chosenMajor = student.majorDept;
 				chosenStream = student.stream;
 				chosenYear = student.year;
+				chosenSemester = student.semester;
 				chosenMinor = student.minorDept;
 				chosenOe = student.oeDept;
 
@@ -145,20 +156,82 @@ public class FragmentAddStudent extends Fragment {
 	 */
 	private void bindDropdowns() {
 
-		DropdownBinder.linkDepartmentAndStream(actvMajor, actvStream, actvYear,
+		// The four academic fields move together: department narrows stream, stream narrows
+		// year, year narrows semester. Using the full linkage rather than the three-field
+		// variant is what makes the year and semester agree by construction, so the only way
+		// to reach an impossible pair is to change a field above one already chosen.
+		DropdownBinder.linkAcademicFields(actvMajor, actvStream, actvYear, actvSemester,
 				Arrays.asList(Department.values()), null,
-				chosenMajor, chosenStream, chosenYear,
-				(department, stream, year) -> {
+				chosenMajor, chosenStream, chosenYear, chosenSemester,
+				(department, stream, year, semester) -> {
 					chosenMajor = department;
 					chosenStream = stream;
 					chosenYear = year;
+					chosenSemester = semester;
+					showCombinationProblem();
 				});
 
 		DropdownBinder.bind(actvMinor, Arrays.asList(Department.values()), NONE,
-				chosenMinor, value -> chosenMinor = value);
+				chosenMinor, value -> {
+					chosenMinor = value;
+					showCombinationProblem();
+				});
 
 		DropdownBinder.bind(actvOe, Arrays.asList(Department.values()), NONE,
-				chosenOe, value -> chosenOe = value);
+				chosenOe, value -> {
+					chosenOe = value;
+					showCombinationProblem();
+				});
+
+		showCombinationProblem();
+	}
+
+	/**
+	 * Describes the first cross-check failure in the current selection, or null when it is
+	 * sound.
+	 * <p>
+	 * {@link AcademicRules#validate} covers department against stream, year against both, and
+	 * semester against year. The minor and open-elective checks are here rather than in
+	 * AcademicRules because they are about this form specifically: a student cannot take their
+	 * own major department as a minor or an open elective, which is a rule about one student
+	 * rather than about what the college offers.
+	 */
+	@Nullable
+	private String combinationProblem() {
+
+		String problem = AcademicRules.validate(chosenMajor, chosenStream, chosenYear,
+				chosenSemester);
+
+		if (problem != null) {
+			return problem;
+		}
+
+		if (chosenMajor != null && chosenMajor == chosenMinor) {
+			return getString(R.string.error_minor_same_as_major);
+		}
+
+		if (chosenMajor != null && chosenMajor == chosenOe) {
+			return getString(R.string.error_oe_same_as_major);
+		}
+
+		if (chosenMinor != null && chosenMinor == chosenOe) {
+			return getString(R.string.error_oe_same_as_minor);
+		}
+
+		return null;
+	}
+
+	/** Puts {@link #combinationProblem()} on screen, or hides the banner when there is none. */
+	private void showCombinationProblem() {
+
+		if (combinationWarning == null) {
+			return;
+		}
+
+		String problem = combinationProblem();
+
+		combinationWarning.setText(problem);
+		combinationWarning.setVisibility(problem == null ? View.GONE : View.VISIBLE);
 	}
 
 	private void onSave(@NonNull View button) {
@@ -202,9 +275,11 @@ public class FragmentAddStudent extends Fragment {
 		Department oe = chosenOe;
 
 		// The dropdowns narrow one way only, so a stale value can survive a change made above
-		// it. This is the backstop that stops an impossible combination being stored.
-		String problem = AcademicRules.validate(major, stream, year, null);
+		// it. The banner has been showing this since the moment it became true; the dialog is
+		// the backstop that stops it being stored anyway.
+		String problem = combinationProblem();
 		if (problem != null) {
+			showCombinationProblem();
 			new MaterialAlertDialogBuilder(requireContext())
 					.setTitle(R.string.dialog_invalid_combination)
 					.setMessage(problem)
@@ -232,9 +307,10 @@ public class FragmentAddStudent extends Fragment {
 		if (isEditing()) {
 			student.studentID = editingStudentID;
 			viewModel.updateStudent(student, rollNo, year, stream, major, minor, oe,
-					navigateBack);
+					chosenSemester, navigateBack);
 		} else {
-			viewModel.addStudent(student, rollNo, year, stream, major, minor, oe, navigateBack);
+			viewModel.addStudent(student, rollNo, year, stream, major, minor, oe,
+					chosenSemester, navigateBack);
 		}
 	}
 

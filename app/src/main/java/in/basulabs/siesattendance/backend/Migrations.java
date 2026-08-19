@@ -168,6 +168,21 @@ public final class Migrations {
 		}
 	};
 
+	/**
+	 * Adds the semester a student is in.
+	 * <p>
+	 * Nullable, and left null for every existing row. A semester was never asked for before,
+	 * so there is nothing to backfill it from: the year narrows it to a pair (SY means 3 or 4)
+	 * but cannot pick between them, and guessing would put a value in front of the user that
+	 * looks recorded when it was invented. Rows fill in as students are edited.
+	 */
+	public static final Migration MIGRATION_5_6 = new Migration(5, 6) {
+		@Override
+		public void migrate(@NonNull SupportSQLiteDatabase db) {
+			db.execSQL("ALTER TABLE `student_year` ADD COLUMN `semester` INTEGER");
+		}
+	};
+
 	private static void collectYears(@NonNull SupportSQLiteDatabase db, @NonNull String sql,
 	                                 @NonNull Set<Integer> into) {
 		try (Cursor cursor = db.query(sql)) {

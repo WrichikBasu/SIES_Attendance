@@ -73,6 +73,9 @@ public class FragmentDashboard extends Fragment {
 				Navigation.findNavController(v)
 						.navigate(R.id.action_dashboard_to_takeAttendance));
 
+		view.findViewById(R.id.btnBackup).setOnClickListener(v ->
+				Navigation.findNavController(v).navigate(R.id.action_dashboard_to_backup));
+
 		observe();
 	}
 

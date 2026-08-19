@@ -17,6 +17,8 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
@@ -41,6 +43,7 @@ import in.basulabs.siesattendance.backend.stats.StatsFilter;
 import in.basulabs.siesattendance.backend.stats.StatsQueryBuilder;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
+import in.basulabs.siesattendance.backend.util.DatabaseBackup;
 
 /**
  * Shared across every fragment via {@code requireActivity()} scope, so the class filter chosen
@@ -67,6 +70,17 @@ public class AttendanceViewModel extends AndroidViewModel {
 	private final MutableLiveData<CsvImporter.Result> importResult = new MutableLiveData<>();
 	private final MutableLiveData<String> toastMessage = new MutableLiveData<>();
 	private final MutableLiveData<Boolean> busy = new MutableLiveData<>(false);
+
+	private final MutableLiveData<DatabaseBackup.Result> backupResult = new MutableLiveData<>();
+	private final MutableLiveData<DatabaseBackup.Result> restoreResult = new MutableLiveData<>();
+
+	/**
+	 * Backups run here rather than on the shared database pool. One export can occupy a thread
+	 * for seconds — key stretching, then compressing the whole file — and the query pool is
+	 * what keeps the rest of the UI responsive. Single-threaded because two concurrent
+	 * restores would race for the same database file.
+	 */
+	private static final ExecutorService BACKUP_EXECUTOR = Executors.newSingleThreadExecutor();
 
 	// Attendance sheet being edited
 	private final MutableLiveData<List<AttendanceRow>> attendanceRows = new MutableLiveData<>();
@@ -234,6 +248,78 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	public void clearImportResult() {
 		importResult.setValue(null);
+	}
+
+	// ── Backup and restore ───────────────────────────────────────────────
+
+	public LiveData<DatabaseBackup.Result> getBackupResult() {
+		return backupResult;
+	}
+
+	public void clearBackupResult() {
+		backupResult.setValue(null);
+	}
+
+	public LiveData<DatabaseBackup.Result> getRestoreResult() {
+		return restoreResult;
+	}
+
+	public void clearRestoreResult() {
+		restoreResult.setValue(null);
+	}
+
+	/**
+	 * Writes the whole database to the chosen file.
+	 *
+	 * @param password {@code null} for a plain backup; otherwise the file is encrypted and
+	 *                 this password is needed to restore it. Wiped by the backup code.
+	 */
+	public void exportBackup(@NonNull Uri destination, @Nullable char[] password) {
+
+		busy.setValue(true);
+
+		// Not on DB_EXECUTOR: a large export holds its thread for a while, and that pool is
+		// what every screen's queries go through. Key derivation alone is several hundred
+		// milliseconds by design.
+		BACKUP_EXECUTOR.execute(() -> {
+			DatabaseBackup.Result result = DatabaseBackup.export(getApplication(), destination,
+					password);
+			busy.postValue(false);
+			backupResult.postValue(result);
+		});
+	}
+
+	/**
+	 * Reads the header of a candidate file so the caller knows whether to ask for a password.
+	 * Cheap: it touches only the first few dozen bytes.
+	 */
+	public void inspectBackup(@NonNull Uri source,
+	                          @NonNull java.util.function.Consumer<DatabaseBackup.Info> cb) {
+
+		BACKUP_EXECUTOR.execute(() -> {
+			DatabaseBackup.Info info = DatabaseBackup.inspect(getApplication(), source);
+			new Handler(Looper.getMainLooper()).post(() -> cb.accept(info));
+		});
+	}
+
+	/**
+	 * Replaces the database with the contents of the chosen file.
+	 * <p>
+	 * A successful restore leaves this ViewModel holding a closed database, so the observer is
+	 * expected to restart the app rather than continue. Nothing here refreshes its own state
+	 * on success for that reason.
+	 */
+	public void importBackup(@NonNull Uri source, @Nullable char[] password,
+	                         @NonNull DatabaseBackup.Mode mode) {
+
+		busy.setValue(true);
+
+		BACKUP_EXECUTOR.execute(() -> {
+			DatabaseBackup.Result result = DatabaseBackup.restore(getApplication(), source,
+					password, mode);
+			busy.postValue(false);
+			restoreResult.postValue(result);
+		});
 	}
 
 	// ── Students and class filtering ─────────────────────────────────────
@@ -406,7 +492,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void addStudent(@NonNull EntityStudent student, @NonNull String rollNo,
 	                       @NonNull Year year, @NonNull Stream stream,
 	                       @NonNull Department majorDept, @Nullable Department minorDept,
-	                       @Nullable Department oeDept, @NonNull Runnable onDone) {
+	                       @Nullable Department oeDept, @Nullable Integer semester,
+	                       @NonNull Runnable onDone) {
 
 		// New students land in the session the screen is showing, which is what someone
 		// entering last year's late admission expects.
@@ -415,7 +502,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				db.daoStudent().upsertStudentWithYear(student, acadYear, rollNo, year, stream,
-						majorDept, minorDept, oeDept);
+						majorDept, minorDept, oeDept, semester);
 				toastMessage.postValue("Student saved");
 				refreshStudents();
 				onDone.run();
@@ -854,14 +941,15 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void updateStudent(@NonNull EntityStudent student, @NonNull String rollNo,
 	                          @NonNull Year year, @NonNull Stream stream,
 	                          @NonNull Department majorDept, @Nullable Department minorDept,
-	                          @Nullable Department oeDept, @NonNull Runnable onDone) {
+	                          @Nullable Department oeDept, @Nullable Integer semester,
+	                          @NonNull Runnable onDone) {
 
 		final int acadYear = studentFilter().academicYear;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				db.daoStudent().updateStudentWithYear(student, acadYear, rollNo, year, stream,
-						majorDept, minorDept, oeDept);
+						majorDept, minorDept, oeDept, semester);
 				toastMessage.postValue("Student updated");
 				refreshStudents();
 				onDone.run();

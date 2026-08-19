@@ -185,9 +185,11 @@ public final class CsvImporter {
 			throw new IllegalArgumentException(majorDept + " is not offered as " + requested);
 		}
 
+		Integer semester = parseOptionalInt(optional(cells, columns, "semester"), "semester");
+
 		// The same backstop the forms use, so a file cannot introduce a combination the UI
-		// would refuse: a BSc student in Masters Part 1, for instance.
-		String problem = AcademicRules.validate(majorDept, stream, year, null);
+		// would refuse: a BSc student in Masters Part 1, or a first-year in semester 5.
+		String problem = AcademicRules.validate(majorDept, stream, year, semester);
 		if (problem != null) {
 			throw new IllegalArgumentException(problem);
 		}
@@ -197,6 +199,8 @@ public final class CsvImporter {
 		Department oeDept = parseOptionalEnum(Department.class,
 				optional(cells, columns, "oedept"), "open elective department");
 
+
+
 		EntityStudent student = new EntityStudent(name, pronouns, email);
 
 		// Checked before the upsert so the summary can distinguish new entries from edits,
@@ -204,7 +208,7 @@ public final class CsvImporter {
 		boolean existed = db.daoStudent().findStudentIdByRollNo(rollNo, academicYear) != null;
 
 		db.daoStudent().upsertStudentWithYear(student, academicYear, rollNo, year, stream,
-				majorDept, minorDept, oeDept);
+				majorDept, minorDept, oeDept, semester);
 
 		return existed;
 	}
@@ -292,6 +296,25 @@ public final class CsvImporter {
 	 * Accepts either the constant name or the display label, loosely matched. A roster typed by
 	 * hand is as likely to say "Computer Science" as "COMPUTER_SCIENCE", and both should work.
 	 */
+	/**
+	 * Parses an optional whole number. A blank cell is absence, not zero; anything else that is
+	 * not a number is an error rather than a silent null, because a typo in a semester column
+	 * should be seen.
+	 */
+	@Nullable
+	private static Integer parseOptionalInt(@Nullable String raw, String label) {
+
+		if (raw == null || raw.trim().isEmpty()) {
+			return null;
+		}
+
+		try {
+			return Integer.valueOf(raw.trim());
+		} catch (NumberFormatException e) {
+			throw new IllegalArgumentException("Unrecognised " + label + ": " + raw);
+		}
+	}
+
 	@Nullable
 	private static <E extends Enum<E>> E parseOptionalEnum(Class<E> type, @Nullable String raw,
 	                                                       String label) {
@@ -311,9 +334,9 @@ public final class CsvImporter {
 	 */
 	@NonNull
 	public static String templateCsv() {
-		return "rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept\n"
+		return "rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept,semester\n"
 				+ "2024CS032,Aarav Patil,he/him,aarav@sies.edu.in,SY,BSc,COMPUTER_SCIENCE,"
-				+ "MATHEMATICS,ENGLISH\n"
-				+ "2024CS033,Sneha Mehta,she/her,sneha@sies.edu.in,SY,BSc,COMPUTER_SCIENCE,,\n";
+				+ "MATHEMATICS,ENGLISH,3\n"
+				+ "2024CS033,Sneha Mehta,she/her,sneha@sies.edu.in,SY,BSc,COMPUTER_SCIENCE,,,3\n";
 	}
 }

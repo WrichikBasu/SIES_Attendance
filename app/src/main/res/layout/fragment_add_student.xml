@@ -2,6 +2,7 @@
 <androidx.core.widget.NestedScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true">
@@ -135,6 +136,26 @@
 
         </LinearLayout>
 
+        <!--
+          Semester sits under year because it is narrowed by it: the year fixes the pair, so
+          this list is only ever two entries once a year is chosen.
+        -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilSemester"
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:hint="@string/hint_semester">
+
+            <AutoCompleteTextView
+                android:id="@+id/actvSemester"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="none" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/tilMajorDept"
             android:layout_width="match_parent"
@@ -182,6 +203,23 @@
                 android:inputType="none" />
 
         </com.google.android.material.textfield.TextInputLayout>
+
+        <!--
+          Live cross-check feedback. Shown the moment a selection makes the combination
+          impossible, rather than waiting for the save button to reject it.
+        -->
+        <TextView
+            android:id="@+id/tvCombinationWarning"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="?attr/colorErrorContainer"
+            android:padding="12dp"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="?attr/colorOnErrorContainer"
+            android:visibility="gone"
+            tools:text="BCom does not have a Masters Part 1 year"
+            tools:visibility="visible" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSaveStudent"

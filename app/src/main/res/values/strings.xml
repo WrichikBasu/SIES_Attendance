@@ -288,4 +288,129 @@
     <string name="dialog_invalid_combination">That combination does not exist</string>
     <string name="app_bar_title">SIES Attendance</string>
 
+    <!-- Manual student entry cross-checks -->
+    <string name="error_minor_same_as_major">The minor department cannot be the same as the
+        major</string>
+    <string name="error_oe_same_as_major">The open elective cannot be the same as the
+        major department</string>
+    <string name="error_oe_same_as_minor">The open elective cannot be the same as the
+        minor department</string>
+
+    <!-- Backup and restore -->
+    <string name="title_backup">Backup and restore</string>
+    <string name="action_backup">Backup and restore</string>
+
+    <string name="title_export_backup">Export a backup</string>
+    <string name="hint_export_explainer">Saves everything — students, courses, batches,
+        lectures and every attendance record — into a single file you can keep somewhere
+        safe or move to another device.</string>
+    <string name="label_encrypt_backup">Protect with a password</string>
+    <string name="hint_encrypt_explainer">The file is scrambled so nobody can read it without
+        the password. The password is not stored anywhere, so it cannot be recovered if you
+        forget it.</string>
+    <string name="action_export_backup">Export backup</string>
+    <string name="action_export_anyway">Export without a password</string>
+
+    <string name="title_import_backup">Restore from a backup</string>
+    <string name="hint_import_explainer">Loads a backup file made by this app. A backup from
+        an older version is upgraded automatically. You can either merge it into what is
+        already here or replace everything with it.</string>
+    <string name="warn_import_replaces">Replacing discards everything currently in the app.
+        Merging keeps it, and only overwrites records the backup also has.</string>
+    <string name="action_import_backup">Restore backup</string>
+    <string name="action_choose_file">Choose file</string>
+    <string name="action_restore">Restore</string>
+    <string name="action_restart">Restart</string>
+    <string name="action_try_again">Try again</string>
+
+    <string name="hint_backup_storage_note">Backups are written wherever you choose in the
+        file picker. Keeping one in a cloud folder means a lost or broken phone does not cost
+        you the term\'s attendance.</string>
+
+    <string name="progress_exporting">Exporting…</string>
+    <string name="progress_restoring">Restoring…</string>
+
+    <string name="dialog_set_password_title">Set a password</string>
+    <string name="hint_set_backup_password">You will need this exact password to restore the
+        backup. There is no way to recover it, so keep it somewhere you trust.</string>
+    <string name="hint_backup_password">Password</string>
+    <string name="hint_backup_password_confirm">Repeat password</string>
+    <string name="error_password_too_short">Use at least %1$d characters</string>
+    <string name="error_passwords_differ">The two passwords do not match</string>
+    <string name="error_password_required">Enter the password for this backup</string>
+
+    <string name="dialog_enter_password_title">Password needed</string>
+    <string name="hint_enter_backup_password">This backup, made on %1$s, is password
+        protected.</string>
+
+    <string name="dialog_plain_backup_title">Export without a password?</string>
+    <string name="dialog_plain_backup_message">The file will contain every student\'s name,
+        email address and attendance record in readable form. Anyone who gets hold of it can
+        read all of it.</string>
+
+    <string name="dialog_restore_title">Before you restore</string>
+    <string name="dialog_restore_message">Restoring replaces all current data with the
+        contents of the backup. If there is anything in the app you want to keep, export a
+        backup of it first.</string>
+
+    <string name="dialog_restore_confirm_title">Restore this backup?</string>
+    <string name="dialog_restore_confirm_message">This backup was made on %1$s. Everything
+        currently in the app will be replaced.</string>
+
+    <string name="dialog_export_done_title">Backup saved</string>
+    <string name="message_export_done">Your data has been exported.</string>
+    <string name="message_export_done_encrypted">Your data has been exported and encrypted.
+        You will need the password to restore it.</string>
+
+    <string name="dialog_export_failed_title">Export failed</string>
+    <string name="error_export_generic">The backup could not be written. Check there is enough
+        free space and try again.</string>
+
+    <string name="dialog_restore_done_title">Restore complete</string>
+    <string name="dialog_restore_done_message">Your data has been restored. The app needs to
+        restart to finish.</string>
+
+    <string name="dialog_restore_failed_title">Restore failed</string>
+    <string name="dialog_wrong_password_title">Wrong password</string>
+    <string name="dialog_wrong_password_message">That password did not open the backup. Your
+        current data has not been touched.</string>
+
+    <string name="error_not_a_backup">That file is not a backup made by this app.</string>
+    <string name="error_backup_too_new">That backup was made by a newer version of the app.
+        Update the app and try again.</string>
+    <string name="error_backup_damaged">That backup is damaged and could not be read. Your
+        current data has not been touched.</string>
+    <string name="error_restore_generic">The backup could not be restored. Your current data
+        has not been touched.</string>
+
+    <string name="label_unknown_date">an unknown date</string>
+
+    <!-- Merge restore -->
+    <string name="dialog_restore_mode_title">How should the backup be applied?</string>
+    <string name="option_restore_merge">Add to what is here — keep everything, and let the
+        backup win where they disagree</string>
+    <string name="option_restore_replace">Replace everything — discard current data and use
+        the backup alone</string>
+    <string name="action_merge">Merge</string>
+    <string name="progress_merging">Merging…</string>
+
+    <string name="dialog_merge_confirm_title">Merge this backup?</string>
+    <string name="dialog_merge_confirm_message">This backup was made on %1$s. Records that
+        exist in both will be updated from the backup; anything only in the backup will be
+        added. Nothing currently in the app will be deleted.</string>
+
+    <string name="dialog_merge_done_title">Merge complete</string>
+    <string name="message_merge_summary">Added %1$d records and updated %2$d.</string>
+    <string name="message_merge_row">%1$d added, %2$d updated</string>
+    <string name="message_merge_no_changes">The backup held nothing that was not already
+        here, so nothing changed.</string>
+    <string name="message_merge_notes">Some rows needed care:</string>
+
+    <string name="label_merge_enrolments">Enrolments</string>
+    <string name="label_merge_courses">Courses</string>
+    <string name="label_merge_batches">Batches</string>
+    <string name="label_merge_course_batches">Course batches</string>
+    <string name="label_merge_lectures">Lectures</string>
+    <string name="label_merge_attendance">Attendance records</string>
+
 </resources>

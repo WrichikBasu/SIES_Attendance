@@ -41,7 +41,8 @@ public abstract class DaoStudent {
 	@Transaction
 	public long upsertStudentWithYear(EntityStudent student, int academicYear, String rollNo,
 	                                  Year year, Stream stream, Department majorDept,
-	                                  Department minorDept, Department oeDept) {
+	                                  Department minorDept, Department oeDept,
+	                                  Integer semester) {
 
 		Long existing = findStudentIdByRollNo(rollNo, academicYear);
 
@@ -60,13 +61,13 @@ public abstract class DaoStudent {
 		}
 
 		insertStudentYear(new EntityStudentYear(studentID, academicYear, rollNo, year, stream,
-				majorDept, minorDept, oeDept));
+				majorDept, minorDept, oeDept, semester));
 
 		return studentID;
 	}
 
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE y.academicYear = :academicYear " +
 			"ORDER BY y.rollNo ASC")
@@ -77,7 +78,7 @@ public abstract class DaoStudent {
 	 * dimension unfiltered, so the same query backs both "SY BSc CS" and broader searches.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE y.academicYear = :academicYear " +
 			"AND (:year IS NULL OR y.year = :year) " +
@@ -95,7 +96,7 @@ public abstract class DaoStudent {
 	 * from a class in one shot.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE y.academicYear = :academicYear " +
 			"AND (:year IS NULL OR y.year = :year) " +
@@ -117,7 +118,7 @@ public abstract class DaoStudent {
 	 * when unused.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE y.academicYear = :academicYear " +
 			"AND (:year IS NULL OR y.year = :year) " +
@@ -157,23 +158,25 @@ public abstract class DaoStudent {
 	// ── Single student, edit and delete ──────────────────────────────────
 
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE s.studentID = :studentID AND y.academicYear = :academicYear")
 	public abstract LiveData<StudentWithYear> getOne(long studentID, int academicYear);
 
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE s.studentID = :studentID AND y.academicYear = :academicYear")
 	public abstract StudentWithYear getOneSync(long studentID, int academicYear);
 
 	@Query("UPDATE student_year SET rollNo = :rollNo, year = :year, stream = :stream, " +
-			"majorDept = :majorDept, minorDept = :minorDept, oeDept = :oeDept " +
+			"majorDept = :majorDept, minorDept = :minorDept, oeDept = :oeDept, " +
+			"semester = :semester " +
 			"WHERE studentID = :studentID AND academicYear = :academicYear")
 	public abstract void updateStudentYear(long studentID, int academicYear, String rollNo,
 	                                       Year year, Stream stream, Department majorDept,
-	                                       Department minorDept, Department oeDept);
+	                                       Department minorDept, Department oeDept,
+	                                       Integer semester);
 
 	/**
 	 * Applies an edit to both halves of a student record at once, so a failure in either leaves
@@ -182,10 +185,11 @@ public abstract class DaoStudent {
 	@Transaction
 	public void updateStudentWithYear(EntityStudent student, int academicYear, String rollNo,
 	                                  Year year, Stream stream, Department majorDept,
-	                                  Department minorDept, Department oeDept) {
+	                                  Department minorDept, Department oeDept,
+	                                  Integer semester) {
 		updateStudent(student);
 		updateStudentYear(student.studentID, academicYear, rollNo, year, stream, majorDept,
-				minorDept, oeDept);
+				minorDept, oeDept, semester);
 	}
 
 	/*
@@ -212,7 +216,7 @@ public abstract class DaoStudent {
 	 * against string literals here.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
 			"FROM courses c " +
 			"INNER JOIN student_year y ON y.year = c.year AND y.stream = c.stream " +
 			"   AND y.academicYear = :academicYear " +
@@ -231,7 +235,7 @@ public abstract class DaoStudent {
 	 * The roll narrowed to one batch of the course, for practicals and other split sessions.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
 			"FROM students s " +
 			"INNER JOIN batch_student_map m ON m.studentID = s.studentID " +
 			"INNER JOIN student_year y ON y.studentID = s.studentID " +
