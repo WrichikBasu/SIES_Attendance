@@ -10,6 +10,8 @@
 local.properties
 *.tar.gz
 *.zip
+app/release/
+app/src/main/assets/
 
 # Gradle files
 .gradle/
