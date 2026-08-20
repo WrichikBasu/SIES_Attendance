@@ -63,17 +63,6 @@
 
             </com.google.android.material.chip.ChipGroup>
 
-            <TextView
-                android:id="@+id/tvUnmarkedCount"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:textAppearance="?attr/textAppearanceLabelSmall"
-                android:textColor="?attr/colorError"
-                android:visibility="gone"
-                tools:text="6 not yet marked"
-                tools:visibility="visible" />
-
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 

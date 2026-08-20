@@ -11,6 +11,7 @@ import androidx.room.Update;
 import java.util.List;
 
 import in.basulabs.siesattendance.backend.pojo.ClassKey;
+import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 
@@ -193,13 +194,101 @@ public abstract class DaoStudent {
 	}
 
 	/*
-	 * There is deliberately no delete for students.
+	 * Deleting a student.
 	 *
-	 * A student's roll number is the key their attendance history hangs off, and that history
-	 * is the point of the app. Removing a student would either orphan or silently erase every
-	 * record they appear in, which would change past statistics after the fact. Records are
-	 * corrected by editing instead — individually, or by re-importing the roster CSV.
+	 * A student's records are the point of the app, so this is the one genuinely destructive
+	 * thing it can do and the two ways of doing it are kept apart deliberately.
+	 *
+	 * Withdrawing from a session removes the enrolment and any batch memberships for that
+	 * year, and keeps the attendance. That is what actually happened: the student sat in those
+	 * classes, then left. Past percentages for the classes they were in stay correct, and the
+	 * student survives in their other sessions.
+	 *
+	 * Deleting outright removes the attendance too, because the foreign keys are RESTRICT and,
+	 * more to the point, an attendance row naming nobody is not a record of anything. This is
+	 * for entries that should never have existed — a duplicate, a typo, a test row — not for
+	 * students who have left.
+	 *
+	 * Both run in a transaction and delete children before parents, since the constraints
+	 * refuse it in any other order.
 	 */
+
+	/**
+	 * Everything that would be lost, for the confirmation dialog to quote back.
+	 *
+	 * @param academicYear the session being looked at, for the per-session count
+	 */
+	@Query("SELECT " +
+			"(SELECT COUNT(*) FROM attendance WHERE studentID = :studentID) " +
+			"   AS attendanceRecords, " +
+			"(SELECT COUNT(*) FROM student_year WHERE studentID = :studentID) " +
+			"   AS enrolments, " +
+			"(SELECT COUNT(*) FROM batch_student_map WHERE studentID = :studentID) " +
+			"   AS batchMemberships, " +
+			"(SELECT COUNT(*) FROM attendance a " +
+			"   INNER JOIN lectures l ON l.lectureID = a.lectureID " +
+			"   INNER JOIN academic_years y ON y.academicYear = :academicYear " +
+			"   WHERE a.studentID = :studentID " +
+			"   AND CAST(substr(l.startDateTime, 1, instr(l.startDateTime, '|') - 1) AS INTEGER) " +
+			"       BETWEEN y.startEpoch AND y.endEpoch) AS attendanceThisSession")
+	public abstract DeletionImpact deletionImpact(long studentID, int academicYear);
+
+	@Query("DELETE FROM batch_student_map WHERE studentID = :studentID " +
+			"AND academicYear = :academicYear")
+	public abstract void deleteBatchMembershipsForYear(long studentID, int academicYear);
+
+	@Query("DELETE FROM student_year WHERE studentID = :studentID " +
+			"AND academicYear = :academicYear")
+	public abstract void deleteEnrolment(long studentID, int academicYear);
+
+	@Query("DELETE FROM batch_student_map WHERE studentID = :studentID")
+	public abstract void deleteAllBatchMemberships(long studentID);
+
+	@Query("DELETE FROM student_year WHERE studentID = :studentID")
+	public abstract void deleteAllEnrolments(long studentID);
+
+	@Query("DELETE FROM attendance WHERE studentID = :studentID")
+	public abstract void deleteAllAttendance(long studentID);
+
+	@Query("DELETE FROM students WHERE studentID = :studentID")
+	public abstract void deleteStudentRow(long studentID);
+
+	/**
+	 * Takes the student off one session's roster, keeping the student and their attendance.
+	 * <p>
+	 * Refuses when it is their only enrolment: the student row would survive with nothing
+	 * pointing at it, which shows up nowhere in the app and cannot be edited back into
+	 * existence. That case wants an outright delete, and the caller is told so rather than
+	 * left with an invisible record.
+	 */
+	@Transaction
+	public void withdrawFromSession(long studentID, int academicYear) {
+
+		if (countEnrolments(studentID) <= 1) {
+			throw new IllegalStateException(
+					"This is the student's only session. Delete the student instead.");
+		}
+
+		deleteBatchMembershipsForYear(studentID, academicYear);
+		deleteEnrolment(studentID, academicYear);
+	}
+
+	@Query("SELECT COUNT(*) FROM student_year WHERE studentID = :studentID")
+	public abstract int countEnrolments(long studentID);
+
+	/**
+	 * Removes the student and everything that names them.
+	 * <p>
+	 * Children first: attendance and batch memberships hold RESTRICT keys onto students, so
+	 * the student row cannot go until nothing refers to it.
+	 */
+	@Transaction
+	public void deleteStudentCascade(long studentID) {
+		deleteAllAttendance(studentID);
+		deleteAllBatchMemberships(studentID);
+		deleteAllEnrolments(studentID);
+		deleteStudentRow(studentID);
+	}
 
 	// ── The roll for a course ────────────────────────────────────────────
 
@@ -208,9 +297,15 @@ public abstract class DaoStudent {
 	 * <p>
 	 * A course states the year, stream and offering department it belongs to. Which of a
 	 * student's three departments has to match depends on how they are taking it: a major
-	 * course matches their major department, a minor course their minor, an open elective their
-	 * OE choice. AEC and IKS courses are taken by the whole year and stream regardless of
-	 * department, so no department condition applies to them.
+	 * course matches their major department, an open elective their OE choice. AEC and IKS
+	 * courses are taken by the whole year and stream regardless of department, so no
+	 * department condition applies to them.
+	 * <p>
+	 * A minor course matches either the student's minor department or their major. Matching
+	 * the minor alone left minor courses with an empty roll, because the minor field on the
+	 * student form is optional and is frequently blank — and an empty roll means attendance
+	 * cannot be taken at all, which is worse than a roll that is slightly too wide. The
+	 * department still has to match, so this never reaches across departments.
 	 * <p>
 	 * Enum columns are stored as their constant names, which is why the course type is compared
 	 * against string literals here.
@@ -225,7 +320,8 @@ public abstract class DaoStudent {
 			"   (c.courseType IN ('MAJOR', 'MAJOR_PRACTICALS') " +
 			"      AND y.majorDept = c.offeringDepartment) " +
 			"   OR (c.courseType IN ('MINOR', 'MINOR_PRACTICALS') " +
-			"      AND y.minorDept = c.offeringDepartment) " +
+			"      AND (y.minorDept = c.offeringDepartment " +
+			"           OR y.majorDept = c.offeringDepartment)) " +
 			"   OR (c.courseType = 'OE' AND y.oeDept = c.offeringDepartment) " +
 			"   OR c.courseType IN ('AEC', 'IKS')) " +
 			"ORDER BY y.rollNo ASC")

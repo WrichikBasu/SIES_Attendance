@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Red only once absent is actually chosen. An unchecked row is a question not yet answered, and
+  colouring it red before the professor has decided would read as a class full of absentees.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="?attr/colorErrorContainer" android:state_checked="true" />
+    <item android:color="@android:color/transparent" />
+</selector>

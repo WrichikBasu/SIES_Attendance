@@ -189,6 +189,8 @@ public final class CsvImporter {
 
 		// The same backstop the forms use, so a file cannot introduce a combination the UI
 		// would refuse: a BSc student in Masters Part 1, or a first-year in semester 5.
+		// Every value the check covers has to be parsed before it runs, which is why the
+		// semester is read here rather than alongside the other optional columns below.
 		String problem = AcademicRules.validate(majorDept, stream, year, semester);
 		if (problem != null) {
 			throw new IllegalArgumentException(problem);
@@ -198,8 +200,6 @@ public final class CsvImporter {
 				optional(cells, columns, "minordept"), "minor department");
 		Department oeDept = parseOptionalEnum(Department.class,
 				optional(cells, columns, "oedept"), "open elective department");
-
-
 
 		EntityStudent student = new EntityStudent(name, pronouns, email);
 

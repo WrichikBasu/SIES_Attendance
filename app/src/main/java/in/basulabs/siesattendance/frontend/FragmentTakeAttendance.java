@@ -17,6 +17,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.button.MaterialButton;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.datepicker.MaterialDatePicker;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
@@ -67,11 +68,11 @@ public class FragmentTakeAttendance extends Fragment {
 
 	private TextInputLayout tilCourse, tilBatch, tilDate, tilStart, tilEnd;
 
-	private TextView rollHeader, rollEmpty, presentCount, absentCount, unmarkedCount;
+	private TextView rollHeader, rollEmpty, presentCount, absentCount;
 
 	private View rollSection, bulkActions;
 
-	private MaterialButton save;
+	private MaterialButton save, saveAndNext;
 
 	private List<EntityCourse> courses = new ArrayList<>();
 
@@ -124,9 +125,9 @@ public class FragmentTakeAttendance extends Fragment {
 		bulkActions = view.findViewById(R.id.layoutBulkActions);
 		presentCount = view.findViewById(R.id.tvPresentCount);
 		absentCount = view.findViewById(R.id.tvAbsentCount);
-		unmarkedCount = view.findViewById(R.id.tvUnmarkedCount);
 
 		RecyclerView recyclerView = view.findViewById(R.id.rvRoll);
+
 		adapter = new AdapterAttendance((studentID, present) ->
 				viewModel.setPresence(studentID, present));
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
@@ -134,7 +135,10 @@ public class FragmentTakeAttendance extends Fragment {
 		recyclerView.setAdapter(adapter);
 
 		save = view.findViewById(R.id.btnSaveAttendance);
-		save.setOnClickListener(this::onSave);
+		save.setOnClickListener(v -> onSave(v, false));
+
+		saveAndNext = view.findViewById(R.id.btnSaveAndNext);
+		saveAndNext.setOnClickListener(v -> onSave(v, true));
 
 		view.findViewById(R.id.btnMarkAllPresent)
 				.setOnClickListener(v -> viewModel.setAllPresence(true));
@@ -197,13 +201,15 @@ public class FragmentTakeAttendance extends Fragment {
 	}
 
 	/**
-	 * Loads the groups this course can be taken with: its whole class, plus any batch that
-	 * overlaps the course's roll in the current academic year. Batches belonging to other
-	 * classes of the same year are excluded by the query, so the list only ever offers groups
-	 * that make sense for this course.
+	 * Loads the groups attendance can be taken for: the course's whole class, plus every batch
+	 * in the current academic year.
+	 * <p>
+	 * The batch list is not narrowed by the course. A batch is a named group of students for a
+	 * session, not a property of a course, and whoever is taking attendance knows which batch
+	 * is sitting in front of them.
 	 */
 	private void loadBatchOptions(@NonNull EntityCourse course) {
-		viewModel.loadBatchesForCourse(course.courseID, list -> {
+		viewModel.loadBatchesForSession(list -> {
 			if (!isAdded()) {
 				return;
 			}
@@ -326,11 +332,9 @@ public class FragmentTakeAttendance extends Fragment {
 			return;
 		}
 
-		int present = 0, absent = 0, unmarked = 0;
+		int present = 0, absent = 0;
 		for (AttendanceRow row : rows) {
-			if (row.present == null) {
-				unmarked++;
-			} else if (row.present) {
+			if (row.present) {
 				present++;
 			} else {
 				absent++;
@@ -339,8 +343,6 @@ public class FragmentTakeAttendance extends Fragment {
 
 		presentCount.setText(getString(R.string.chip_present_count, present));
 		absentCount.setText(getString(R.string.chip_absent_count, absent));
-		unmarkedCount.setVisibility(unmarked > 0 ? View.VISIBLE : View.GONE);
-		unmarkedCount.setText(getString(R.string.label_unmarked_count, unmarked));
 	}
 
 	private void updateRollVisibility() {
@@ -353,11 +355,16 @@ public class FragmentTakeAttendance extends Fragment {
 		bulkActions.setVisibility(hasRows ? View.VISIBLE : View.GONE);
 		rollEmpty.setVisibility(batchChosen && !hasRows ? View.VISIBLE : View.GONE);
 		save.setEnabled(hasRows);
+		saveAndNext.setEnabled(hasRows);
 	}
 
 	// ── Save ─────────────────────────────────────────────────────────────
 
-	private void onSave(@NonNull View button) {
+	/**
+	 * @param thenDuplicate keep the marks and roll the clock forward for the next period
+	 *                      instead of leaving the screen
+	 */
+	private void onSave(@NonNull View button, boolean thenDuplicate) {
 
 		tilCourse.setError(null);
 		tilDate.setError(null);
@@ -397,10 +404,55 @@ public class FragmentTakeAttendance extends Fragment {
 		viewModel.recordLectureWithAttendance(selectedCourse.courseID, selectedBatchID,
 				start, end, notes.isEmpty() ? null : notes,
 				() -> requireActivity().runOnUiThread(() -> {
-					if (isAdded()) {
+					if (!isAdded()) {
+						return;
+					}
+					if (thenDuplicate) {
+						carryForwardToNextPeriod();
+					} else {
 						Navigation.findNavController(button).navigateUp();
 					}
 				}));
+	}
+
+
+
+	/**
+	 * Sets the sheet up for the second hour of a double period.
+	 * <p>
+	 * The marks stay exactly as they are, which is the point: the same students are in the
+	 * room, and the professor amends the handful who left rather than calling the roll again.
+	 * The clock rolls forward by the length of the period just saved, so a 10:00-11:00 lecture
+	 * offers 11:00-12:00 next, and the notes are cleared because they described the hour that
+	 * has already been filed.
+	 */
+	private void carryForwardToNextPeriod() {
+
+		LocalTime previousStart = startTime;
+		LocalTime previousEnd = endTime;
+
+		if (previousStart == null || previousEnd == null) {
+			return;
+		}
+
+		long minutes = java.time.Duration.between(previousStart, previousEnd).toMinutes();
+
+		startTime = previousEnd;
+		endTime = previousEnd.plusMinutes(minutes);
+
+		etStart.setText(startTime.format(TIME_LABEL));
+		etEnd.setText(endTime.format(TIME_LABEL));
+		etNotes.setText("");
+
+		tilStart.setError(null);
+		tilEnd.setError(null);
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_next_period_title)
+				.setMessage(getString(R.string.dialog_next_period_message,
+						startTime.format(TIME_LABEL), endTime.format(TIME_LABEL)))
+				.setPositiveButton(android.R.string.ok, null)
+				.show();
 	}
 
 	@Override

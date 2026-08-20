@@ -14,7 +14,6 @@ import com.google.android.material.button.MaterialButton;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.pojo.AttendanceRow;
@@ -77,7 +76,7 @@ public class AdapterAttendance extends RecyclerView.Adapter<AdapterAttendance.Ho
 			public boolean areContentsTheSame(int oldPos, int newPos) {
 				AttendanceRow a = rows.get(oldPos);
 				AttendanceRow b = incoming.get(newPos);
-				return Objects.equals(a.present, b.present)
+				return a.present == b.present
 						&& a.name.equals(b.name)
 						&& a.rollNo.equals(b.rollNo);
 			}
@@ -156,7 +155,7 @@ public class AdapterAttendance extends RecyclerView.Adapter<AdapterAttendance.Ho
 			}
 
 			AttendanceRow row = rows.get(position);
-			if (Boolean.valueOf(isPresent).equals(row.present)) {
+			if (isPresent == row.present) {
 				return;
 			}
 
@@ -175,9 +174,13 @@ public class AdapterAttendance extends RecyclerView.Adapter<AdapterAttendance.Ho
 			bindPresence(row);
 		}
 
+		/**
+		 * Exactly one of the two is always lit: a row cannot be in neither state, so the
+		 * buttons read as a two-way switch rather than a pair of independent toggles.
+		 */
 		void bindPresence(@NonNull AttendanceRow row) {
-			present.setChecked(Boolean.TRUE.equals(row.present));
-			absent.setChecked(Boolean.FALSE.equals(row.present));
+			present.setChecked(row.present);
+			absent.setChecked(!row.present);
 		}
 	}
 }

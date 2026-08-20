@@ -37,7 +37,6 @@
     <string name="label_below_75">Below 75%</string>
     <string name="label_lectures">Lectures</string>
     <string name="label_today">Today</string>
-    <string name="label_unmarked_count">%1$d not yet marked</string>
 
     <!-- Hints -->
     <string name="hint_search_students">Search by name or roll number</string>
@@ -287,6 +286,58 @@
 
     <string name="dialog_invalid_combination">That combination does not exist</string>
     <string name="app_bar_title">SIES Attendance</string>
+
+    <!-- Deleting an attendance record -->
+    <string name="action_delete_attendance">Delete this attendance record</string>
+    <string name="dialog_delete_attendance_title">Delete the attendance</string>
+    <string name="option_clear_marks">Clear the marks — keep the lecture on the timetable as
+        an unmarked session</string>
+    <string name="option_delete_lecture_too">Delete the lecture as well — as though it never
+        took place</string>
+
+    <string name="dialog_clear_marks_title">Clear the marks?</string>
+    <string name="dialog_clear_marks_message">Who was present and absent will be erased. The
+        lecture stays on the timetable and can be marked again.</string>
+
+    <string name="dialog_delete_lecture_and_marks">The lecture and everything recorded against
+        it will be removed. Attendance percentages for this course will change, because the
+        lecture will no longer count as a session that was held.</string>
+
+    <!-- Taking attendance -->
+    <string name="action_save_and_next">Save and take the next period</string>
+
+
+    <string name="dialog_next_period_title">Saved. Ready for the next period</string>
+    <string name="dialog_next_period_message">The marks have been kept and the time moved on
+        to %1$s–%2$s. Change whatever differs for this hour, then save again.</string>
+
+    <!-- Removing a student -->
+    <string name="action_delete_student">Delete student</string>
+    <string name="action_withdraw">Remove from session</string>
+    <string name="action_delete_permanently">Delete permanently</string>
+
+    <string name="dialog_remove_student_title">Remove this student</string>
+    <string name="option_withdraw_from_session">Remove from this session only — keep the
+        student and their attendance in other sessions</string>
+    <string name="option_delete_student_everywhere">Delete the student entirely — erases every
+        record naming them</string>
+
+    <string name="dialog_withdraw_title">Remove from this session?</string>
+    <string name="dialog_withdraw_message">They will come off this session\'s roster and out
+        of its batches. Their %1$d attendance record(s) for this session are kept, so past
+        percentages stay correct, and their other sessions are untouched.</string>
+
+    <string name="dialog_delete_student_title">Delete this student?</string>
+    <string name="dialog_delete_student_message_clean">There is no attendance recorded for
+        this student yet, so nothing else is lost.</string>
+    <string name="dialog_delete_student_message_with_history">This erases %1$d attendance
+        record(s) across %2$d session(s), along with the student. Attendance percentages for
+        the classes they were in will change.</string>
+
+    <string name="dialog_delete_student_confirm_title">This cannot be undone</string>
+    <string name="dialog_delete_student_confirm_message">%1$d attendance record(s) will be
+        destroyed. There is no undo. If you might want this data back, cancel and export a
+        backup first.</string>
 
     <!-- Manual student entry cross-checks -->
     <string name="error_minor_same_as_major">The minor department cannot be the same as the

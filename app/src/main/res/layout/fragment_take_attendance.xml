@@ -178,17 +178,6 @@
 
             </LinearLayout>
 
-            <TextView
-                android:id="@+id/tvUnmarkedCount"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:textAppearance="?attr/textAppearanceLabelSmall"
-                android:textColor="?attr/colorError"
-                android:visibility="gone"
-                tools:text="6 not yet marked"
-                tools:visibility="visible" />
-
             <LinearLayout
                 android:id="@+id/layoutBulkActions"
                 android:layout_width="match_parent"
@@ -208,13 +197,16 @@
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnMarkAllAbsent"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="4dp"
                     android:layout_weight="1"
                     android:text="@string/action_all_absent"
-                    android:textAppearance="?attr/textAppearanceLabelSmall" />
+                    android:textAppearance="?attr/textAppearanceLabelSmall"
+                    android:textColor="?attr/colorOnErrorContainer"
+                    app:backgroundTint="?attr/colorErrorContainer"
+                    app:iconTint="?attr/colorOnErrorContainer" />
 
             </LinearLayout>
 
@@ -247,6 +239,19 @@
             android:layout_marginTop="16dp"
             android:enabled="false"
             android:text="@string/action_save_attendance" />
+
+        <!--
+          For double periods: saves this hour, then keeps every mark on screen and rolls the
+          times forward so the second hour is a few taps rather than a second full sheet.
+        -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSaveAndNext"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:enabled="false"
+            android:text="@string/action_save_and_next" />
 
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>

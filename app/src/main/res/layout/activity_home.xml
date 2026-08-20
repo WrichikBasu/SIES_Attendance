@@ -36,6 +36,14 @@
         android:layout_height="0dp"
         android:layout_weight="1">
 
+        <!--
+          The plain foreground vector, not @mipmap/ic_launcher_round. On API 26+ the mipmap
+          resolves to an <adaptive-icon>, and inflating one of those as an ordinary drawable
+          crashes: AdaptiveIconDrawable's constructor reaches for the Application's resources,
+          which do not exist yet while the activity's content view is being inflated. An
+          adaptive icon is for the launcher, which knows how to build it; a layout needs a
+          drawable it can inflate on its own.
+        -->
         <ImageView
             android:id="@+id/backgroundMark"
             android:layout_width="260dp"
@@ -47,7 +55,7 @@
             android:focusable="false"
             android:importantForAccessibility="no"
             android:scaleType="fitCenter"
-            android:src="@mipmap/ic_launcher_round" />
+            android:src="@drawable/ic_launcher_foreground" />
 
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/fragmentContainer"

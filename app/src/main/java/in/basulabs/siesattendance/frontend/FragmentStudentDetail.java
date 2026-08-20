@@ -24,6 +24,9 @@ import java.util.List;
 import java.util.Locale;
 
 import in.basulabs.siesattendance.R;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+
+import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.frontend.adapter.AdapterStudentCourseStat;
@@ -98,9 +101,127 @@ public class FragmentStudentDetail extends Fragment {
 							.navigate(R.id.action_studentDetail_to_editStudent, args);
 					return true;
 				}
+				if (item.getItemId() == R.id.action_delete) {
+					askHowToRemove();
+					return true;
+				}
 				return false;
 			}
 		}, getViewLifecycleOwner(), Lifecycle.State.RESUMED);
+	}
+
+	/**
+	 * Works out what removing this student would cost, then offers only the choices that make
+	 * sense for them.
+	 * <p>
+	 * A student in several sessions can be taken off this one and left intact elsewhere, which
+	 * is what withdrawal usually means in practice. A student in a single session has no such
+	 * middle ground: removing that enrolment would leave a record nothing points at, so the
+	 * only honest option is to delete them.
+	 */
+	private void askHowToRemove() {
+
+		viewModel.loadDeletionImpact(studentID, impact -> {
+
+			if (!isAdded() || impact == null) {
+				return;
+			}
+
+			requireActivity().runOnUiThread(() -> {
+
+				if (!isAdded()) {
+					return;
+				}
+
+				if (impact.spansMultipleSessions()) {
+					offerWithdrawOrDelete(impact);
+				} else {
+					confirmDelete(impact);
+				}
+			});
+		});
+	}
+
+	private void offerWithdrawOrDelete(@NonNull DeletionImpact impact) {
+
+		String[] options = {
+				getString(R.string.option_withdraw_from_session),
+				getString(R.string.option_delete_student_everywhere)
+		};
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_remove_student_title)
+				.setItems(options, (d, which) -> {
+					if (which == 0) {
+						confirmWithdraw(impact);
+					} else {
+						confirmDelete(impact);
+					}
+				})
+				.setNegativeButton(R.string.action_cancel, null)
+				.show();
+	}
+
+	private void confirmWithdraw(@NonNull DeletionImpact impact) {
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_withdraw_title)
+				.setMessage(getString(R.string.dialog_withdraw_message,
+						impact.attendanceThisSession))
+				.setNegativeButton(R.string.action_cancel, null)
+				.setPositiveButton(R.string.action_withdraw, (d, w) ->
+						viewModel.withdrawStudentFromSession(studentID, this::leaveScreen))
+				.show();
+	}
+
+	/**
+	 * The last stop before the data goes. The message quotes the counts rather than warning in
+	 * the abstract, because "this deletes 214 attendance records" is a different decision from
+	 * "this deletes a student with no history yet".
+	 */
+	private void confirmDelete(@NonNull DeletionImpact impact) {
+
+		String message = impact.hasHistory()
+				? getString(R.string.dialog_delete_student_message_with_history,
+				impact.attendanceRecords, impact.enrolments)
+				: getString(R.string.dialog_delete_student_message_clean);
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_delete_student_title)
+				.setMessage(message)
+				.setNegativeButton(R.string.action_cancel, null)
+				.setPositiveButton(R.string.action_delete, (d, w) -> {
+					// A student with no attendance is a correction and goes in one step. One
+					// with history gets asked twice, because there is no undo and no backup
+					// unless the user happened to make one.
+					if (impact.hasHistory()) {
+						confirmDeleteAgain(impact);
+					} else {
+						viewModel.deleteStudent(studentID, this::leaveScreen);
+					}
+				})
+				.show();
+	}
+
+	private void confirmDeleteAgain(@NonNull DeletionImpact impact) {
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_delete_student_confirm_title)
+				.setMessage(getString(R.string.dialog_delete_student_confirm_message,
+						impact.attendanceRecords))
+				.setNegativeButton(R.string.action_cancel, null)
+				.setPositiveButton(R.string.action_delete_permanently, (d, w) ->
+						viewModel.deleteStudent(studentID, this::leaveScreen))
+				.show();
+	}
+
+	/** The student this screen is showing is gone, so there is nothing left to display. */
+	private void leaveScreen() {
+		requireActivity().runOnUiThread(() -> {
+			if (isAdded()) {
+				Navigation.findNavController(requireView()).navigateUp();
+			}
+		});
 	}
 
 	private void observe() {

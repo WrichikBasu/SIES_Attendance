@@ -31,6 +31,7 @@ import in.basulabs.siesattendance.backend.EntityStudent;
 import in.basulabs.siesattendance.backend.MainDatabase;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
+import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.AttendanceRow;
 import in.basulabs.siesattendance.backend.pojo.ClassKey;
 import in.basulabs.siesattendance.backend.pojo.CourseAttendanceStat;
@@ -710,8 +711,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 			List<AttendanceRow> rows = new ArrayList<>();
 			for (StudentWithYear student : students) {
-				rows.add(new AttendanceRow(student.studentID, student.name, student.rollNo,
-						null));
+				rows.add(new AttendanceRow(student.studentID, student.name, student.rollNo));
 			}
 
 			attendanceRows.postValue(rows);
@@ -756,18 +756,6 @@ public class AttendanceViewModel extends AndroidViewModel {
 			return;
 		}
 
-		int unmarked = 0;
-		for (AttendanceRow row : rows) {
-			if (row.present == null) {
-				unmarked++;
-			}
-		}
-
-		if (unmarked > 0) {
-			toastMessage.setValue(unmarked + " student(s) still unmarked");
-			return;
-		}
-
 		final List<AttendanceRow> snapshot = new ArrayList<>(rows);
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
@@ -788,7 +776,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 					List<EntityAttendance> records = new ArrayList<>();
 					for (AttendanceRow row : snapshot) {
 						records.add(new EntityAttendance(lectureID, row.studentID,
-								Boolean.TRUE.equals(row.present)));
+								row.present));
 					}
 					db.daoAttendance().insertAll(records);
 				});
@@ -843,9 +831,11 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 			List<AttendanceRow> rows = new ArrayList<>();
 			for (StudentWithYear student : students) {
-				Boolean present = markedIds.contains(student.studentID)
-						? presentIds.contains(student.studentID)
-						: null;
+				// A student with no stored row joined the class after this lecture was
+				// filed. There is nothing recorded either way, so they take the same
+				// default as a fresh sheet.
+				boolean present = !markedIds.contains(student.studentID)
+						|| presentIds.contains(student.studentID);
 				rows.add(new AttendanceRow(student.studentID, student.name, student.rollNo,
 						present));
 			}
@@ -881,26 +871,16 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
-	 * Writes the sheet. Unmarked students are refused rather than defaulted, because silently
-	 * recording an unanswered student as absent would corrupt the statistics.
+	 * Writes the sheet.
+	 * <p>
+	 * Every row carries an answer by construction — present unless someone marked otherwise —
+	 * so there is nothing to refuse here. An untouched sheet saves as a full house.
 	 */
 	public void saveAttendance(@NonNull Runnable onDone) {
 		List<AttendanceRow> rows = attendanceRows.getValue();
 
 		if (rows == null || currentLecture == null) {
 			toastMessage.setValue("Nothing to save");
-			return;
-		}
-
-		int unmarked = 0;
-		for (AttendanceRow row : rows) {
-			if (row.present == null) {
-				unmarked++;
-			}
-		}
-
-		if (unmarked > 0) {
-			toastMessage.setValue(unmarked + " student(s) still unmarked");
 			return;
 		}
 
@@ -936,6 +916,53 @@ public class AttendanceViewModel extends AndroidViewModel {
 		final int acadYear = studentFilter().academicYear;
 		MainDatabase.DB_EXECUTOR.execute(() ->
 				cb.accept(db.daoStudent().getOneSync(studentID, acadYear)));
+	}
+
+	/**
+	 * Counts what deleting this student would cost, for the confirmation dialog. Read against
+	 * the session currently on screen, since that is the one a withdrawal would apply to.
+	 */
+	public void loadDeletionImpact(long studentID,
+	                               @NonNull java.util.function.Consumer<DeletionImpact> cb) {
+		final int acadYear = studentFilter().academicYear;
+		MainDatabase.DB_EXECUTOR.execute(() ->
+				cb.accept(db.daoStudent().deletionImpact(studentID, acadYear)));
+	}
+
+	/**
+	 * Takes the student off the current session's roster, keeping them and their attendance.
+	 */
+	public void withdrawStudentFromSession(long studentID, @NonNull Runnable onDone) {
+
+		final int acadYear = studentFilter().academicYear;
+
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+			try {
+				db.daoStudent().withdrawFromSession(studentID, acadYear);
+				toastMessage.postValue("Student removed from this session");
+				refreshStudents();
+				onDone.run();
+			} catch (Exception e) {
+				// The DAO refuses a withdrawal that would leave the student in no session at
+				// all, and says why; that message is worth more than a generic failure.
+				toastMessage.postValue(e.getMessage());
+			}
+		});
+	}
+
+	/** Removes the student and every record naming them. */
+	public void deleteStudent(long studentID, @NonNull Runnable onDone) {
+
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+			try {
+				db.daoStudent().deleteStudentCascade(studentID);
+				toastMessage.postValue("Student deleted");
+				refreshStudents();
+				onDone.run();
+			} catch (Exception e) {
+				toastMessage.postValue("Could not delete: " + e.getMessage());
+			}
+		});
 	}
 
 	public void updateStudent(@NonNull EntityStudent student, @NonNull String rollNo,
@@ -1040,6 +1067,25 @@ public class AttendanceViewModel extends AndroidViewModel {
 				onDone.run();
 			} catch (Exception e) {
 				toastMessage.postValue("Could not update: " + e.getMessage());
+			}
+		});
+	}
+
+	/**
+	 * Wipes the marks for a lecture but keeps the lecture itself.
+	 * <p>
+	 * The lecture stays on the timetable as an unmarked session, which is the honest state
+	 * when a sheet was filled in wrongly: the class did happen, and the record of who was
+	 * there is simply gone until it is taken again.
+	 */
+	public void clearAttendanceForLecture(long lectureID, @NonNull Runnable onDone) {
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+			try {
+				db.daoAttendance().clearForLecture(lectureID);
+				toastMessage.postValue("Attendance record deleted");
+				onDone.run();
+			} catch (Exception e) {
+				toastMessage.postValue("Could not delete: " + e.getMessage());
 			}
 		});
 	}
@@ -1183,14 +1229,17 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
-	 * Batches that make sense for this course in the current academic year, rather than every
-	 * batch that happens to exist for the year.
+	 * Every batch in the current academic year.
+	 * <p>
+	 * The course is not consulted. A batch is a named group of students for a session, not a
+	 * property of a course, and filtering the list by the selected course previously made
+	 * batches disappear for minor and open-elective courses whose roster matching failed.
 	 */
-	public void loadBatchesForCourse(long courseID,
-	                                 @NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
+	public void loadBatchesForSession(
+			@NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
 		final int acadYear = academicYearValue();
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoCourse().getBatchesForCourseSync(courseID, acadYear)));
+				cb.accept(db.daoBatch().getAllForYearSync(acadYear)));
 	}
 
 	public LiveData<List<StudentWithYear>> getStudentsInBatch(long batchID) {

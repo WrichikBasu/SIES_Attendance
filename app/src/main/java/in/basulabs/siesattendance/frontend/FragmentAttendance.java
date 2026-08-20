@@ -2,13 +2,18 @@ package in.basulabs.siesattendance.frontend;
 
 import android.os.Bundle;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.view.MenuProvider;
 import androidx.fragment.app.Fragment;
+import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -16,6 +21,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -27,8 +33,10 @@ import in.basulabs.siesattendance.frontend.adapter.AdapterAttendance;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
- * Step two: mark each student present or absent. The sheet refuses to save while anyone is
- * still unmarked, so a partially-filled roll can never masquerade as a complete record.
+ * Step two: mark each student present or absent.
+ * <p>
+ * The sheet opens with everyone present and the professor taps the absentees, so it can be
+ * saved at any point — an untouched sheet means a full house.
  */
 public class FragmentAttendance extends Fragment {
 
@@ -86,6 +94,87 @@ public class FragmentAttendance extends Fragment {
 		if (lectureID > 0) {
 			viewModel.loadAttendanceSheet(lectureID);
 		}
+
+		setupMenu();
+	}
+
+	private void setupMenu() {
+		requireActivity().addMenuProvider(new MenuProvider() {
+
+			@Override
+			public void onCreateMenu(@NonNull Menu menu, @NonNull MenuInflater inflater) {
+				inflater.inflate(R.menu.menu_attendance_record, menu);
+			}
+
+			@Override
+			public boolean onMenuItemSelected(@NonNull MenuItem item) {
+				if (item.getItemId() == R.id.action_delete_attendance) {
+					askHowToDelete();
+					return true;
+				}
+				return false;
+			}
+		}, getViewLifecycleOwner(), Lifecycle.State.RESUMED);
+	}
+
+	/**
+	 * Two different things get called "deleting the attendance", and they are not
+	 * interchangeable: one throws away who was present, the other says the lecture never
+	 * happened. Statistics treat them differently — a cleared lecture still counts as a
+	 * session that was scheduled — so the choice is put to the user rather than assumed.
+	 */
+	private void askHowToDelete() {
+
+		if (lectureID <= 0) {
+			return;
+		}
+
+		String[] options = {
+				getString(R.string.option_clear_marks),
+				getString(R.string.option_delete_lecture_too)
+		};
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_delete_attendance_title)
+				.setItems(options, (d, which) -> {
+					if (which == 0) {
+						confirmClearMarks();
+					} else {
+						confirmDeleteLecture();
+					}
+				})
+				.setNegativeButton(R.string.action_cancel, null)
+				.show();
+	}
+
+	private void confirmClearMarks() {
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_clear_marks_title)
+				.setMessage(R.string.dialog_clear_marks_message)
+				.setNegativeButton(R.string.action_cancel, null)
+				.setPositiveButton(R.string.action_delete, (d, w) ->
+						viewModel.clearAttendanceForLecture(lectureID, this::leaveScreen))
+				.show();
+	}
+
+	private void confirmDeleteLecture() {
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_delete_lecture_title)
+				.setMessage(R.string.dialog_delete_lecture_and_marks)
+				.setNegativeButton(R.string.action_cancel, null)
+				.setPositiveButton(R.string.action_delete, (d, w) ->
+						viewModel.deleteLecture(lectureID, this::leaveScreen))
+				.show();
+	}
+
+	private void leaveScreen() {
+		requireActivity().runOnUiThread(() -> {
+			if (isAdded()) {
+				Navigation.findNavController(requireView()).navigateUp();
+			}
+		});
 	}
 
 	private void onRowsChanged(@Nullable List<AttendanceRow> rows) {
@@ -97,11 +186,9 @@ public class FragmentAttendance extends Fragment {
 			return;
 		}
 
-		int present = 0, absent = 0, unmarked = 0;
+		int present = 0, absent = 0;
 		for (AttendanceRow row : rows) {
-			if (row.present == null) {
-				unmarked++;
-			} else if (row.present) {
+			if (row.present) {
 				present++;
 			} else {
 				absent++;
@@ -110,13 +197,6 @@ public class FragmentAttendance extends Fragment {
 
 		chipPresent.setText(getString(R.string.chip_present_count, present));
 		chipAbsent.setText(getString(R.string.chip_absent_count, absent));
-
-		View root = getView();
-		if (root != null) {
-			TextView unmarkedLabel = root.findViewById(R.id.tvUnmarkedCount);
-			unmarkedLabel.setVisibility(unmarked > 0 ? View.VISIBLE : View.GONE);
-			unmarkedLabel.setText(getString(R.string.label_unmarked_count, unmarked));
-		}
 	}
 
 	private void updateHeader() {
