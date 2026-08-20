@@ -108,6 +108,13 @@ public class FragmentAttendance extends Fragment {
 
 			@Override
 			public boolean onMenuItemSelected(@NonNull MenuItem item) {
+				if (item.getItemId() == R.id.action_edit_lecture) {
+					Bundle args = new Bundle();
+					args.putLong("lectureID", lectureID);
+					Navigation.findNavController(requireView())
+							.navigate(R.id.action_attendance_to_editLecture, args);
+					return true;
+				}
 				if (item.getItemId() == R.id.action_delete_attendance) {
 					askHowToDelete();
 					return true;

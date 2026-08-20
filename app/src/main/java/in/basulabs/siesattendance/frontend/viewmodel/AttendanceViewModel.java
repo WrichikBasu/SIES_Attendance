@@ -16,7 +16,9 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -43,6 +45,8 @@ import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 import in.basulabs.siesattendance.backend.stats.StatsFilter;
 import in.basulabs.siesattendance.backend.stats.StatsQueryBuilder;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
+import in.basulabs.siesattendance.backend.util.AttendanceExporter;
+import in.basulabs.siesattendance.backend.util.CourseGroup;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
 import in.basulabs.siesattendance.backend.util.DatabaseBackup;
 
@@ -76,12 +80,14 @@ public class AttendanceViewModel extends AndroidViewModel {
 	private final MutableLiveData<DatabaseBackup.Result> restoreResult = new MutableLiveData<>();
 
 	/**
-	 * Backups run here rather than on the shared database pool. One export can occupy a thread
-	 * for seconds — key stretching, then compressing the whole file — and the query pool is
-	 * what keeps the rest of the UI responsive. Single-threaded because two concurrent
-	 * restores would race for the same database file.
+	 * Whole-file work runs here rather than on the shared database pool: backups, restores and
+	 * the data export. Any one of them can occupy a thread for seconds (key stretching, then
+	 * compressing the whole file; or walking every student and course), and the query pool is
+	 * what keeps the rest of the UI responsive. Single-threaded because two concurrent restores
+	 * would race for the same database file.
 	 */
-	private static final ExecutorService BACKUP_EXECUTOR = Executors.newSingleThreadExecutor();
+	private static final ExecutorService FILE_TASK_EXECUTOR =
+			Executors.newSingleThreadExecutor();
 
 	// Attendance sheet being edited
 	private final MutableLiveData<List<AttendanceRow>> attendanceRows = new MutableLiveData<>();
@@ -251,6 +257,50 @@ public class AttendanceViewModel extends AndroidViewModel {
 		importResult.setValue(null);
 	}
 
+	// ── Attendance sheet export ──────────────────────────────────────────
+
+	private final MutableLiveData<AttendanceExporter.Summary> exportResult =
+			new MutableLiveData<>();
+
+	public LiveData<AttendanceExporter.Summary> getExportResult() {
+		return exportResult;
+	}
+
+	public void clearExportResult() {
+		exportResult.setValue(null);
+	}
+
+	/**
+	 * Writes the register for the current session as a spreadsheet.
+	 *
+	 * @param thresholdPercent overall attendance below which a student is shaded as a
+	 *                         defaulter, or {@link AttendanceExporter#NO_THRESHOLD} for none
+	 * @param groups           extra sheets, each totalling only its own courses. Copied here
+	 *                         because the caller's list belongs to a dialog that is about to
+	 *                         close.
+	 */
+	public void exportAttendanceSheet(@NonNull Uri destination, int thresholdPercent,
+	                                  @NonNull List<CourseGroup> groups) {
+
+		final int acadYear = academicYearValue();
+		busy.setValue(true);
+
+		// Off the query pool: building the sheet walks every student and every course, and
+		// should not sit in front of the screen's own queries.
+		FILE_TASK_EXECUTOR.execute(() -> {
+			try {
+				AttendanceExporter.Summary summary = AttendanceExporter.export(
+						getApplication(), destination, acadYear, thresholdPercent,
+						new ArrayList<>(groups));
+				exportResult.postValue(summary);
+			} catch (Exception e) {
+				toastMessage.postValue("Export failed: " + e.getMessage());
+			} finally {
+				busy.postValue(false);
+			}
+		});
+	}
+
 	// ── Backup and restore ───────────────────────────────────────────────
 
 	public LiveData<DatabaseBackup.Result> getBackupResult() {
@@ -279,10 +329,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		busy.setValue(true);
 
-		// Not on DB_EXECUTOR: a large export holds its thread for a while, and that pool is
+		// Not on DB_EXECUTOR: a large backup holds its thread for a while, and that pool is
 		// what every screen's queries go through. Key derivation alone is several hundred
 		// milliseconds by design.
-		BACKUP_EXECUTOR.execute(() -> {
+		FILE_TASK_EXECUTOR.execute(() -> {
 			DatabaseBackup.Result result = DatabaseBackup.export(getApplication(), destination,
 					password);
 			busy.postValue(false);
@@ -297,7 +347,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void inspectBackup(@NonNull Uri source,
 	                          @NonNull java.util.function.Consumer<DatabaseBackup.Info> cb) {
 
-		BACKUP_EXECUTOR.execute(() -> {
+		FILE_TASK_EXECUTOR.execute(() -> {
 			DatabaseBackup.Info info = DatabaseBackup.inspect(getApplication(), source);
 			new Handler(Looper.getMainLooper()).post(() -> cb.accept(info));
 		});
@@ -315,7 +365,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		busy.setValue(true);
 
-		BACKUP_EXECUTOR.execute(() -> {
+		FILE_TASK_EXECUTOR.execute(() -> {
 			DatabaseBackup.Result result = DatabaseBackup.restore(getApplication(), source,
 					password, mode);
 			busy.postValue(false);
@@ -1052,9 +1102,67 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	// ── Lecture edit and delete ──────────────────────────────────────────
 
+	/** Loads a lecture so its details can be pre-filled into the edit form. */
+	public void loadLectureForEdit(long lectureID,
+	                               @NonNull java.util.function.Consumer<EntityLecture> cb) {
+		MainDatabase.DB_EXECUTOR.execute(() ->
+				cb.accept(db.daoLecture().getByIdSync(lectureID)));
+	}
+
+	/**
+	 * How many students already marked on this lecture would not be on the roll if it were
+	 * moved to {@code courseID} / {@code batchID}.
+	 * <p>
+	 * Asked before the change is committed, because moving a lecture to another course is the
+	 * one edit that can leave marks stranded: the attendance rows stay valid as far as the
+	 * database is concerned, but they record a student against a course they do not take, and
+	 * no sheet will ever show them again.
+	 */
+	public void countStrandedMarks(long lectureID, long courseID, @Nullable Long batchID,
+	                               @NonNull java.util.function.Consumer<Integer> cb) {
+
+		final int acadYear = academicYearValue();
+
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+			List<Long> marked = db.daoAttendance().getMarkedIdsSync(lectureID);
+			Set<Long> onRoll = rollIds(courseID, batchID, acadYear);
+
+			int stranded = 0;
+			for (Long id : marked) {
+				if (!onRoll.contains(id)) {
+					stranded++;
+				}
+			}
+			cb.accept(stranded);
+		});
+	}
+
+	@NonNull
+	private Set<Long> rollIds(long courseID, @Nullable Long batchID, int acadYear) {
+
+		List<StudentWithYear> roll = batchID == null
+				? db.daoStudent().getRollForCourseSync(courseID, acadYear)
+				: db.daoStudent().getRollForBatchSync(batchID, acadYear);
+
+		Set<Long> ids = new HashSet<>();
+		for (StudentWithYear student : roll) {
+			ids.add(student.studentID);
+		}
+		return ids;
+	}
+
+	/**
+	 * Changes a lecture's course, batch, date, times or notes.
+	 *
+	 * @param dropStranded remove marks for students who are not on the new roll. Ignored when
+	 *                     the course and batch are unchanged, since nothing can be stranded.
+	 */
 	public void updateLecture(long lectureID, long courseID, @Nullable Long batchID,
 	                          @NonNull ZonedDateTime start, @NonNull ZonedDateTime end,
-	                          @Nullable String notes, @NonNull Runnable onDone) {
+	                          @Nullable String notes, boolean dropStranded,
+	                          @NonNull Runnable onDone) {
+
+		final int acadYear = academicYearValue();
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
@@ -1062,7 +1170,33 @@ public class AttendanceViewModel extends AndroidViewModel {
 					toastMessage.postValue("End time must be after the start time");
 					return;
 				}
+
+				// The unique index would reject this anyway, but as a constraint violation
+				// rather than something the user can act on.
+				Long clash = db.daoLecture().findExisting(courseID, batchID, start, end);
+
+				if (clash != null && clash != lectureID) {
+					toastMessage.postValue(
+							"Another lecture is already recorded for that course and time");
+					return;
+				}
+
 				db.daoLecture().updateLecture(lectureID, courseID, batchID, start, end, notes);
+
+				if (dropStranded) {
+					Set<Long> onRoll = rollIds(courseID, batchID, acadYear);
+
+					// NOT IN () with an empty list is never true in SQLite, which would
+					// delete nothing rather than everything. Clearing the sheet outright is
+					// what an empty roll actually means.
+					if (onRoll.isEmpty()) {
+						db.daoAttendance().clearForLecture(lectureID);
+					} else {
+						db.daoAttendance().deleteForLectureExcept(lectureID,
+								new ArrayList<>(onRoll));
+					}
+				}
+
 				toastMessage.postValue("Lecture updated");
 				onDone.run();
 			} catch (Exception e) {

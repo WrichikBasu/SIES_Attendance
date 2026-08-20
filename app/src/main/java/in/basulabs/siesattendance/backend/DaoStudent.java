@@ -297,9 +297,15 @@ public abstract class DaoStudent {
 	 * <p>
 	 * A course states the year, stream and offering department it belongs to. Which of a
 	 * student's three departments has to match depends on how they are taking it: a major
-	 * course matches their major department, an open elective their OE choice. AEC and IKS
-	 * courses are taken by the whole year and stream regardless of department, so no
-	 * department condition applies to them.
+	 * course matches their major department, an open elective their OE choice. AEC, IKS, VSC
+	 * and SEC courses, and the practicals belonging to the latter two, are taken by the whole
+	 * year and stream regardless of department, so no department condition applies to them.
+	 * Note that this is the opposite of how major and minor practicals behave, which follow
+	 * the same department as the course they belong to.
+	 * <p>
+	 * A course type missing from every branch below matches nobody, which reads in the app as
+	 * a course with no students and no batches. Any type added to {@link CourseType} has to be
+	 * accounted for here.
 	 * <p>
 	 * A minor course matches either the student's minor department or their major. Matching
 	 * the minor alone left minor courses with an empty roll, because the minor field on the
@@ -323,7 +329,8 @@ public abstract class DaoStudent {
 			"      AND (y.minorDept = c.offeringDepartment " +
 			"           OR y.majorDept = c.offeringDepartment)) " +
 			"   OR (c.courseType = 'OE' AND y.oeDept = c.offeringDepartment) " +
-			"   OR c.courseType IN ('AEC', 'IKS')) " +
+			"   OR c.courseType IN ('AEC', 'IKS', 'VSC', 'VSC_PRACTICALS', " +
+			"                        'SEC', 'SEC_PRACTICALS')) " +
 			"ORDER BY y.rollNo ASC")
 	public abstract List<StudentWithYear> getRollForCourseSync(long courseID, int academicYear);
 

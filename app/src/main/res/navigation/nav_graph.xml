@@ -173,6 +173,9 @@
             android:name="lectureID"
             android:defaultValue="-1L"
             app:argType="long" />
+        <action
+            android:id="@+id/action_attendance_to_editLecture"
+            app:destination="@id/fragmentEditLecture" />
     </fragment>
 
     <fragment
@@ -190,6 +193,17 @@
         <action
             android:id="@+id/action_stats_to_studentDetail"
             app:destination="@id/fragmentStudentDetail" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentEditLecture"
+        android:name="in.basulabs.siesattendance.frontend.FragmentEditLecture"
+        android:label="@string/title_edit_lecture"
+        tools:layout="@layout/fragment_edit_lecture">
+        <argument
+            android:name="lectureID"
+            android:defaultValue="-1L"
+            app:argType="long" />
     </fragment>
 
     <fragment

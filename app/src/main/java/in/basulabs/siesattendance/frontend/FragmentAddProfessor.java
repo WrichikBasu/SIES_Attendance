@@ -43,9 +43,15 @@ public class FragmentAddProfessor extends Fragment {
 	@Nullable
 	private Department chosenDepartment;
 
+	/**
+	 * Suggestions only. The designation is stored as free text, so the field stays editable and
+	 * anything already saved keeps its wording even if it is no longer offered here. A
+	 * professor recorded under a designation that has since been dropped from this list is left
+	 * exactly as they were, rather than being quietly relabelled.
+	 */
 	private static final String[] DESIGNATIONS = {
-			"Professor", "Associate Professor", "Assistant Professor",
-			"Visiting Faculty", "Lab Assistant"
+			"Head of Department", "Professor", "Associate Professor", "Assistant Professor",
+			"Visiting Faculty"
 	};
 
 	@Nullable

@@ -287,6 +287,52 @@
     <string name="dialog_invalid_combination">That combination does not exist</string>
     <string name="app_bar_title">SIES Attendance</string>
 
+    <!-- Data export -->
+    <string name="action_export_ods">Export data (.ods)</string>
+    <string name="title_data_export">Data export</string>
+    <string name="dialog_data_export_done_title">Data exported</string>
+    <string name="dialog_threshold_title">Who counts as a defaulter?</string>
+    <string name="label_no_highlighting">No highlighting</string>
+
+    <string name="dialog_course_groups_title">Group courses</string>
+    <string name="hint_course_groups_explainer">Optional. Put courses into groups to get a
+        combined percentage and a separate defaulter list for each, on its own sheet. Leave
+        empty for a single sheet covering every course.</string>
+    <string name="label_no_groups_yet">No groups. The export will have one sheet.</string>
+    <string name="label_default_group_name">Group %1$d</string>
+    <string name="action_add_group">Add a group</string>
+    <string name="action_remove_group">Remove group</string>
+    <string name="action_choose_courses">Choose courses</string>
+    <string name="action_export">Export</string>
+    <string name="hint_group_name">Group name</string>
+    <string name="dialog_choose_courses_title">Courses in this group</string>
+    <string name="label_threshold_option">Below %1$d%%</string>
+    <string name="message_ods_export_done">%1$d students across %2$d courses. %3$d are below
+        the threshold and are shaded in the sheet.</string>
+
+    <!-- Editing a recorded lecture -->
+    <string name="title_edit_lecture">Edit lecture</string>
+    <string name="action_edit_lecture">Edit lecture details</string>
+    <string name="hint_edit_lecture_explainer">Correct the course, batch, date or time this
+        attendance was recorded against. The marks themselves are kept.</string>
+
+    <plurals name="warn_stranded_marks">
+        <item quantity="one">1 student marked here is not on the new roll.</item>
+        <item quantity="other">%1$d students marked here are not on the new roll.</item>
+    </plurals>
+
+    <string name="dialog_stranded_title">The roll is changing</string>
+    <plurals name="dialog_stranded_message">
+        <item quantity="one">1 student marked on this lecture is not on the new roll. Keeping
+            their mark counts it towards a course they do not take, and no sheet will show it
+            again.</item>
+        <item quantity="other">%1$d students marked on this lecture are not on the new roll.
+            Keeping their marks counts them towards a course they do not take, and no sheet
+            will show them again.</item>
+    </plurals>
+    <string name="option_drop_stranded">Remove those marks</string>
+    <string name="option_keep_stranded">Keep them anyway</string>
+
     <!-- Deleting an attendance record -->
     <string name="action_delete_attendance">Delete this attendance record</string>
     <string name="dialog_delete_attendance_title">Delete the attendance</string>
