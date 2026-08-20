@@ -13,6 +13,7 @@ import androidx.lifecycle.MutableLiveData;
 import androidx.lifecycle.Transformations;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -1101,6 +1102,72 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	// ── Lecture edit and delete ──────────────────────────────────────────
+
+	/**
+	 * Copies a recorded lecture to a new date and time, marks and all.
+	 * <p>
+	 * For the case the take-attendance screen cannot cover: the same class met again, or the
+	 * second hour of a double period was written up later, and calling the whole roll a second
+	 * time is wasted effort when the room was substantially the same. The copy is a real
+	 * lecture from the moment it is made, so it can be opened, corrected and saved like any
+	 * other, and deleted if it turns out to be unwanted.
+	 * <p>
+	 * The course and batch come from the source and are not asked for again; only the clock
+	 * moves. Changing the course afterwards is what the edit screen is for.
+	 *
+	 * @param onDone receives the new lecture's ID, or null if it could not be made
+	 */
+	public void duplicateLecture(long sourceLectureID, @NonNull LocalDate date,
+	                             @NonNull LocalTime startTime, @NonNull LocalTime endTime,
+	                             @NonNull java.util.function.Consumer<Long> onDone) {
+
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+			try {
+				EntityLecture source = db.daoLecture().getByIdSync(sourceLectureID);
+
+				if (source == null) {
+					toastMessage.postValue("That lecture no longer exists");
+					onDone.accept(null);
+					return;
+				}
+
+				ZoneId zone = ZoneId.systemDefault();
+				ZonedDateTime start = ZonedDateTime.of(date, startTime, zone);
+				ZonedDateTime end = ZonedDateTime.of(date, endTime, zone);
+
+				if (!end.isAfter(start)) {
+					toastMessage.postValue("End time must be after the start time");
+					onDone.accept(null);
+					return;
+				}
+
+				if (db.daoLecture().findExisting(source.courseID, source.batchID, start, end)
+						!= null) {
+					toastMessage.postValue(
+							"A lecture is already recorded for that course and time");
+					onDone.accept(null);
+					return;
+				}
+
+				// One transaction: a lecture that exists without its copied marks would look
+				// like a session where nobody was recorded, which is not what was asked for.
+				final long[] created = new long[1];
+
+				db.runInTransaction(() -> {
+					created[0] = db.daoLecture().insert(new EntityLecture(
+							source.courseID, source.batchID, start, end, source.notes));
+					db.daoAttendance().copyMarks(sourceLectureID, created[0]);
+				});
+
+				toastMessage.postValue("Attendance duplicated");
+				onDone.accept(created[0]);
+
+			} catch (Exception e) {
+				toastMessage.postValue("Could not duplicate: " + e.getMessage());
+				onDone.accept(null);
+			}
+		});
+	}
 
 	/** Loads a lecture so its details can be pre-filled into the edit form. */
 	public void loadLectureForEdit(long lectureID,

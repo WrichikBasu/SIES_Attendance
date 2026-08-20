@@ -333,6 +333,22 @@
     <string name="option_drop_stranded">Remove those marks</string>
     <string name="option_keep_stranded">Keep them anyway</string>
 
+    <!-- Guarding a part-marked roll -->
+    <string name="dialog_discard_roll_title">Discard the marks you have made?</string>
+    <string name="dialog_discard_roll_message">Switching to another course clears this roll.
+        The attendance you have marked so far has not been saved and cannot be recovered.
+        </string>
+    <string name="action_keep_marking">Keep marking</string>
+    <string name="action_discard_and_switch">Discard and switch</string>
+
+    <!-- Duplicating an attendance record -->
+    <string name="action_duplicate_attendance">Duplicate this attendance</string>
+    <string name="action_duplicate">Duplicate</string>
+    <string name="dialog_duplicate_title">Duplicate to another slot</string>
+    <string name="hint_duplicate_explainer">A copy of this sheet for %1$s (%2$s) will be made
+        with the same marks. Set when it took place, then correct whoever differs and save.
+        </string>
+
     <!-- Deleting an attendance record -->
     <string name="action_delete_attendance">Delete this attendance record</string>
     <string name="dialog_delete_attendance_title">Delete the attendance</string>

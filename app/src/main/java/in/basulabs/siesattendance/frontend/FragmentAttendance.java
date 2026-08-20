@@ -8,21 +8,30 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.view.MenuProvider;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.ViewModelProvider;
+import androidx.navigation.NavOptions;
 import androidx.navigation.Navigation;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
+import com.google.android.material.datepicker.MaterialDatePicker;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.textfield.TextInputEditText;
+import com.google.android.material.timepicker.MaterialTimePicker;
+import com.google.android.material.timepicker.TimeFormat;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
@@ -113,6 +122,10 @@ public class FragmentAttendance extends Fragment {
 					args.putLong("lectureID", lectureID);
 					Navigation.findNavController(requireView())
 							.navigate(R.id.action_attendance_to_editLecture, args);
+					return true;
+				}
+				if (item.getItemId() == R.id.action_duplicate_attendance) {
+					askDuplicateSlot();
 					return true;
 				}
 				if (item.getItemId() == R.id.action_delete_attendance) {
@@ -226,4 +239,130 @@ public class FragmentAttendance extends Fragment {
 				+ details.startDateTime.format(timeFormat) + " – "
 				+ details.endDateTime.format(timeFormat));
 	}
+
+	// ── Duplicating ──────────────────────────────────────────────────────
+
+	/**
+	 * Asks when the copy should sit, then makes it.
+	 * <p>
+	 * Prefilled with the slot straight after the lecture being copied, of the same length,
+	 * which is the double period this exists for. Everything else about the lecture comes
+	 * across untouched, so the common case is two taps.
+	 */
+	private void askDuplicateSlot() {
+
+		LectureDetails source = viewModel.getCurrentLecture();
+
+		if (source == null || lectureID <= 0) {
+			return;
+		}
+
+		long minutes = Duration.between(source.startDateTime, source.endDateTime).toMinutes();
+
+		final LocalDate[] date = {source.startDateTime.toLocalDate()};
+		final LocalTime[] start = {source.endDateTime.toLocalTime()};
+		final LocalTime[] end = {start[0].plusMinutes(minutes)};
+
+		View content = getLayoutInflater().inflate(R.layout.dialog_duplicate_lecture, null);
+
+		TextView explainer = content.findViewById(R.id.tvDuplicateExplainer);
+		TextInputEditText dateField = content.findViewById(R.id.etDupDate);
+		TextInputEditText startField = content.findViewById(R.id.etDupStart);
+		TextInputEditText endField = content.findViewById(R.id.etDupEnd);
+
+		explainer.setText(getString(R.string.hint_duplicate_explainer,
+				source.courseCode,
+				source.batchName == null
+						? getString(R.string.label_whole_class)
+						: source.batchName));
+
+		dateField.setText(date[0].format(DUP_DATE));
+		startField.setText(start[0].format(DUP_TIME));
+		endField.setText(end[0].format(DUP_TIME));
+
+		dateField.setOnClickListener(v -> {
+			MaterialDatePicker<Long> picker = MaterialDatePicker.Builder.datePicker()
+					.setTitleText(R.string.hint_date)
+					.setSelection(date[0].atStartOfDay(ZoneId.of("UTC"))
+							.toInstant().toEpochMilli())
+					.build();
+			picker.addOnPositiveButtonClickListener(selection -> {
+				date[0] = Instant.ofEpochMilli(selection)
+						.atZone(ZoneId.of("UTC")).toLocalDate();
+				dateField.setText(date[0].format(DUP_DATE));
+			});
+			picker.show(getParentFragmentManager(), "dupDate");
+		});
+
+		startField.setOnClickListener(v -> pickTime(start[0], chosen -> {
+			start[0] = chosen;
+			startField.setText(chosen.format(DUP_TIME));
+		}, "dupStart", R.string.hint_start_time));
+
+		endField.setOnClickListener(v -> pickTime(end[0], chosen -> {
+			end[0] = chosen;
+			endField.setText(chosen.format(DUP_TIME));
+		}, "dupEnd", R.string.hint_end_time));
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_duplicate_title)
+				.setView(content)
+				.setNegativeButton(R.string.action_cancel, null)
+				.setPositiveButton(R.string.action_duplicate, (d, w) ->
+						viewModel.duplicateLecture(lectureID, date[0], start[0], end[0],
+								this::openCopy))
+				.show();
+	}
+
+	private void pickTime(@NonNull LocalTime current,
+	                      @NonNull java.util.function.Consumer<LocalTime> onPicked,
+	                      @NonNull String tag, int titleRes) {
+
+		MaterialTimePicker picker = new MaterialTimePicker.Builder()
+				.setTimeFormat(TimeFormat.CLOCK_24H)
+				.setHour(current.getHour())
+				.setMinute(current.getMinute())
+				.setTitleText(titleRes)
+				.build();
+
+		picker.addOnPositiveButtonClickListener(v ->
+				onPicked.accept(LocalTime.of(picker.getHour(), picker.getMinute())));
+
+		picker.show(getParentFragmentManager(), tag);
+	}
+
+	/**
+	 * Opens the copy so it can be corrected and saved.
+	 * <p>
+	 * Replaces this screen in the back stack rather than stacking on top of it, so going back
+	 * from the copy returns to the list instead of to the lecture it was copied from, which
+	 * would look like the duplicate had failed.
+	 */
+	private void openCopy(@Nullable Long newLectureID) {
+
+		if (newLectureID == null) {
+			return;
+		}
+
+		requireActivity().runOnUiThread(() -> {
+			if (!isAdded()) {
+				return;
+			}
+
+			Bundle args = new Bundle();
+			args.putLong("lectureID", newLectureID);
+
+			NavOptions options = new NavOptions.Builder()
+					.setPopUpTo(R.id.fragmentAttendance, true)
+					.build();
+
+			Navigation.findNavController(requireView())
+					.navigate(R.id.fragmentAttendance, args, options);
+		});
+	}
+
+	private static final DateTimeFormatter DUP_DATE =
+			DateTimeFormatter.ofPattern("EEE, d MMM yyyy");
+
+	private static final DateTimeFormatter DUP_TIME = DateTimeFormatter.ofPattern("HH:mm");
 }

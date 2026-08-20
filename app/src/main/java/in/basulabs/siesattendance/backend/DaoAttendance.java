@@ -42,6 +42,17 @@ public abstract class DaoAttendance {
 	public abstract List<Long> getMarkedIdsSync(long lectureID);
 
 	/**
+	 * Copies every mark from one lecture onto another.
+	 * <p>
+	 * Done in SQL rather than by reading rows into memory and writing them back, so the copy
+	 * is a single statement inside the caller's transaction and cannot half-happen.
+	 */
+	@Query("INSERT INTO attendance (lectureID, studentID, present) " +
+			"SELECT :toLectureID, studentID, present FROM attendance " +
+			"WHERE lectureID = :fromLectureID")
+	public abstract void copyMarks(long fromLectureID, long toLectureID);
+
+	/**
 	 * Drops marks for students who are not in {@code keep}.
 	 * <p>
 	 * Used when a lecture is moved to a different course: anyone recorded against it who is not

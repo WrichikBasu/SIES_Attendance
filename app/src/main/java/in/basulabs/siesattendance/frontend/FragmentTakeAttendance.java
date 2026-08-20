@@ -93,6 +93,35 @@ public class FragmentTakeAttendance extends Fragment {
 
 	private LocalTime startTime, endTime;
 
+	/**
+	 * True once the roll has been touched: a student toggled, or a bulk action used.
+	 * <p>
+	 * Needed because every row carries an answer from the moment it loads, so the marks alone
+	 * cannot say whether any thought has gone into them. Without this, changing course would
+	 * either always warn or never warn, and both are wrong.
+	 */
+	private boolean rollTouched;
+
+	/**
+	 * Selections read back from a saved instance state, applied once the asynchronous course
+	 * and batch loads return. The lists are not in hand at the moment the state is restored, so
+	 * the choice has to wait for them.
+	 */
+	private long pendingCourseID = -1L;
+
+	private Long pendingBatchID;
+
+	private boolean pendingBatchChosen;
+
+	private static final String KEY_COURSE = "courseID";
+	private static final String KEY_BATCH = "batchID";
+	private static final String KEY_HAS_BATCH = "hasBatch";
+	private static final String KEY_BATCH_CHOSEN = "batchChosen";
+	private static final String KEY_DATE = "date";
+	private static final String KEY_START = "start";
+	private static final String KEY_END = "end";
+	private static final String KEY_TOUCHED = "rollTouched";
+
 	@Nullable
 	@Override
 	public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
@@ -128,8 +157,10 @@ public class FragmentTakeAttendance extends Fragment {
 
 		RecyclerView recyclerView = view.findViewById(R.id.rvRoll);
 
-		adapter = new AdapterAttendance((studentID, present) ->
-				viewModel.setPresence(studentID, present));
+		adapter = new AdapterAttendance((studentID, present) -> {
+			rollTouched = true;
+			viewModel.setPresence(studentID, present);
+		});
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
 		recyclerView.setNestedScrollingEnabled(false);
 		recyclerView.setAdapter(adapter);
@@ -140,19 +171,28 @@ public class FragmentTakeAttendance extends Fragment {
 		saveAndNext = view.findViewById(R.id.btnSaveAndNext);
 		saveAndNext.setOnClickListener(v -> onSave(v, true));
 
-		view.findViewById(R.id.btnMarkAllPresent)
-				.setOnClickListener(v -> viewModel.setAllPresence(true));
-		view.findViewById(R.id.btnMarkAllAbsent)
-				.setOnClickListener(v -> viewModel.setAllPresence(false));
+		view.findViewById(R.id.btnMarkAllPresent).setOnClickListener(v -> {
+			rollTouched = true;
+			viewModel.setAllPresence(true);
+		});
+		view.findViewById(R.id.btnMarkAllAbsent).setOnClickListener(v -> {
+			rollTouched = true;
+			viewModel.setAllPresence(false);
+		});
 
 		etDate.setText(date.format(DATE_LABEL));
 		etDate.setOnClickListener(v -> pickDate());
 		etStart.setOnClickListener(v -> pickTime(true));
 		etEnd.setOnClickListener(v -> pickTime(false));
 
-		// The roll belongs to whichever course is picked next, so anything left over from a
-		// previous visit is discarded before the screen is shown.
-		viewModel.clearRoll();
+		// Only on a fresh visit. The roll lives in the activity-scoped ViewModel precisely so
+		// it survives a rotation; clearing it here unconditionally threw away the sheet every
+		// time the screen was rebuilt.
+		if (savedInstanceState == null) {
+			viewModel.clearRoll();
+		} else {
+			restoreFrom(savedInstanceState);
+		}
 
 		loadCourses();
 		observe();
@@ -176,9 +216,61 @@ public class FragmentTakeAttendance extends Fragment {
 						android.R.layout.simple_list_item_1, labels));
 
 				actvCourse.setOnItemClickListener((parent, v, position, id) ->
-						onCourseChosen(courses.get(position)));
+						requestCourseChange(courses.get(position), labels));
+
+				applyPendingCourse(labels);
 			});
 		});
+	}
+
+	/**
+	 * Guards the course dropdown, because changing course throws the roll away.
+	 * <p>
+	 * Asked only when the roll has actually been worked on. Choosing a course, seeing it was
+	 * the wrong one and picking another is the common case and must not need a confirmation;
+	 * losing twenty minutes of marking to a mis-tap is what this is here to stop.
+	 */
+	private void requestCourseChange(@NonNull EntityCourse course,
+	                                 @NonNull List<String> labels) {
+
+		if (selectedCourse != null && selectedCourse.courseID == course.courseID) {
+			return;
+		}
+
+		if (!rollTouched || viewModel.getAttendanceRows().getValue() == null
+				|| viewModel.getAttendanceRows().getValue().isEmpty()) {
+			onCourseChosen(course);
+			return;
+		}
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_discard_roll_title)
+				.setMessage(R.string.dialog_discard_roll_message)
+				.setNegativeButton(R.string.action_keep_marking, (d, w) -> {
+					// The dropdown already shows the course that was tapped, so putting the
+					// old one back is part of cancelling.
+					int index = indexOf(selectedCourse);
+					if (index >= 0) {
+						actvCourse.setText(labels.get(index), false);
+					}
+				})
+				.setPositiveButton(R.string.action_discard_and_switch, (d, w) ->
+						onCourseChosen(course))
+				.show();
+	}
+
+	private int indexOf(@Nullable EntityCourse course) {
+
+		if (course == null) {
+			return -1;
+		}
+
+		for (int i = 0; i < courses.size(); i++) {
+			if (courses.get(i).courseID == course.courseID) {
+				return i;
+			}
+		}
+		return -1;
 	}
 
 	/**
@@ -189,6 +281,7 @@ public class FragmentTakeAttendance extends Fragment {
 		selectedCourse = course;
 		selectedBatchID = null;
 		batchChosen = false;
+		rollTouched = false;
 
 		tilCourse.setError(null);
 		tilBatch.setError(null);
@@ -239,6 +332,11 @@ public class FragmentTakeAttendance extends Fragment {
 				tilBatch.setHelperText(list.isEmpty()
 						? getString(R.string.helper_no_batches_for_course)
 						: null);
+
+				// Restores the group after a rotation. Deliberately not onGroupChosen(),
+				// which reloads the roll from the database and would overwrite the marks
+				// being restored.
+				applyPendingBatch(labels);
 			});
 		});
 	}
@@ -455,11 +553,124 @@ public class FragmentTakeAttendance extends Fragment {
 				.show();
 	}
 
+	// ── Surviving a rotation ─────────────────────────────────────────────
+
+	/**
+	 * The roll itself needs no saving: it lives in the activity-scoped ViewModel and outlives
+	 * the view. What is saved here is the surrounding choice, which was held in plain fields
+	 * and therefore died with the fragment.
+	 */
+	@Override
+	public void onSaveInstanceState(@NonNull Bundle outState) {
+		super.onSaveInstanceState(outState);
+
+		if (selectedCourse != null) {
+			outState.putLong(KEY_COURSE, selectedCourse.courseID);
+		}
+
+		outState.putBoolean(KEY_HAS_BATCH, selectedBatchID != null);
+		if (selectedBatchID != null) {
+			outState.putLong(KEY_BATCH, selectedBatchID);
+		}
+
+		outState.putBoolean(KEY_BATCH_CHOSEN, batchChosen);
+		outState.putBoolean(KEY_TOUCHED, rollTouched);
+		outState.putLong(KEY_DATE, date.toEpochDay());
+
+		if (startTime != null) {
+			outState.putInt(KEY_START, startTime.toSecondOfDay());
+		}
+		if (endTime != null) {
+			outState.putInt(KEY_END, endTime.toSecondOfDay());
+		}
+	}
+
+	private void restoreFrom(@NonNull Bundle state) {
+
+		pendingCourseID = state.getLong(KEY_COURSE, -1L);
+		pendingBatchID = state.getBoolean(KEY_HAS_BATCH) ? state.getLong(KEY_BATCH) : null;
+		pendingBatchChosen = state.getBoolean(KEY_BATCH_CHOSEN);
+		rollTouched = state.getBoolean(KEY_TOUCHED);
+
+		date = LocalDate.ofEpochDay(state.getLong(KEY_DATE, date.toEpochDay()));
+
+		if (state.containsKey(KEY_START)) {
+			startTime = LocalTime.ofSecondOfDay(state.getInt(KEY_START));
+			etStart.setText(startTime.format(TIME_LABEL));
+		}
+		if (state.containsKey(KEY_END)) {
+			endTime = LocalTime.ofSecondOfDay(state.getInt(KEY_END));
+			etEnd.setText(endTime.format(TIME_LABEL));
+		}
+		etDate.setText(date.format(DATE_LABEL));
+	}
+
+	/**
+	 * Re-selects the saved course once the course list has loaded.
+	 * <p>
+	 * Goes around {@link #onCourseChosen}, which exists to start a fresh roll and would clear
+	 * the very sheet being restored.
+	 */
+	private void applyPendingCourse(@NonNull List<String> labels) {
+
+		if (pendingCourseID <= 0) {
+			return;
+		}
+
+		int index = -1;
+		for (int i = 0; i < courses.size(); i++) {
+			if (courses.get(i).courseID == pendingCourseID) {
+				index = i;
+				break;
+			}
+		}
+
+		pendingCourseID = -1L;
+
+		if (index < 0) {
+			return;
+		}
+
+		selectedCourse = courses.get(index);
+		actvCourse.setText(labels.get(index), false);
+		loadBatchOptions(selectedCourse);
+		updateRollVisibility();
+	}
+
+	/** The batch half of the same restore, once the batch list is in hand. */
+	private void applyPendingBatch(@NonNull List<String> labels) {
+
+		if (!pendingBatchChosen) {
+			return;
+		}
+
+		pendingBatchChosen = false;
+
+		int index = 0;
+		if (pendingBatchID != null) {
+			for (int i = 0; i < batches.size(); i++) {
+				if (batches.get(i).batchID == pendingBatchID) {
+					index = i + 1;
+					break;
+				}
+			}
+		}
+
+		selectedBatchID = pendingBatchID;
+		pendingBatchID = null;
+		batchChosen = true;
+		actvBatch.setText(labels.get(index), false);
+		updateRollVisibility();
+	}
+
 	@Override
 	public void onDestroyView() {
-		// The roll lives in the shared ViewModel, so it is cleared on the way out rather than
-		// leaking into the edit-an-existing-lecture screen.
-		viewModel.clearRoll();
+		// Cleared only when the screen is genuinely being left, not when the view is rebuilt
+		// underneath it. A rotation destroys the view too, and wiping the roll here was what
+		// lost the sheet.
+		if (isRemoving() && !requireActivity().isChangingConfigurations()) {
+			viewModel.clearRoll();
+		}
 		super.onDestroyView();
 	}
 }

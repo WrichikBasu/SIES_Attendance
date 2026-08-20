@@ -8,6 +8,11 @@
         android:title="@string/action_edit_lecture"
         app:showAsAction="ifRoom" />
 
+    <item
+        android:id="@+id/action_duplicate_attendance"
+        android:title="@string/action_duplicate_attendance"
+        app:showAsAction="never" />
+
     <!-- Overflow only: this discards a filled-in sheet and should not sit beside Save. -->
     <item
         android:id="@+id/action_delete_attendance"
