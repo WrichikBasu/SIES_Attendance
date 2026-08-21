@@ -216,7 +216,7 @@ public class FragmentTakeAttendance extends Fragment {
 						android.R.layout.simple_list_item_1, labels));
 
 				actvCourse.setOnItemClickListener((parent, v, position, id) ->
-						requestCourseChange(courses.get(position), labels));
+						requestCourseChange(courses.get(position)));
 
 				applyPendingCourse(labels);
 			});
@@ -224,72 +224,77 @@ public class FragmentTakeAttendance extends Fragment {
 	}
 
 	/**
-	 * Guards the course dropdown, because changing course throws the roll away.
+	 * Changing the course keeps whatever has been marked.
 	 * <p>
-	 * Asked only when the roll has actually been worked on. Choosing a course, seeing it was
-	 * the wrong one and picking another is the common case and must not need a confirmation;
-	 * losing twenty minutes of marking to a mis-tap is what this is here to stop.
+	 * The group is what decides who is in the room, and it is left alone here: the same
+	 * students are sitting there whether the hour goes down as theory or practicals. The roll
+	 * is re-read because a different course can reach a slightly different set of students,
+	 * and every mark already made is carried across it.
+	 * <p>
+	 * Only changing the group discards anything, which is the one case where the people
+	 * themselves differ.
 	 */
-	private void requestCourseChange(@NonNull EntityCourse course,
-	                                 @NonNull List<String> labels) {
+	private void requestCourseChange(@NonNull EntityCourse course) {
 
 		if (selectedCourse != null && selectedCourse.courseID == course.courseID) {
 			return;
 		}
+		onCourseChosen(course);
+	}
 
-		if (!rollTouched || viewModel.getAttendanceRows().getValue() == null
-				|| viewModel.getAttendanceRows().getValue().isEmpty()) {
-			onCourseChosen(course);
-			return;
-		}
+	private void confirmGroupChange(@Nullable Long newBatchID,
+	                                @NonNull List<String> labels) {
 
 		new MaterialAlertDialogBuilder(requireContext())
 				.setTitle(R.string.dialog_discard_roll_title)
 				.setMessage(R.string.dialog_discard_roll_message)
 				.setNegativeButton(R.string.action_keep_marking, (d, w) -> {
-					// The dropdown already shows the course that was tapped, so putting the
+					// The dropdown already shows the group that was tapped, so putting the
 					// old one back is part of cancelling.
-					int index = indexOf(selectedCourse);
-					if (index >= 0) {
-						actvCourse.setText(labels.get(index), false);
+					int previous = 0;
+					if (selectedBatchID != null) {
+						for (int i = 0; i < batches.size(); i++) {
+							if (batches.get(i).batchID == selectedBatchID) {
+								previous = i + 1;
+								break;
+							}
+						}
 					}
+					actvBatch.setText(labels.get(previous), false);
 				})
 				.setPositiveButton(R.string.action_discard_and_switch, (d, w) ->
-						onCourseChosen(course))
+						applyGroupChange(newBatchID))
 				.show();
 	}
 
-	private int indexOf(@Nullable EntityCourse course) {
-
-		if (course == null) {
-			return -1;
-		}
-
-		for (int i = 0; i < courses.size(); i++) {
-			if (courses.get(i).courseID == course.courseID) {
-				return i;
-			}
-		}
-		return -1;
+	private void applyGroupChange(@Nullable Long newBatchID) {
+		selectedBatchID = newBatchID;
+		batchChosen = true;
+		rollTouched = false;
+		tilBatch.setError(null);
+		onGroupChosen();
 	}
 
+
 	/**
-	 * Picking a course resets the group selection and loads the groups available for it. The
-	 * roll deliberately stays empty until a group is chosen.
+	 * Picking a course reloads the group list and, if a group is already chosen, the roll for
+	 * it. The roll stays empty until a group is chosen.
 	 */
 	private void onCourseChosen(@NonNull EntityCourse course) {
-		selectedCourse = course;
-		selectedBatchID = null;
-		batchChosen = false;
-		rollTouched = false;
 
+		boolean hadGroup = batchChosen;
+
+		selectedCourse = course;
 		tilCourse.setError(null);
 		tilBatch.setError(null);
 
-		actvBatch.setText("", false);
-		viewModel.clearRoll();
-
+		// The group survives the course change. Batches are listed per session rather than
+		// per course, so the one already chosen is still a valid choice for the new course.
 		loadBatchOptions(course);
+
+		if (hadGroup) {
+			viewModel.loadRoll(course.courseID, selectedBatchID, true);
+		}
 		updateRollVisibility();
 	}
 
@@ -323,10 +328,27 @@ public class FragmentTakeAttendance extends Fragment {
 						android.R.layout.simple_list_item_1, labels));
 
 				actvBatch.setOnItemClickListener((parent, v, position, id) -> {
-					selectedBatchID = position == 0 ? null : batches.get(position - 1).batchID;
-					batchChosen = true;
-					tilBatch.setError(null);
-					onGroupChosen();
+
+					Long newBatchID = position == 0
+							? null
+							: batches.get(position - 1).batchID;
+
+					boolean sameGroup = batchChosen && (newBatchID == null
+							? selectedBatchID == null
+							: newBatchID.equals(selectedBatchID));
+
+					if (sameGroup) {
+						return;
+					}
+
+					// A different group means different people, so the marks cannot follow.
+					// This is the only place on the screen that throws work away, and it asks
+					// first once there is work to lose.
+					if (batchChosen && rollTouched) {
+						confirmGroupChange(newBatchID, labels);
+					} else {
+						applyGroupChange(newBatchID);
+					}
 				});
 
 				tilBatch.setHelperText(list.isEmpty()

@@ -291,21 +291,47 @@
     <string name="action_export_ods">Export data (.ods)</string>
     <string name="title_data_export">Data export</string>
     <string name="dialog_data_export_done_title">Data exported</string>
+    <string name="hint_from_date">From date</string>
+    <string name="hint_to_date">To date</string>
+
     <string name="dialog_threshold_title">Who counts as a defaulter?</string>
     <string name="label_no_highlighting">No highlighting</string>
 
-    <string name="dialog_course_groups_title">Group courses</string>
-    <string name="hint_course_groups_explainer">Optional. Put courses into groups to get a
-        combined percentage and a separate defaulter list for each, on its own sheet. Leave
-        empty for a single sheet covering every course.</string>
-    <string name="label_no_groups_yet">No groups. The export will have one sheet.</string>
     <string name="label_default_group_name">Group %1$d</string>
     <string name="action_add_group">Add a group</string>
+    <string name="action_clear_date">Clear</string>
+    <string name="action_select_all">Select all shown</string>
+    <string name="action_clear_selection">Clear selection</string>
+
+    <string name="title_export">Export data</string>
+    <string name="hint_export_intro">Everything left untouched exports the whole session.
+        Narrow whichever parts you need.</string>
+
+    <string name="section_dates">Date range</string>
+
+    <string name="section_courses">Courses to include</string>
+    <string name="hint_section_courses">These become the columns, and whoever is on their roll
+        becomes the rows. Select none to include every course. Courses from any department or
+        stream can be mixed freely.</string>
+    <string name="hint_search_courses">Search by code, topic, department or stream</string>
+    <string name="label_no_courses_match">No courses match that search.</string>
+
+    <string name="section_defaulters">Defaulter threshold</string>
+    <string name="section_groups">Course groups</string>
+    <string name="hint_section_groups">Optional. Each group gets its own sheet with a combined
+        percentage and its own defaulter list.</string>
+    <string name="hint_group_pick_courses">Tap the courses that belong to this group</string>
+    <string name="hint_group_no_courses">Select some courses above first.</string>
+
+    <string name="label_summary_threshold">Shading students below %1$d%%</string>
+    <string name="label_summary_no_shading">No defaulter shading</string>
+    <plurals name="label_group_sheets">
+        <item quantity="one">1 extra sheet for the group</item>
+        <item quantity="other">%1$d extra sheets, one per group</item>
+    </plurals>
     <string name="action_remove_group">Remove group</string>
-    <string name="action_choose_courses">Choose courses</string>
     <string name="action_export">Export</string>
     <string name="hint_group_name">Group name</string>
-    <string name="dialog_choose_courses_title">Courses in this group</string>
     <string name="label_threshold_option">Below %1$d%%</string>
     <string name="message_ods_export_done">%1$d students across %2$d courses. %3$d are below
         the threshold and are shaded in the sheet.</string>

@@ -81,14 +81,17 @@ public final class AttendanceExporter {
 	 * @param thresholdPercent a student below this is a defaulter, or {@link #NO_THRESHOLD} to
 	 *                         shade nobody
 	 * @param groups           may be empty, in which case only the overall sheet is written
+	 * @param filter           narrows the dates, courses and students covered; an unrestricted
+	 *                         filter exports the whole session
 	 */
 	@NonNull
 	public static Summary export(@NonNull Context context, @NonNull Uri destination,
 	                             int academicYear, int thresholdPercent,
-	                             @NonNull List<CourseGroup> groups) throws IOException {
+	                             @NonNull List<CourseGroup> groups,
+	                             @NonNull ExportFilter filter) throws IOException {
 
-		List<ExportRow> rows = MainDatabase.getInstance(context)
-				.daoAttendance().getExportRowsSync(academicYear);
+		List<ExportRow> rows = MainDatabase.getInstance(context).daoAttendance()
+				.getExportRowsSync(ExportQueryBuilder.build(academicYear, filter));
 
 		// Courses become column pairs, in the order the query returned them (by code). A
 		// LinkedHashMap keeps that order without a second sort.
@@ -113,7 +116,7 @@ public final class AttendanceExporter {
 		ods.defineStyle(STYLE_SUBHEADER, "#EDF2FA", null, true);
 		ods.defineStyle(STYLE_DEFAULTER, "#FFC7CE", "#9C0006", false);
 
-		writeTitle(ods, academicYear, thresholdPercent, null);
+		writeTitle(ods, academicYear, thresholdPercent, null, filter);
 		writeHeaders(ods, courseColumns);
 
 		int defaulters = 0;
@@ -127,7 +130,7 @@ public final class AttendanceExporter {
 		for (CourseGroup group : groups) {
 			if (group.isUsable()) {
 				writeGroupSheet(ods, group, academicYear, thresholdPercent,
-						courseColumns, students.values());
+						courseColumns, students.values(), filter);
 			}
 		}
 
@@ -144,7 +147,7 @@ public final class AttendanceExporter {
 	}
 
 	private static void writeTitle(@NonNull OdsWriter ods, int academicYear, int threshold,
-	                               @Nullable CourseGroup group) {
+	                               @Nullable CourseGroup group, @NonNull ExportFilter filter) {
 
 		String heading = "Attendance register " + academicYear + "-"
 				+ ((academicYear + 1) % 100);
@@ -162,6 +165,13 @@ public final class AttendanceExporter {
 			courses.add(OdsWriter.Cell.text("Courses: " + group.describeCourses(), null));
 			ods.addRow(courses);
 		}
+
+		// A filtered sheet says so on its face. Someone reading it later has no other way to
+		// tell a partial export from a complete one, and would take the figures for the whole
+		// session.
+		List<OdsWriter.Cell> scope = new ArrayList<>();
+		scope.add(OdsWriter.Cell.text(filter.describe(), null));
+		ods.addRow(scope);
 
 		List<OdsWriter.Cell> note = new ArrayList<>();
 		note.add(OdsWriter.Cell.text(shadingOn(threshold)
@@ -181,10 +191,11 @@ public final class AttendanceExporter {
 	private static void writeGroupSheet(@NonNull OdsWriter ods, @NonNull CourseGroup group,
 	                                    int academicYear, int threshold,
 	                                    @NonNull Map<Long, String> allCourses,
-	                                    @NonNull Collection<Student> students) {
+	                                    @NonNull Collection<Student> students,
+	                                    @NonNull ExportFilter filter) {
 
 		ods.startSheet(group.name);
-		writeTitle(ods, academicYear, threshold, group);
+		writeTitle(ods, academicYear, threshold, group, filter);
 
 		// Only the group's courses become columns, in the order they appear overall so the
 		// group sheet reads in the same order as the main one.

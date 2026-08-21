@@ -12,8 +12,6 @@ import android.widget.AutoCompleteTextView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.core.view.MenuProvider;
 import androidx.fragment.app.Fragment;
@@ -28,7 +26,6 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.datepicker.MaterialDatePicker;
-import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputLayout;
 
 import java.time.Instant;
@@ -41,8 +38,6 @@ import java.util.List;
 import java.util.Locale;
 
 import in.basulabs.siesattendance.R;
-import in.basulabs.siesattendance.backend.util.AttendanceExporter;
-import in.basulabs.siesattendance.backend.util.CourseGroup;
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
@@ -53,7 +48,6 @@ import in.basulabs.siesattendance.backend.pojo.StatRow;
 import in.basulabs.siesattendance.backend.pojo.StatsSummary;
 import in.basulabs.siesattendance.backend.stats.StatsFilter;
 import in.basulabs.siesattendance.backend.stats.StatsGroupBy;
-import in.basulabs.siesattendance.frontend.adapter.AdapterCourseGroups;
 import in.basulabs.siesattendance.frontend.adapter.AdapterHeader;
 import in.basulabs.siesattendance.frontend.adapter.AdapterStatRow;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
@@ -125,7 +119,6 @@ public class FragmentStats extends Fragment {
 		allSessionsLabel = getString(R.string.filter_all_sessions);
 
 		setupExportMenu();
-		observeExport();
 
 		RecyclerView recyclerView = (RecyclerView) view;
 		adapter = new AdapterStatRow(this::onRowClicked);
@@ -730,32 +723,13 @@ public class FragmentStats extends Fragment {
 		tvActiveFilters.setText(String.join(" · ", parts));
 	}
 
-	// ── Spreadsheet export ───────────────────────────────────────────────
+	// ── Export ───────────────────────────────────────────────────────────
 
 	/**
-	 * Chosen in the dialog, then held until the file name comes back from the system picker.
-	 * <p>
-	 * Declared above the launcher on purpose: a field initialiser may not refer by simple name
-	 * to a field declared below it, and javac applies that rule textually even though the
-	 * lambda does not run until much later.
+	 * The export lives on its own screen. Setting one up means choosing courses across
+	 * departments and streams, and building groups from them, which needs a list that can be
+	 * searched and scrolled rather than a chain of dialogs.
 	 */
-	private int pendingThreshold = 75;
-
-	/** Built in the dialog, read by the picker callback, discarded after the export. */
-	private List<CourseGroup> pendingGroups = CourseGroup.none();
-
-	/**
-	 * Registered as a field initialiser because launchers have to exist before the fragment
-	 * starts.
-	 */
-	private final ActivityResultLauncher<String> exportPicker = registerForActivityResult(
-			new ActivityResultContracts.CreateDocument(
-					"application/vnd.oasis.opendocument.spreadsheet"), uri -> {
-				if (uri != null) {
-					viewModel.exportAttendanceSheet(uri, pendingThreshold, pendingGroups);
-				}
-			});
-
 	private void setupExportMenu() {
 		requireActivity().addMenuProvider(new MenuProvider() {
 
@@ -767,171 +741,12 @@ public class FragmentStats extends Fragment {
 			@Override
 			public boolean onMenuItemSelected(@NonNull MenuItem item) {
 				if (item.getItemId() == R.id.action_export_ods) {
-					askThreshold();
+					Navigation.findNavController(requireView())
+							.navigate(R.id.action_stats_to_export);
 					return true;
 				}
 				return false;
 			}
 		}, getViewLifecycleOwner(), Lifecycle.State.RESUMED);
-	}
-
-	/**
-	 * The defaulter line differs between colleges and between what a report is for, so it is
-	 * asked each time rather than fixed in the code. The last option turns shading off, for an
-	 * export that is a record rather than a judgement.
-	 */
-	private void askThreshold() {
-
-		int[] choices = {50, 60, 75, 80, AttendanceExporter.NO_THRESHOLD};
-		String[] labels = new String[choices.length];
-
-		for (int i = 0; i < choices.length - 1; i++) {
-			labels[i] = getString(R.string.label_threshold_option, choices[i]);
-		}
-		labels[choices.length - 1] = getString(R.string.label_no_highlighting);
-
-		new MaterialAlertDialogBuilder(requireContext())
-				.setTitle(R.string.dialog_threshold_title)
-				.setItems(labels, (d, which) -> {
-					pendingThreshold = choices[which];
-					askGroups();
-				})
-				.setNegativeButton(R.string.action_cancel, null)
-				.show();
-	}
-
-	/**
-	 * Collects the course groups, then launches the file picker.
-	 * <p>
-	 * Groups are gathered here and passed straight to the exporter rather than saved anywhere:
-	 * they are a property of the report being run, not of the app.
-	 */
-	private void askGroups() {
-
-		viewModel.loadCoursesSync(list -> {
-
-			if (list == null || !isAdded()) {
-				return;
-			}
-
-			List<String> codes = new ArrayList<>();
-			for (EntityCourse course : list) {
-				if (!codes.contains(course.courseCode)) {
-					codes.add(course.courseCode);
-				}
-			}
-
-			requireActivity().runOnUiThread(() -> {
-				if (isAdded()) {
-					showGroupDialog(codes);
-				}
-			});
-		});
-	}
-
-	private void showGroupDialog(@NonNull List<String> courseCodes) {
-
-		pendingGroups = CourseGroup.none();
-
-		View content = getLayoutInflater().inflate(R.layout.dialog_course_groups, null);
-
-		RecyclerView list = content.findViewById(R.id.rvGroups);
-		TextView emptyLabel = content.findViewById(R.id.tvNoGroups);
-		MaterialButton addGroup = content.findViewById(R.id.btnAddGroup);
-
-		list.setLayoutManager(new LinearLayoutManager(requireContext()));
-
-		AdapterCourseGroups[] holder = new AdapterCourseGroups[1];
-
-		Runnable refreshEmpty = () ->
-				emptyLabel.setVisibility(pendingGroups.isEmpty() ? View.VISIBLE : View.GONE);
-
-		holder[0] = new AdapterCourseGroups(pendingGroups, new AdapterCourseGroups.Callbacks() {
-
-			@Override
-			public void onChooseCourses(int position) {
-				pickCoursesFor(pendingGroups.get(position), courseCodes,
-						() -> holder[0].notifyItemChanged(position));
-			}
-
-			@Override
-			public void onRemove(int position) {
-				pendingGroups.remove(position);
-				holder[0].notifyItemRemoved(position);
-				holder[0].notifyItemRangeChanged(position, pendingGroups.size() - position);
-				refreshEmpty.run();
-			}
-		});
-
-		list.setAdapter(holder[0]);
-		refreshEmpty.run();
-
-		addGroup.setOnClickListener(v -> {
-			pendingGroups.add(new CourseGroup(
-					getString(R.string.label_default_group_name, pendingGroups.size() + 1)));
-			holder[0].notifyItemInserted(pendingGroups.size() - 1);
-			refreshEmpty.run();
-		});
-
-		new MaterialAlertDialogBuilder(requireContext())
-				.setTitle(R.string.dialog_course_groups_title)
-				.setView(content)
-				.setNegativeButton(R.string.action_cancel, null)
-				.setPositiveButton(R.string.action_export, (d, w) -> {
-
-					// Empty groups would produce empty sheets, so they are simply dropped
-					// rather than refused: the user has already said what they wanted by
-					// leaving one blank.
-					pendingGroups.removeIf(group -> !group.isUsable());
-
-					exportPicker.launch(AttendanceExporter.suggestedFileName(
-							viewModel.academicYearValue()));
-				})
-				.show();
-	}
-
-	/** Multi-choice over the course codes in the register. */
-	private void pickCoursesFor(@NonNull CourseGroup group, @NonNull List<String> codes,
-	                            @NonNull Runnable onChanged) {
-
-		String[] labels = codes.toArray(new String[0]);
-		boolean[] checked = new boolean[labels.length];
-
-		for (int i = 0; i < labels.length; i++) {
-			checked[i] = group.courseCodes.contains(labels[i]);
-		}
-
-		new MaterialAlertDialogBuilder(requireContext())
-				.setTitle(R.string.dialog_choose_courses_title)
-				.setMultiChoiceItems(labels, checked, (d, which, isChecked) ->
-						checked[which] = isChecked)
-				.setNegativeButton(R.string.action_cancel, null)
-				.setPositiveButton(android.R.string.ok, (d, w) -> {
-					group.courseCodes.clear();
-					for (int i = 0; i < labels.length; i++) {
-						if (checked[i]) {
-							group.courseCodes.add(labels[i]);
-						}
-					}
-					onChanged.run();
-				})
-				.show();
-	}
-
-	private void observeExport() {
-		viewModel.getExportResult().observe(getViewLifecycleOwner(), summary -> {
-
-			if (summary == null) {
-				return;
-			}
-			viewModel.clearExportResult();
-
-			new MaterialAlertDialogBuilder(requireContext())
-					.setTitle(R.string.dialog_data_export_done_title)
-					.setMessage(getString(R.string.message_ods_export_done,
-							summary.students, summary.courses, summary.defaulters))
-					.setPositiveButton(android.R.string.ok, null)
-					.show();
-		});
 	}
 }

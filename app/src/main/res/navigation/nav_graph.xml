@@ -193,7 +193,16 @@
         <action
             android:id="@+id/action_stats_to_studentDetail"
             app:destination="@id/fragmentStudentDetail" />
+        <action
+            android:id="@+id/action_stats_to_export"
+            app:destination="@id/fragmentExport" />
     </fragment>
+
+    <fragment
+        android:id="@+id/fragmentExport"
+        android:name="in.basulabs.siesattendance.frontend.FragmentExport"
+        android:label="@string/title_data_export"
+        tools:layout="@layout/fragment_export" />
 
     <fragment
         android:id="@+id/fragmentEditLecture"

@@ -17,8 +17,10 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -48,6 +50,7 @@ import in.basulabs.siesattendance.backend.stats.StatsQueryBuilder;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.backend.util.AttendanceExporter;
 import in.basulabs.siesattendance.backend.util.CourseGroup;
+import in.basulabs.siesattendance.backend.util.ExportFilter;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
 import in.basulabs.siesattendance.backend.util.DatabaseBackup;
 
@@ -281,7 +284,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 *                         close.
 	 */
 	public void exportAttendanceSheet(@NonNull Uri destination, int thresholdPercent,
-	                                  @NonNull List<CourseGroup> groups) {
+	                                  @NonNull List<CourseGroup> groups,
+	                                  @NonNull ExportFilter filter) {
 
 		final int acadYear = academicYearValue();
 		busy.setValue(true);
@@ -292,7 +296,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			try {
 				AttendanceExporter.Summary summary = AttendanceExporter.export(
 						getApplication(), destination, acadYear, thresholdPercent,
-						new ArrayList<>(groups));
+						new ArrayList<>(groups), filter);
 				exportResult.postValue(summary);
 			} catch (Exception e) {
 				toastMessage.postValue("Export failed: " + e.getMessage());
@@ -751,9 +755,35 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * batch's members; passing null takes the course's whole class for the academic year.
 	 */
 	public void loadRoll(long courseID, @Nullable Long batchID) {
+		loadRoll(courseID, batchID, false);
+	}
+
+	/**
+	 * @param keepMarks carry existing marks over to students who appear in the new roll too
+	 *                  <p>
+	 *                  Used when the course changes while the same group stays selected. The
+	 *                  same people are in the room, so re-reading the roll must not throw away
+	 *                  the work already done on it. Students who are new to this roll start
+	 *                  present, as they would on a fresh sheet, and marks for students who are
+	 *                  no longer on it are dropped because there is nowhere to show them.
+	 */
+	public void loadRoll(long courseID, @Nullable Long batchID, boolean keepMarks) {
 
 		busy.setValue(true);
 		final int acadYear = academicYearValue();
+
+		// Read on the main thread before handing off, since the LiveData's value is only safe
+		// to touch here.
+		final Map<Long, Boolean> existing = new HashMap<>();
+
+		if (keepMarks) {
+			List<AttendanceRow> current = attendanceRows.getValue();
+			if (current != null) {
+				for (AttendanceRow row : current) {
+					existing.put(row.studentID, row.present);
+				}
+			}
+		}
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			List<StudentWithYear> students = batchID == null
@@ -762,7 +792,11 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 			List<AttendanceRow> rows = new ArrayList<>();
 			for (StudentWithYear student : students) {
-				rows.add(new AttendanceRow(student.studentID, student.name, student.rollNo));
+				Boolean carried = existing.get(student.studentID);
+				rows.add(carried == null
+						? new AttendanceRow(student.studentID, student.name, student.rollNo)
+						: new AttendanceRow(student.studentID, student.name, student.rollNo,
+						carried));
 			}
 
 			attendanceRows.postValue(rows);
