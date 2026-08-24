@@ -55,8 +55,37 @@ import in.basulabs.siesattendance.backend.util.CsvImporter;
 import in.basulabs.siesattendance.backend.util.DatabaseBackup;
 
 /**
- * Shared across every fragment via {@code requireActivity()} scope, so the class filter chosen
- * on the students screen is still there when the user comes back from creating a batch.
+ * The single ViewModel behind every screen.
+ * <p>
+ * Shared across every fragment via {@code requireActivity()} scope, so the class filter chosen on
+ * the students screen is still there when the user comes back from creating a batch, and so work
+ * started on one screen can still report its result after that screen has gone.
+ *
+ * <h3>Threading</h3>
+ * Nothing here touches the database on the main thread. Work goes to one of two pools:
+ * {@code MainDatabase.DB_EXECUTOR} for ordinary queries and writes, and
+ * {@link #FILE_TASK_EXECUTOR} for the whole-file operations that would otherwise occupy a query
+ * thread for seconds at a time.
+ * <p>
+ * Results come back one of two ways. Anything a screen observes is Room-backed
+ * {@code LiveData}, which updates itself when the underlying rows change. Anything a screen needs
+ * once, at a moment of its choosing, goes through a method named {@code ...Sync} taking a
+ * callback. Those callbacks fire on a background thread, so a fragment receiving one has to post
+ * to the main thread itself before touching a view; the fragments do this with
+ * {@code requireActivity().runOnUiThread}, guarded by {@code isAdded()} because the user may have
+ * navigated away in the meantime.
+ *
+ * <h3>The academic session</h3>
+ * {@link #academicYear} is the session new work is filed under, resolved from the
+ * {@code academic_years} table rather than assumed from the calendar. The students screen and the
+ * report each keep a session of their own, so browsing last year does not quietly change where
+ * this morning's attendance goes.
+ *
+ * <h3>One-shot results</h3>
+ * Import, export, backup and restore report through {@code MutableLiveData} used as event
+ * channels, each with a matching {@code clear...} method. The clear is not optional: without it
+ * the value is redelivered on every configuration change and a rotation replays a dialog the user
+ * has already dismissed.
  */
 public class AttendanceViewModel extends AndroidViewModel {
 
@@ -115,10 +144,14 @@ public class AttendanceViewModel extends AndroidViewModel {
 	/**
 	 * Works out the current session from the {@code academic_years} table and publishes it.
 	 * <p>
-	 * If today falls outside every defined session — during a summer break, say, or before the
-	 * next year has been set up — the most recent session is used rather than inventing one, so
-	 * the app keeps showing real data instead of an empty year. Only a completely empty table
-	 * causes a session to be created, seeded on the June default.
+	 * If today falls outside every defined session, during a summer break or before the next year
+	 * has been set up, the most recent session is used rather than one being invented, so the app
+	 * keeps showing real data instead of an empty year. Only a completely empty table causes a
+	 * session to be created, seeded on the June default.
+	 * <p>
+	 * Also corrects the students screen and the report, both of which are seeded with a guess
+	 * before the database has been read. Neither is touched once the user has chosen a session
+	 * themselves, which is what the two {@code ChosenByUser} flags record.
 	 */
 	public void resolveCurrentSession() {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
@@ -156,15 +189,24 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	// ── Simple accessors ─────────────────────────────────────────────────
 
+	/** The session new work is filed under, as the starting calendar year. */
 	public LiveData<Integer> getAcademicYear() {
 		return academicYear;
 	}
 
+	/**
+	 * The same value, read directly. Falls back to the calendar guess when the session has not
+	 * been resolved yet, so a caller during startup gets a usable answer rather than a null.
+	 */
 	public int academicYearValue() {
 		Integer value = academicYear.getValue();
 		return value == null ? provisionalYear() : value;
 	}
 
+	/**
+	 * The full session row, with the dates the report needs for its half-session presets. Null
+	 * until {@link #resolveCurrentSession()} has finished its first pass.
+	 */
 	@Nullable
 	public EntityAcademicYear currentSession() {
 		return currentSession;
@@ -241,6 +283,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 		refreshStudents();
 	}
 
+	/**
+	 * Messages from background work, shown by the activity rather than by whichever fragment
+	 * started the work; see {@code ActivityHome.observeToasts}. Cleared once shown.
+	 */
 	public LiveData<String> getToastMessage() {
 		return toastMessage;
 	}
@@ -249,6 +295,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		toastMessage.setValue(null);
 	}
 
+	/** True while a long-running file operation is in flight, so screens can show a spinner. */
 	public LiveData<Boolean> isBusy() {
 		return busy;
 	}
@@ -424,6 +471,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 					|| oeDept != null || batchID != null;
 		}
 
+		/**
+		 * Clears every dimension and the search term, but leaves {@link #academicYear} alone:
+		 * the session is which roll is being looked at, not a narrowing of it.
+		 */
 		public void clear() {
 			year = null;
 			stream = null;
@@ -440,6 +491,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 	/** True once the user has picked a session on the students screen themselves. */
 	private boolean studentYearChosenByUser;
 
+	/**
+	 * The students screen's filter, created on first use. Mutated in place by the screen, which
+	 * then calls {@link #refreshStudents()}; there are no per-field setters.
+	 */
 	@NonNull
 	public StudentFilter studentFilter() {
 		if (studentFilter == null) {
@@ -448,6 +503,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return studentFilter;
 	}
 
+	/** The result of the last {@link #refreshStudents()}. Not Room-backed, so it does not self-update. */
 	public LiveData<List<StudentWithYear>> getFilteredStudents() {
 		return filteredStudents;
 	}
@@ -469,6 +525,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 				db.daoStudent()::getClassesForYear);
 	}
 
+	/**
+	 * Points the students screen at a different session. Marks the choice as the user's, so
+	 * {@link #resolveCurrentSession()} will not override it later.
+	 */
 	public void setStudentAcademicYear(int academicYear) {
 		studentFilter().academicYear = academicYear;
 		studentYearChosenByUser = true;
@@ -708,10 +768,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 		}
 	}
 
+	/** The window currently narrowing the lecture list, which the filter bar labels itself from. */
 	public LiveData<LectureWindow> getLectureWindow() {
 		return lectureWindow;
 	}
 
+	/** Changes the window, which re-queries {@link #getFilteredLectures()} through its switchMap. */
 	public void setLectureWindow(@NonNull LectureWindow window) {
 		lectureWindow.setValue(window);
 	}
@@ -735,6 +797,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
+	/**
+	 * Lectures held on one calendar day, at the device's zone. Used by the dashboard and the
+	 * attendance picker.
+	 */
 	public LiveData<List<LectureDetails>> getLecturesOn(@NonNull LocalDate date) {
 		ZoneId zone = ZoneId.systemDefault();
 		long from = date.atStartOfDay(zone).toEpochSecond();
@@ -742,6 +808,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return db.daoLecture().getDetailsBetween(from, to);
 	}
 
+	/**
+	 * Today's lecture count for the dashboard. Computed against today as it was when this was
+	 * called, so a screen left open across midnight keeps counting the previous day.
+	 */
 	public LiveData<Integer> countLecturesToday() {
 		ZoneId zone = ZoneId.systemDefault();
 		LocalDate today = LocalDate.now();
@@ -759,13 +829,15 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
+	 * Loads the roll, optionally preserving what has already been marked.
+	 * <p>
+	 * Carrying marks over is what the course changing while the same group stays selected needs:
+	 * the same people are in the room, so re-reading the roll must not throw away the work
+	 * already done on it. Students new to this roll start present, as they would on a fresh
+	 * sheet, and marks for students no longer on it are dropped because there is nowhere left to
+	 * show them.
+	 *
 	 * @param keepMarks carry existing marks over to students who appear in the new roll too
-	 *                  <p>
-	 *                  Used when the course changes while the same group stays selected. The
-	 *                  same people are in the room, so re-reading the roll must not throw away
-	 *                  the work already done on it. Students who are new to this roll start
-	 *                  present, as they would on a fresh sheet, and marks for students who are
-	 *                  no longer on it are dropped because there is nowhere to show them.
 	 */
 	public void loadRoll(long courseID, @Nullable Long batchID, boolean keepMarks) {
 
@@ -876,10 +948,15 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	// ── Attendance ───────────────────────────────────────────────────────
 
+	/**
+	 * The sheet currently being marked. Held here rather than in the fragment so a partly marked
+	 * roll survives a rotation or a trip to another screen.
+	 */
 	public LiveData<List<AttendanceRow>> getAttendanceRows() {
 		return attendanceRows;
 	}
 
+	/** The lecture the sheet belongs to, for the header. Null while taking a new one. */
 	public LectureDetails getCurrentLecture() {
 		return currentLecture;
 	}
@@ -958,8 +1035,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 	/**
 	 * Writes the sheet.
 	 * <p>
-	 * Every row carries an answer by construction — present unless someone marked otherwise —
-	 * so there is nothing to refuse here. An untouched sheet saves as a full house.
+	 * Every row carries an answer by construction, present unless someone marked otherwise, so
+	 * there is nothing to refuse here. An untouched sheet saves as a full house.
 	 */
 	public void saveAttendance(@NonNull Runnable onDone) {
 		List<AttendanceRow> rows = attendanceRows.getValue();
@@ -1325,6 +1402,11 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
+	/**
+	 * Removes a lecture and its attendance together. Unlike
+	 * {@link #clearAttendanceForLecture(long, Runnable)}, this treats the session as never having
+	 * happened, so it is the wrong choice for a sheet that was simply filled in wrongly.
+	 */
 	public void deleteLecture(long lectureID, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
@@ -1342,6 +1424,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
+	/** Reads one lecture with its course and batch names. The callback runs off the main thread. */
 	public void loadLectureSync(long lectureID,
 	                            @NonNull java.util.function.Consumer<LectureDetails> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() ->
@@ -1350,6 +1433,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	// ── Batch edit and delete ────────────────────────────────────────────
 
+	/** Reads one batch. The callback runs off the main thread. */
 	public void loadBatchSync(long batchID,
 	                          @NonNull java.util.function.Consumer<EntityBatchDesc> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoBatch().getByIdSync(batchID)));
@@ -1361,6 +1445,11 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 */
 	private List<Long> batchSeed;
 
+	/**
+	 * Preselects students for the next batch to be created, or clears the seed when passed null.
+	 * The batch list clears it before opening the editor for a new batch, so a seed left by an
+	 * earlier flow cannot leak into an unrelated one.
+	 */
 	public void setBatchSeed(@Nullable List<Long> studentIDs) {
 		batchSeed = studentIDs == null ? null : new ArrayList<>(studentIDs);
 	}
@@ -1451,6 +1540,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
+	/**
+	 * Removes a batch, its membership and its course links. Refused while any lecture still
+	 * points at it, in which case the reason is reported as a message rather than thrown.
+	 */
 	public void deleteBatch(long batchID, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
@@ -1477,6 +1570,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 				cb.accept(db.daoBatch().getAllForYearSync(acadYear)));
 	}
 
+	/**
+	 * A batch's members. Note that the underlying query does not select the semester, so it
+	 * arrives null on every row; see {@code DaoBatch.getStudentsInBatch}.
+	 */
 	public LiveData<List<StudentWithYear>> getStudentsInBatch(long batchID) {
 		return db.daoBatch().getStudentsInBatch(batchID);
 	}
@@ -1528,15 +1625,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 	private static final long STATS_DEBOUNCE_MS = 250L;
 
 	/**
-	 * The live filter object. It is mutated in place by the report screen and re-run through
+	 * The live filter object, mutated in place by the report screen and re-run through
 	 * {@link #runStatsQuery()}, so the screen never has to reassemble it from scratch.
-	 */
-	/**
-	 * The live filter object, mutated in place by the report screen.
 	 * <p>
-	 * The academic year is seeded once and then left alone: overwriting it on every access, as
-	 * an earlier version did, would have made it impossible to select a past session or to
-	 * compare years.
+	 * The academic year is seeded once and then left alone: overwriting it on every access, as an
+	 * earlier version did, would have made it impossible to select a past session or to compare
+	 * years.
 	 */
 	@NonNull
 	public StatsFilter statsFilter() {
@@ -1546,14 +1640,20 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return statsFilter;
 	}
 
+	/** The grouped report rows from the last run. */
 	public LiveData<List<StatRow>> getStatRows() {
 		return statRows;
 	}
 
+	/** The headline figures for the same run, computed over the same rows. */
 	public LiveData<StatsSummary> getStatsSummary() {
 		return statsSummary;
 	}
 
+	/**
+	 * How many rows fall below the filter's threshold. Tallied in Java from the rows already in
+	 * hand rather than by a third query; see the note in {@code StatsQueryBuilder}.
+	 */
 	public LiveData<Integer> getStatsBelowCount() {
 		return statsBelowCount;
 	}
@@ -1569,6 +1669,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 		scheduleStatsQuery();
 	}
 
+	/**
+	 * Points the report at a session, or at all of them when null, which is what a year-on-year
+	 * comparison needs. Marks the choice as the user's so it is not overwritten later.
+	 */
 	public void setStatsAcademicYear(@Nullable Integer year) {
 		statsFilter().academicYear = year;
 		statsYearChosenByUser = true;

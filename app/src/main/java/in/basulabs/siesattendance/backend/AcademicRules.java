@@ -24,8 +24,8 @@ import java.util.Map;
  * disorienting when you are simply correcting a typo further down the form.
  * <p>
  * Because narrowing is one-directional, a form can still be left holding a combination that
- * does not exist — a stream chosen before the department, say. {@link #validate} is the
- * backstop, and every screen calls it before saving.
+ * does not exist, a stream chosen before the department being the usual way in. {@link #validate}
+ * is the backstop, and every screen calls it before saving.
  */
 public final class AcademicRules {
 
@@ -151,6 +151,10 @@ public final class AcademicRules {
 		return null;
 	}
 
+	/**
+	 * Renders a list of semesters the way the validation messages read them out, so "1, 2 or 3"
+	 * rather than a bare list. Only ever gets two or three values in practice.
+	 */
 	@NonNull
 	private static String joinSemesters(@NonNull List<Integer> semesters) {
 		StringBuilder out = new StringBuilder();
@@ -163,6 +167,11 @@ public final class AcademicRules {
 		return out.toString();
 	}
 
+	/**
+	 * Whether a department and stream can go together. A null on either side is treated as
+	 * valid, since an unanswered field is not yet a contradiction; {@link #validate} is what
+	 * catches a combination that is genuinely wrong.
+	 */
 	public static boolean isValid(@Nullable Department department, @Nullable Stream stream) {
 		if (department == null || stream == null) {
 			return true;

@@ -38,10 +38,16 @@ public class EntityStudentYear {
 	public long studentID;
 
 	/**
-	 * The starting calendar year of the academic session. For 2025-26, this is 2025.
+	 * The starting calendar year of the academic session. For 2025-26, this is 2025. Refers to
+	 * a row in {@link EntityAcademicYear}, which holds the dates that session actually spans.
 	 */
 	public int academicYear;
 
+	/**
+	 * The alphanumeric roll number for this session, unique within it. This is the reason the
+	 * table exists: a student is issued a new one on being promoted, so it cannot live on the
+	 * student record without rewriting history every year.
+	 */
 	@NonNull
 	public String rollNo;
 
@@ -51,12 +57,25 @@ public class EntityStudentYear {
 	@NonNull
 	public Stream stream;
 
+	/*
+	 * A student carries up to three departments at once, and which one matters depends on the
+	 * course being looked at. A major course matches majorDept, an open elective matches
+	 * oeDept, and the courses taken by a whole year and stream match none of them. See the
+	 * roster query in DaoStudent for the full rule.
+	 */
+
+	/** The subject they are majoring in. Always present. */
 	@NonNull
 	public Department majorDept;
 
+	/**
+	 * Their secondary subject. Optional, and in practice frequently left blank, which is why
+	 * the roll for a minor course also admits students whose major is the offering department.
+	 */
 	@Nullable
 	public Department minorDept;
 
+	/** The department of their open elective, if they are taking one. */
 	@Nullable
 	public Department oeDept;
 

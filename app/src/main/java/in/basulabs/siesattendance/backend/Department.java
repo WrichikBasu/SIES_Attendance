@@ -11,6 +11,7 @@ import androidx.annotation.Nullable;
  */
 public enum Department {
 
+	// Aided sciences.
 	PHYSICS("Physics"),
 	CHEMISTRY("Chemistry"),
 	MATHEMATICS("Mathematics"),
@@ -22,11 +23,14 @@ public enum Department {
 	MICROBIOLOGY("Microbiology"),
 	FTN("FTN"),
 
+	// Unaided sciences. Abbreviated because these are the names in everyday use, and a course
+	// list is easier to scan when the department column stays narrow.
 	COMPUTER_SCIENCE("CS"),
 	DATA_SCIENCE("DS"),
 	INFORMATION_TECHNOLOGY("IT"),
 	ENVIRONMENTAL_SCIENCE("EVS"),
 
+	// Arts and commerce.
 	ENGLISH("English"),
 	HINDI("Hindi"),
 	POLITICAL_SCIENCE("Pol. Sc."),

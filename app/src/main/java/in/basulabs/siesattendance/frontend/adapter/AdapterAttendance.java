@@ -21,9 +21,9 @@ import in.basulabs.siesattendance.backend.pojo.AttendanceRow;
 /**
  * Backs the mark-attendance list.
  * <p>
- * Rows are mutated in place as the user taps, so this keeps its own copy of the list rather
- * than sharing the ViewModel's instances — otherwise DiffUtil would compare an object against
- * itself and conclude nothing had changed.
+ * Rows are mutated in place as the user taps, so this keeps its own copy of the list rather than
+ * sharing the ViewModel's instances. Sharing them would leave DiffUtil comparing an object
+ * against itself, and it would conclude nothing had changed.
  */
 public class AdapterAttendance extends RecyclerView.Adapter<AdapterAttendance.Holder> {
 

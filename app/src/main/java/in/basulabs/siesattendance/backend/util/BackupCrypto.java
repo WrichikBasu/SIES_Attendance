@@ -38,11 +38,16 @@ public final class BackupCrypto {
 	/** 256-bit keys; AES-256 is unrestricted on every API level this app supports. */
 	private static final int KEY_BITS = 256;
 
+	/**
+	 * Salt length. Written into the file header alongside the IV, since both have to be
+	 * recovered before anything can be decrypted.
+	 */
 	public static final int SALT_BYTES = 16;
 
 	/** GCM is specified for a 96-bit IV; other lengths force an internal rehash. */
 	public static final int IV_BYTES = 12;
 
+	/** Full-length GCM tag. This is what turns a wrong password into a clean failure. */
 	private static final int TAG_BITS = 128;
 
 	/**
@@ -59,6 +64,7 @@ public final class BackupCrypto {
 	private BackupCrypto() {
 	}
 
+	/** Cryptographically random bytes, used for both the salt and the IV. */
 	@NonNull
 	public static byte[] randomBytes(int length) {
 		byte[] out = new byte[length];
@@ -70,11 +76,15 @@ public final class BackupCrypto {
 	 * Stretches {@code password} into an AES key.
 	 * <p>
 	 * The password is converted to UTF-8 here rather than handed to {@link PBEKeySpec} as
-	 * characters. PKCS#5 only defines the conversion for ASCII, and implementations disagree
-	 * about the rest — some keep the low byte of each character and discard the rest, which
+	 * characters. PKCS#5 only defines the conversion for ASCII and implementations disagree about
+	 * the rest, some keeping the low byte of each character and discarding the remainder, which
 	 * would silently make two different non-ASCII passwords equivalent. Doing the encoding
 	 * explicitly means a password containing accents, Devanagari, or an emoji derives the same
 	 * key on every device and in any future version of this app.
+	 * <p>
+	 * Every intermediate copy of the password is wiped in the {@code finally} block. The
+	 * {@code char[]} passed in belongs to the caller and is left alone; {@link #wipe} is how they
+	 * dispose of it.
 	 * <p>
 	 * Slow by design; must not be called on the main thread.
 	 */
@@ -106,6 +116,10 @@ public final class BackupCrypto {
 		}
 	}
 
+	/**
+	 * A cipher ready to encrypt with the given key and IV. The IV must never be reused with a key
+	 * that has already been used, which is why every export draws a fresh one.
+	 */
 	@NonNull
 	public static Cipher encryptCipher(@NonNull SecretKey key, @NonNull byte[] iv)
 			throws GeneralSecurityException {
@@ -115,6 +129,11 @@ public final class BackupCrypto {
 		return cipher;
 	}
 
+	/**
+	 * A cipher ready to decrypt. Nothing fails here on a wrong password: the tag is only checked
+	 * once the final block has been processed, so the error surfaces at the end of the stream
+	 * rather than at initialisation.
+	 */
 	@NonNull
 	public static Cipher decryptCipher(@NonNull SecretKey key, @NonNull byte[] iv)
 			throws GeneralSecurityException {

@@ -57,6 +57,10 @@ public enum Stream {
 		return this == MA || this == MSc || this == MSc_unaided;
 	}
 
+	/**
+	 * True for the divisions the college runs on an unaided basis. Only affects display: the
+	 * qualifier is dropped from class labels, which are already long enough without it.
+	 */
 	public boolean isUnaided() {
 		return this == BSc_unaided || this == MSc_unaided;
 	}

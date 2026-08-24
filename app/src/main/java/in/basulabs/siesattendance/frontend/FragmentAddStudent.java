@@ -31,11 +31,19 @@ import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
- * Manual single-student entry, for the cases the CSV import does not cover — a late admission,
- * a correction, a transfer.
+ * Manual single-student entry, for the cases the CSV import does not cover: a late admission, a
+ * correction, a transfer.
  * <p>
- * Doubles as the edit form: passing a {@code studentID} argument loads that student and turns
+ * Doubles as the edit form. Passing a {@code studentID} argument loads that student and turns
  * the save button into an update, so there is only one field layout to keep in step.
+ * <p>
+ * A student carries three departments, of which only the major is required. Which of them
+ * matters depends on the course being looked at, so all three are offered here rather than being
+ * inferred; the two optional ones take a "none" entry that stores null.
+ * <p>
+ * Cross-field problems are reported as they arise through {@link #showCombinationProblem()},
+ * rather than only at save time, so an impossible pairing is visible while the user is still
+ * looking at the field that caused it.
  */
 public class FragmentAddStudent extends Fragment {
 
@@ -116,6 +124,7 @@ public class FragmentAddStudent extends Fragment {
 		}
 	}
 
+	/** True when the form was opened against an existing student. */
 	private boolean isEditing() {
 		return editingStudentID > 0;
 	}
@@ -123,6 +132,10 @@ public class FragmentAddStudent extends Fragment {
 	/**
 	 * Loads the current values into the form. Roll number is editable here because a correction
 	 * to a mistyped roll number is exactly the case this screen exists for.
+	 */
+	/**
+	 * Loads the student being edited and fills every field in, including the linked dropdowns,
+	 * which have to be rebound so their lists match the loaded values.
 	 */
 	private void prefillFromExisting() {
 		viewModel.loadStudentSync(editingStudentID, student -> {
@@ -234,6 +247,13 @@ public class FragmentAddStudent extends Fragment {
 		combinationWarning.setVisibility(problem == null ? View.GONE : View.VISIBLE);
 	}
 
+	/**
+	 * Validates and saves, then navigates back.
+	 * <p>
+	 * The roll number is what identifies a student within a session, so a blank one is refused
+	 * outright. The academic combination is checked here as well as on screen, since the banner
+	 * is advisory and the user can reach the button with it showing.
+	 */
 	private void onSave(@NonNull View button) {
 
 		tilName.setError(null);
@@ -315,6 +335,7 @@ public class FragmentAddStudent extends Fragment {
 	}
 
 	@NonNull
+	/** A field's trimmed contents, treating a null editable as empty. */
 	private String text(@NonNull TextInputEditText field) {
 		return field.getText() == null ? "" : field.getText().toString().trim();
 	}

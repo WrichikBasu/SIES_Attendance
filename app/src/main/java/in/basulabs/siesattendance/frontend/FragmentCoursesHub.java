@@ -18,6 +18,13 @@ import in.basulabs.siesattendance.frontend.adapter.AdapterCoursesHubPager;
 
 /**
  * Container for the courses, lectures and batches sub-screens.
+ * <p>
+ * Holds nothing of its own beyond the pager. The three pages are ordinary fragments and each
+ * talks to the shared ViewModel directly, so this exists only to give them a tab strip.
+ * <p>
+ * One consequence worth knowing: a page is not the navigation host. Anything navigating out of a
+ * tab has to go through this fragment's NavController, via {@code requireParentFragment()},
+ * because the page's own view is not attached to the navigation graph.
  */
 public class FragmentCoursesHub extends Fragment {
 

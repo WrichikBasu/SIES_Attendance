@@ -14,6 +14,7 @@ import in.basulabs.siesattendance.frontend.FragmentLectureList;
  */
 public class AdapterCoursesHubPager extends FragmentStateAdapter {
 
+	/** Courses, lectures, batches. Kept in step with the tab titles set by the hub fragment. */
 	private static final int TAB_COUNT = 3;
 
 	public AdapterCoursesHubPager(@NonNull Fragment fragment) {

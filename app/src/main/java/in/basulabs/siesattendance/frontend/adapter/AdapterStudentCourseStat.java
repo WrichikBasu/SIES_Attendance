@@ -17,6 +17,10 @@ import java.util.Locale;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 
+/**
+ * One student's attendance broken down by course, on the student detail screen. Shares its row
+ * layout with {@link AdapterStudentStat}, since both show a label, a fraction and a bar.
+ */
 public class AdapterStudentCourseStat
 		extends ListAdapter<StudentCourseStat, AdapterStudentCourseStat.Holder> {
 

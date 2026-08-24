@@ -16,6 +16,19 @@ import in.basulabs.siesattendance.backend.pojo.CourseAttendanceStat;
 import in.basulabs.siesattendance.backend.pojo.ExportRow;
 import in.basulabs.siesattendance.backend.pojo.StudentAttendanceStat;
 
+/**
+ * Attendance rows: writing sheets, and reading the totals back out.
+ * <p>
+ * The write side is small on purpose. A sheet is only ever replaced whole, through
+ * {@link #saveSheet}, so there is no path that leaves a lecture half marked.
+ * <p>
+ * The read side is where the subtlety is. Anything reporting on how much a student attended has
+ * to be careful about what it divides by: counting their own attendance rows shrinks the
+ * denominator for any student who was left off a sheet, which flatters precisely the record
+ * being examined. The export query counts lectures held instead. The statistics queries below
+ * count rows, because they are describing what was recorded rather than judging a student, and
+ * they say so where it matters.
+ */
 @Dao
 public abstract class DaoAttendance {
 
@@ -38,9 +51,18 @@ public abstract class DaoAttendance {
 	@Query("SELECT * FROM attendance WHERE lectureID = :lectureID")
 	public abstract List<EntityAttendance> getForLectureSync(long lectureID);
 
+	/**
+	 * Who was present. Used when reopening a sheet, so the previous marks come back rather than
+	 * the screen reverting to everyone present.
+	 */
 	@Query("SELECT studentID FROM attendance WHERE lectureID = :lectureID AND present = 1")
 	public abstract List<Long> getPresentIdsSync(long lectureID);
 
+	/**
+	 * Who appears on the sheet at all, present or absent. Read alongside
+	 * {@link #getPresentIdsSync} to tell a recorded absence apart from a student who was never
+	 * listed.
+	 */
 	@Query("SELECT studentID FROM attendance WHERE lectureID = :lectureID")
 	public abstract List<Long> getMarkedIdsSync(long lectureID);
 
@@ -86,7 +108,12 @@ public abstract class DaoAttendance {
 	// ── Statistics ───────────────────────────────────────────────────────
 
 	/**
-	 * Per-student totals across every lecture of every batch they belong to.
+	 * Per-student totals across every lecture they have a mark for, worst attendance first.
+	 * <p>
+	 * The join to attendance is LEFT, so a student with nothing recorded still appears, with
+	 * zero of zero. The ordering divides through {@code NULLIF}, which turns that into a null
+	 * and sorts those students to the end rather than showing them at the top as if they had
+	 * attended nothing.
 	 */
 	@Query("SELECT s.studentID, s.name, y.rollNo, " +
 			"COUNT(a.lectureID) AS totalLectures, " +
@@ -101,7 +128,12 @@ public abstract class DaoAttendance {
 	public abstract LiveData<List<StudentAttendanceStat>> getStudentStats(int academicYear);
 
 	/**
-	 * Per-student totals restricted to one course.
+	 * Per-student totals restricted to one course, in roll number order.
+	 * <p>
+	 * Both joins are INNER here, unlike the query above, so only students with a mark for this
+	 * course appear. That is the intended reading of a per-course list: a student with no rows
+	 * against the course is not a student at nought per cent, they are somebody who does not
+	 * take it.
 	 */
 	@Query("SELECT s.studentID, s.name, y.rollNo, " +
 			"COUNT(a.lectureID) AS totalLectures, " +
@@ -117,7 +149,10 @@ public abstract class DaoAttendance {
 			long courseID, int academicYear);
 
 	/**
-	 * Per-course aggregates.
+	 * Per-course aggregates, one row per course including those with no lectures yet.
+	 * <p>
+	 * {@code lectureCount} is a DISTINCT count because the join to attendance repeats each
+	 * lecture once per student marked on it.
 	 */
 	@Query("SELECT c.courseID, c.courseCode, c.courseTopic, " +
 			"COUNT(a.studentID) AS totalRecords, " +
@@ -131,7 +166,10 @@ public abstract class DaoAttendance {
 	public abstract LiveData<List<CourseAttendanceStat>> getCourseStats();
 
 	/**
-	 * Overall attendance percentage across the whole database, as a 0-100 value.
+	 * Overall attendance percentage across the whole database, as a 0 to 100 value.
+	 * <p>
+	 * Unfiltered by session, so this is a headline figure for the dashboard rather than
+	 * anything to report on. The statistics screen is where a bounded version lives.
 	 */
 	@Query("SELECT CASE WHEN COUNT(*) = 0 THEN 0 ELSE " +
 			"(SUM(CASE WHEN present = 1 THEN 1 ELSE 0 END) * 100.0) / COUNT(*) END " +

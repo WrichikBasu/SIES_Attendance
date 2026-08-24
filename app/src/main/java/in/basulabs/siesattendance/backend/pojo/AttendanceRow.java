@@ -5,9 +5,11 @@ import androidx.annotation.NonNull;
 import in.basulabs.siesattendance.backend.util.NameFormat;
 
 /**
- * One row on the mark-attendance screen. {@code present} is tri-state in the UI: the Boolean is
- * null until the user taps present or absent, which lets the UI distinguish "not yet marked"
- * from "explicitly marked absent".
+ * One row on the mark-attendance screen: a student, and whether they were there.
+ * <p>
+ * Built from the roll rather than read from the database, so a sheet exists in full before
+ * anything is saved. Reopening a lecture rebuilds the rows the same way and then applies the
+ * marks already stored over the top.
  */
 public class AttendanceRow {
 
@@ -23,10 +25,10 @@ public class AttendanceRow {
 	 * Present unless marked otherwise.
 	 * <p>
 	 * A primitive rather than a Boolean, so there is no third "not yet decided" state: a row
-	 * always carries an answer, and a fresh sheet starts with everyone present. That matches
-	 * how a roll is actually called — most of the class is there, and the professor marks the
-	 * few who are not — and it means a sheet can be saved the moment the absentees are tapped
-	 * in, without walking the whole list to confirm the obvious.
+	 * always carries an answer, and a fresh sheet starts with everyone present. That matches how
+	 * a roll is actually called: most of the class is there, and the professor marks the few who
+	 * are not. It also means a sheet can be saved the moment the absentees are tapped in,
+	 * without walking the whole list to confirm the obvious.
 	 * <p>
 	 * The cost is that a row cannot record "I have not looked at this student yet", so a
 	 * student skipped by accident is filed as present rather than flagged. Marking everyone
@@ -47,11 +49,13 @@ public class AttendanceRow {
 		this(studentID, name, rollNo, true);
 	}
 
+	/** The name tidied for display; {@link #name} keeps whatever the roster supplied. */
 	@NonNull
 	public String displayName() {
 		return NameFormat.properCase(name);
 	}
 
+	/** One or two letters for the avatar shown beside the row. */
 	@NonNull
 	public String initials() {
 		return NameFormat.initials(name);

@@ -21,6 +21,10 @@ import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.frontend.adapter.AdapterCourse;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
+/**
+ * The courses tab of the courses hub. Long-pressing a course offers to discontinue it, which is
+ * as close to deletion as a course gets.
+ */
 public class FragmentCourseList extends Fragment {
 
 	private AttendanceViewModel viewModel;

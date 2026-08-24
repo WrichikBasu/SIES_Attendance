@@ -7,8 +7,12 @@ import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 
 /**
- * A distinct (year, stream, department) combination present in the database for a given
- * academic year — for example "SY BSc COMPUTER_SCIENCE". Used to populate the class filter.
+ * A distinct (year, stream, department) combination present in the database for a given academic
+ * year, for example "SY BSc COMPUTER_SCIENCE". Used to populate the class filter.
+ * <p>
+ * These are derived from the students actually enrolled rather than from the possible
+ * combinations, so the filter only ever offers classes that exist. {@code studentCount} comes
+ * from the same grouping, which is what lets a chip show its size without a second query.
  */
 public class ClassKey {
 
@@ -31,6 +35,11 @@ public class ClassKey {
 		this.studentCount = studentCount;
 	}
 
+	/**
+	 * The class as it is written and spoken, for instance "SY BSc CS". The unaided qualifier is
+	 * dropped: it distinguishes two streams in a dropdown, but a class label is already long
+	 * enough, and the department alongside it makes the division obvious anyway.
+	 */
 	@NonNull
 	public String label() {
 		return year + " "

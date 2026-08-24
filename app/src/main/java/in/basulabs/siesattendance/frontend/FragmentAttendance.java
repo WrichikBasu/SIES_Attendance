@@ -45,7 +45,11 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * Step two: mark each student present or absent.
  * <p>
  * The sheet opens with everyone present and the professor taps the absentees, so it can be
- * saved at any point — an untouched sheet means a full house.
+ * saved at any point, and an untouched sheet means a full house. That is the common case, and
+ * making it the default is what keeps marking a roll to a few taps.
+ * <p>
+ * Marks are held in the ViewModel rather than here, so rotating the device or stepping away to
+ * check something does not lose a partly marked sheet.
  */
 public class FragmentAttendance extends Fragment {
 
@@ -107,6 +111,10 @@ public class FragmentAttendance extends Fragment {
 		setupMenu();
 	}
 
+	/**
+	 * The overflow: duplicate this slot, clear the marks, or delete the lecture outright. Bound
+	 * to the view lifecycle so the items go when the screen does.
+	 */
 	private void setupMenu() {
 		requireActivity().addMenuProvider(new MenuProvider() {
 
@@ -140,8 +148,8 @@ public class FragmentAttendance extends Fragment {
 	/**
 	 * Two different things get called "deleting the attendance", and they are not
 	 * interchangeable: one throws away who was present, the other says the lecture never
-	 * happened. Statistics treat them differently — a cleared lecture still counts as a
-	 * session that was scheduled — so the choice is put to the user rather than assumed.
+	 * happened. Statistics treat them differently, since a cleared lecture still counts as a
+	 * session that was held, so the choice is put to the user rather than assumed.
 	 */
 	private void askHowToDelete() {
 
@@ -167,6 +175,10 @@ public class FragmentAttendance extends Fragment {
 				.show();
 	}
 
+	/**
+	 * Clearing keeps the lecture and discards its sheet, which is what is wanted after marking
+	 * the wrong roll. The lecture itself stays, so it still counts as having been held.
+	 */
 	private void confirmClearMarks() {
 
 		new MaterialAlertDialogBuilder(requireContext())
@@ -178,6 +190,7 @@ public class FragmentAttendance extends Fragment {
 				.show();
 	}
 
+	/** Deleting removes the lecture and its sheet together, as though the session never happened. */
 	private void confirmDeleteLecture() {
 
 		new MaterialAlertDialogBuilder(requireContext())
@@ -189,6 +202,7 @@ public class FragmentAttendance extends Fragment {
 				.show();
 	}
 
+	/** The lecture this screen was showing has gone, so there is nothing left to display. */
 	private void leaveScreen() {
 		requireActivity().runOnUiThread(() -> {
 			if (isAdded()) {
@@ -197,6 +211,7 @@ public class FragmentAttendance extends Fragment {
 		});
 	}
 
+	/** Pushes the roll into the adapter and keeps the present and absent counts in step with it. */
 	private void onRowsChanged(@Nullable List<AttendanceRow> rows) {
 
 		adapter.submitRows(rows);
@@ -219,6 +234,7 @@ public class FragmentAttendance extends Fragment {
 		chipAbsent.setText(getString(R.string.chip_absent_count, absent));
 	}
 
+	/** Fills in the course, batch and time strip above the list. */
 	private void updateHeader() {
 		LectureDetails details = viewModel.getCurrentLecture();
 		if (details == null) {
@@ -314,6 +330,10 @@ public class FragmentAttendance extends Fragment {
 				.show();
 	}
 
+	/**
+	 * Opens the clock picker, defaulting to the time already set. Uses the 24-hour format
+	 * throughout, matching how a timetable is written.
+	 */
 	private void pickTime(@NonNull LocalTime current,
 	                      @NonNull java.util.function.Consumer<LocalTime> onPicked,
 	                      @NonNull String tag, int titleRes) {

@@ -18,6 +18,13 @@ import in.basulabs.siesattendance.backend.Year;
  * Everything a statistics query can be narrowed by. Every field is optional: a filter left null
  * simply contributes no condition, so one object covers "all attendance this academic year" and
  * "TY BSc Physics majors in Dr Sharma's practicals during September" alike.
+ * <p>
+ * A plain mutable holder rather than anything immutable, because the statistics screen edits it
+ * in place as the user works through the filter sheet. {@link #copy()} exists for the cases that
+ * need a snapshot, such as holding on to the filter a running query was built from.
+ * <p>
+ * Nothing here is validated. A combination that matches nothing is a legitimate answer, and the
+ * screen reports an empty result rather than refusing the filter.
  */
 public class StatsFilter {
 
@@ -28,6 +35,7 @@ public class StatsFilter {
 	@Nullable
 	public Integer academicYear;
 
+	/** The dimension rows are grouped by. Students by default, which is what is usually wanted. */
 	public StatsGroupBy groupBy = StatsGroupBy.STUDENT;
 
 	/**
@@ -53,9 +61,11 @@ public class StatsFilter {
 	@Nullable
 	public Long courseID;
 
+	/** Restricts to lectures held for one batch. Whole-class lectures are excluded by it. */
 	@Nullable
 	public Long batchID;
 
+	/** Matched against the professor who owns the course, not who took the individual lecture. */
 	@Nullable
 	public Long professorID;
 
@@ -83,6 +93,10 @@ public class StatsFilter {
 		this.academicYear = academicYear;
 	}
 
+	/**
+	 * How the grouped rows are ordered. {@link #CHRONOLOGICAL} exists for the time-based
+	 * groupings, which read wrong sorted worst-first.
+	 */
 	public enum SortOrder {
 		PERCENT_ASC("Lowest %"),
 		PERCENT_DESC("Highest %"),
@@ -191,7 +205,11 @@ public class StatsFilter {
 				: to.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toEpochSecond() - 1;
 	}
 
-	/** True when anything beyond the academic year and grouping is narrowing the result. */
+	/**
+	 * True when anything beyond the academic year and grouping is narrowing the result. Drives
+	 * the "filters active" indicator, so the session and grouping are excluded on purpose:
+	 * those are always set, and counting them would leave the indicator permanently lit.
+	 */
 	public boolean hasActiveFilters() {
 		return from != null || to != null || courseID != null || batchID != null
 				|| professorID != null || studentID != null || courseType != null
@@ -205,6 +223,10 @@ public class StatsFilter {
 		return from != null || to != null;
 	}
 
+	/**
+	 * A detached copy. Every field is either immutable or a primitive, so a shallow copy is a
+	 * genuine one; anything mutable added here would need copying properly.
+	 */
 	@NonNull
 	public StatsFilter copy() {
 		StatsFilter c = new StatsFilter(academicYear);
@@ -225,6 +247,11 @@ public class StatsFilter {
 		return c;
 	}
 
+	/**
+	 * Resets everything the "clear filters" action covers. The academic year, grouping, sort
+	 * order and threshold survive deliberately: they are how the report is being read, not what
+	 * it has been narrowed to.
+	 */
 	public void clearFilters() {
 		from = null;
 		to = null;

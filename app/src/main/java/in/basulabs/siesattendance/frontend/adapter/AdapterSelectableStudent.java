@@ -33,14 +33,24 @@ public class AdapterSelectableStudent
 
 	private final OnToggle listener;
 
+	/** What the search currently leaves on screen. */
 	private final List<StudentWithYear> visible = new ArrayList<>();
 
+	/**
+	 * Everyone ticked, including students the current search has filtered out. Kept whole so
+	 * narrowing the search cannot quietly drop someone already chosen.
+	 */
 	private final Set<Long> selected = new HashSet<>();
 
 	public AdapterSelectableStudent(OnToggle listener) {
 		this.listener = listener;
 	}
 
+	/**
+	 * Replaces both the visible rows and the selection.
+	 *
+	 * @param selectedIDs copied rather than retained, so the caller stays free to modify theirs
+	 */
 	public void submit(@NonNull List<StudentWithYear> students, @NonNull Set<Long> selectedIDs) {
 		visible.clear();
 		visible.addAll(students);
@@ -84,6 +94,10 @@ public class AdapterSelectableStudent
 			checkBox.setOnClickListener(v -> toggle());
 		}
 
+		/**
+		 * Reads the position at click time rather than closing over it, so a recycled row never
+		 * toggles whichever student used to occupy it.
+		 */
 		private void toggle() {
 			int position = getBindingAdapterPosition();
 			if (position == RecyclerView.NO_POSITION) {

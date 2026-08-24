@@ -62,6 +62,15 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * the same query with different arguments, so they cost one screen rather than four.
  * <p>
  * Grouping by student or by course produces rows that can be tapped to drill into that subject.
+ * <p>
+ * The filter controls and the report are one scrolling surface, achieved by putting the controls
+ * in an {@link AdapterHeader} in front of the list rather than in a scroll view above it. The
+ * header is built asynchronously, so anything the screen has loaded before it exists is held in
+ * the {@code last} fields and applied once it arrives.
+ * <p>
+ * {@link #binding} guards against a feedback loop. Populating a dropdown in code fires the same
+ * listener a user tap does, and without the guard every rebind would re-run the query, which in
+ * turn rebinds.
  */
 public class FragmentStats extends Fragment {
 
@@ -186,6 +195,11 @@ public class FragmentStats extends Fragment {
 		tvEmpty.setVisibility(rows == null || rows.isEmpty() ? View.VISIBLE : View.GONE);
 	}
 
+	/**
+	 * Warns when lectures fall outside every defined session. Those join to no session and are
+	 * therefore missing from this report entirely, which is worth saying on the screen whose
+	 * numbers are wrong because of it.
+	 */
 	private void bindOrphanWarning() {
 		if (tvOrphanWarning == null) {
 			return;
@@ -230,6 +244,7 @@ public class FragmentStats extends Fragment {
 
 	// ── Grouping ─────────────────────────────────────────────────────────
 
+	/** One chip per {@link StatsGroupBy}, which is what makes adding a breakdown a one-line change. */
 	private void buildGroupChips() {
 
 		StatsFilter filter = viewModel.statsFilter();
@@ -254,6 +269,7 @@ public class FragmentStats extends Fragment {
 
 	// ── Dropdowns ────────────────────────────────────────────────────────
 
+	/** The dropdowns whose contents come from enums and never change: range, sort, class filters. */
 	private void buildStaticDropdowns() {
 
 		binding = true;
@@ -440,12 +456,14 @@ public class FragmentStats extends Fragment {
 	}
 
 	@NonNull
+	/** A plain single-line adapter, since every dropdown on this screen uses the same one. */
 	private ArrayAdapter<String> simple(@NonNull List<String> items) {
 		return new ArrayAdapter<>(requireContext(), android.R.layout.simple_list_item_1, items);
 	}
 
 	// ── Custom date window ───────────────────────────────────────────────
 
+	/** Wires the custom range buttons. Picking a date switches the range preset to custom. */
 	private void setupDateButtons() {
 		btnFrom.setOnClickListener(v -> pickDate(true));
 		btnTo.setOnClickListener(v -> pickDate(false));
@@ -493,6 +511,7 @@ public class FragmentStats extends Fragment {
 		picker.show(getParentFragmentManager(), isFrom ? "from" : "to");
 	}
 
+	/** Labels the two date buttons, or shows a placeholder where a bound is left open. */
 	private void updateDateButtons() {
 
 		StatsFilter filter = viewModel.statsFilter();
@@ -511,6 +530,7 @@ public class FragmentStats extends Fragment {
 
 	// ── Actions ──────────────────────────────────────────────────────────
 
+	/** The filter panel toggle, the clear button, and the threshold control. */
 	private void setupActions(@NonNull View view) {
 
 		// Hiding the panel hands its layout weight back to the results list, so the list grows
@@ -556,6 +576,11 @@ public class FragmentStats extends Fragment {
 		}
 	}
 
+	/**
+	 * Drills into a row by adding the corresponding filter and regrouping, rather than navigating
+	 * away. Only the groupings with a real primary key reach here; see
+	 * {@code StatsGroupBy.isDrillable}.
+	 */
 	private void onRowClicked(@NonNull StatRow row) {
 
 		StatsGroupBy groupBy = viewModel.statsFilter().groupBy;
@@ -611,6 +636,10 @@ public class FragmentStats extends Fragment {
 
 	// ── Results ──────────────────────────────────────────────────────────
 
+	/**
+	 * The rows and the summary come from two queries over the same filter, so the totals above
+	 * the report always agree with the report itself.
+	 */
 	private void observe() {
 
 		adapter.setContext(viewModel.statsFilter().groupBy, viewModel.statsFilter().threshold);
@@ -638,6 +667,10 @@ public class FragmentStats extends Fragment {
 		});
 	}
 
+	/**
+	 * Fills the headline figures. An empty result is shown as such rather than as a row of
+	 * zeroes, since a filter that matched nothing is a different thing from nought per cent.
+	 */
 	private void bindSummary(@Nullable StatsSummary summary) {
 
 		if (tvPercent == null) {

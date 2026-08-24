@@ -16,6 +16,12 @@ import java.util.Locale;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.pojo.CourseAttendanceStat;
 
+/**
+ * Per-course attendance rows on the statistics screen.
+ * <p>
+ * A course with no attendance recorded shows a dash rather than 0%, which would read as a course
+ * everybody missed instead of one nobody has marked yet.
+ */
 public class AdapterCourseStat
 		extends ListAdapter<CourseAttendanceStat, AdapterCourseStat.Holder> {
 

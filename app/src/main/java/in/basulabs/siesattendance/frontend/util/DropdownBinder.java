@@ -22,6 +22,11 @@ import in.basulabs.siesattendance.backend.Year;
  * Every dropdown in the app goes through here so the rules in {@link AcademicRules} cannot be
  * enforced on one screen and forgotten on another, and so that every label comes from
  * {@code toString()} rather than the stored constant name.
+ * <p>
+ * These are exposed dropdowns, which are {@code AutoCompleteTextView}s rather than spinners, so
+ * the displayed text is set with {@code setText(value, false)} throughout. The false suppresses
+ * filtering; without it, showing a value would filter the list down to entries matching that
+ * value and the dropdown would open with only one option in it.
  */
 public final class DropdownBinder {
 
@@ -82,8 +87,7 @@ public final class DropdownBinder {
 	}
 
 	/**
-	 * Ties a department field, a stream field and optionally a year field together, in both
-	 * directions.
+	 * Ties a department field, a stream field and optionally a year field together.
 	 * <p>
 	 * Narrowing runs one way: department, then stream, then year. Choosing a department
 	 * restricts the stream list to what it offers and selects it outright when there is only
@@ -93,8 +97,13 @@ public final class DropdownBinder {
 	 * <p>
 	 * The cost of that is that a stale value can survive a change made above it, which is why
 	 * every caller runs {@link AcademicRules#validate} before saving.
+	 * <p>
+	 * A convenience wrapper over {@link #linkAcademicFields} for the screens that have no
+	 * semester field.
 	 *
 	 * @param yearField may be null on screens with no year field
+	 * @param anyLabel  when non-null, every field gains a leading entry that selects null, which
+	 *                  is what turns these into filters rather than required fields
 	 * @param onChanged receives the reconciled department, stream and year after any change
 	 */
 	public static void linkDepartmentAndStream(@NonNull AutoCompleteTextView departmentField,
@@ -118,6 +127,12 @@ public final class DropdownBinder {
 	 * Semester follows year the way stream follows department: first year covers semesters 1
 	 * and 2, second 3 and 4, third 5 and 6, with a master's course restarting the count.
 	 * Choosing a semester does not alter the year, in keeping with the one-way rule.
+	 * <p>
+	 * Reconciliation happens on change, not on the way in. The initial values are displayed as
+	 * given, even where they contradict each other, so a record saved before a rule existed opens
+	 * showing what is actually stored rather than silently losing a field. That does mean a field
+	 * can display a value its own list no longer contains, until the user touches something above
+	 * it. {@link AcademicRules#validate} is what stops such a combination being saved again.
 	 *
 	 * @param semesterField may be null on screens with no semester
 	 */
@@ -207,6 +222,7 @@ public final class DropdownBinder {
 		rebuild.run();
 	}
 
+	/** Hands the whole reconciled state back, since a change to one field can alter three. */
 	private static void notifyChanged(@NonNull Holder state, @NonNull LinkedFull onChanged) {
 		onChanged.onChanged(state.department, state.stream, state.year, state.semester);
 	}
@@ -275,6 +291,11 @@ public final class DropdownBinder {
 		}
 	}
 
+	/**
+	 * Replaces a field's adapter and reapplies its selection. Unlike {@link #bind}, this attaches
+	 * no click listener: the linked fields install their own, and rebuilding must not disturb
+	 * them.
+	 */
 	private static <E extends Enum<E>> void setItems(@NonNull AutoCompleteTextView field,
 	                                                 @NonNull List<E> values,
 	                                                 @Nullable String anyLabel,
@@ -293,17 +314,24 @@ public final class DropdownBinder {
 		setSelection(field, selected, anyLabel);
 	}
 
+	/** Result of {@link #linkDepartmentAndStream}. Any value may be null. */
 	public interface Linked {
 		void onChanged(@Nullable Department department, @Nullable Stream stream,
 		               @Nullable Year year);
 	}
 
+	/** Result of {@link #linkAcademicFields}, including the semester. Any value may be null. */
 	public interface LinkedFull {
 		void onChanged(@Nullable Department department, @Nullable Stream stream,
 		               @Nullable Year year, @Nullable Integer semester);
 	}
 
-	/** Mutable selection state shared by the linked fields. */
+	/**
+	 * Mutable selection state shared by the linked fields.
+	 * <p>
+	 * A small mutable object rather than four captured locals, because the listeners have to see
+	 * each other's changes and a lambda cannot close over anything it reassigns.
+	 */
 	private static class Holder {
 
 		@Nullable

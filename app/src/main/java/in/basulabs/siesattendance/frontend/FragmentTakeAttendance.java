@@ -44,12 +44,25 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * Take attendance for a lecture that just happened.
  * <p>
  * There is no separate scheduling step. Selection is two stages: pick a course, then pick which
- * group of its students the session was for. Only once a group is chosen does the roll load —
- * showing the whole class immediately would be wrong for a practical, and the user would have
- * no way to tell that the list in front of them was the wrong one.
+ * group of its students the session was for. Only once a group is chosen does the roll load.
+ * Showing the whole class immediately would be wrong for a practical, and the user would have no
+ * way to tell that the list in front of them was the wrong one.
  * <p>
  * The lecture row is created when the sheet is saved, so a lecture in the database always
  * represents a session that actually took place.
+ * <p>
+ * This is the longest screen in the app, and most of its length comes from three things worth
+ * knowing about before reading it:
+ * <ul>
+ *     <li>The course and batch lists load asynchronously, so a selection restored from saved
+ *     instance state cannot be applied until they arrive. The {@code pending} fields hold it in
+ *     the meantime.</li>
+ *     <li>Changing the course or batch after marking has begun would discard the marks, so
+ *     {@link #rollTouched} decides whether that needs confirming.</li>
+ *     <li>Saving can roll straight on to the next period through
+ *     {@link #carryForwardToNextPeriod()}, which is what makes marking consecutive lectures
+ *     bearable.</li>
+ * </ul>
  */
 public class FragmentTakeAttendance extends Fragment {
 
@@ -201,6 +214,7 @@ public class FragmentTakeAttendance extends Fragment {
 
 	// ── Course and batch selection ───────────────────────────────────────
 
+	/** Fills the course dropdown from the active courses, then applies any restored selection. */
 	private void loadCourses() {
 		viewModel.loadCoursesSync(list -> {
 			if (!isAdded()) {
@@ -242,6 +256,10 @@ public class FragmentTakeAttendance extends Fragment {
 		onCourseChosen(course);
 	}
 
+	/**
+	 * Asks before a change that would throw away marks already entered. Only reached when
+	 * {@link #rollTouched} is set, so an untouched sheet switches without interruption.
+	 */
 	private void confirmGroupChange(@Nullable Long newBatchID,
 	                                @NonNull List<String> labels) {
 
@@ -267,6 +285,7 @@ public class FragmentTakeAttendance extends Fragment {
 				.show();
 	}
 
+	/** Commits a group change and reloads the roll for it, discarding whatever was marked. */
 	private void applyGroupChange(@Nullable Long newBatchID) {
 		selectedBatchID = newBatchID;
 		batchChosen = true;
@@ -383,6 +402,11 @@ public class FragmentTakeAttendance extends Fragment {
 
 	// ── Date and time ────────────────────────────────────────────────────
 
+	/**
+	 * Opens the calendar, defaulting to the date already set. The selection comes back as a UTC
+	 * midnight and is converted in the same zone, since reading it locally lands a day early
+	 * anywhere east of Greenwich.
+	 */
 	private void pickDate() {
 		MaterialDatePicker<Long> picker = MaterialDatePicker.Builder.datePicker()
 				.setTitleText(R.string.hint_date)
@@ -439,6 +463,7 @@ public class FragmentTakeAttendance extends Fragment {
 
 	// ── Roll state ───────────────────────────────────────────────────────
 
+	/** Follows the roll held by the ViewModel, which survives rotation and navigation away. */
 	private void observe() {
 		viewModel.getAttendanceRows().observe(getViewLifecycleOwner(), rows -> {
 			adapter.submitRows(rows);
@@ -447,6 +472,7 @@ public class FragmentTakeAttendance extends Fragment {
 		});
 	}
 
+	/** Keeps the present and absent tallies above the list in step with the marks. */
 	private void updateCounts(@Nullable List<AttendanceRow> rows) {
 		if (rows == null) {
 			return;
@@ -465,6 +491,11 @@ public class FragmentTakeAttendance extends Fragment {
 		absentCount.setText(getString(R.string.chip_absent_count, absent));
 	}
 
+	/**
+	 * Shows the roll only once a group has been chosen, and the empty message only when a chosen
+	 * group turns out to have nobody in it. The two states look alike and mean very different
+	 * things, so they are kept apart deliberately.
+	 */
 	private void updateRollVisibility() {
 		List<AttendanceRow> rows = viewModel.getAttendanceRows().getValue();
 		boolean hasRows = rows != null && !rows.isEmpty();
@@ -607,6 +638,10 @@ public class FragmentTakeAttendance extends Fragment {
 		}
 	}
 
+	/**
+	 * Reads back the date, times and selections after the view is recreated. The course and batch
+	 * are only recorded as pending here; the dropdown lists they refer to may not have loaded yet.
+	 */
 	private void restoreFrom(@NonNull Bundle state) {
 
 		pendingCourseID = state.getLong(KEY_COURSE, -1L);

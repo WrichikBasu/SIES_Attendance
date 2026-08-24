@@ -20,6 +20,10 @@ import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.frontend.adapter.AdapterProfessor;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
+/**
+ * The professor list, with a search-free layout since the number of staff stays small enough to
+ * scroll. Adding and editing both route to {@link FragmentAddProfessor}.
+ */
 public class FragmentProfessors extends Fragment {
 
 	private AttendanceViewModel viewModel;
@@ -72,6 +76,7 @@ public class FragmentProfessors extends Fragment {
 		observeList();
 	}
 
+	/** Swaps in the empty state when there are no professors, rather than showing a blank list. */
 	private void observeList() {
 		viewModel.getProfessors().observe(getViewLifecycleOwner(), professors -> {
 			adapter.submitList(professors);

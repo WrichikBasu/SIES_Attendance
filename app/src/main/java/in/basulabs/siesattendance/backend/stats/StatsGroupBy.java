@@ -7,8 +7,17 @@ import androidx.annotation.NonNull;
  * <p>
  * Each constant carries the SQL fragments needed to build its part of the query. Keeping them
  * here rather than in the builder means adding a new breakdown is one enum entry, and it also
- * guarantees the group-by clause can only ever be one of a fixed set of literals — the user's
- * filter values are bound as arguments, never concatenated.
+ * guarantees the group-by clause can only ever be one of a fixed set of compile-time literals.
+ * Nothing the user supplies is ever concatenated into the statement; filter values are bound as
+ * arguments by {@link StatsQueryBuilder}.
+ * <p>
+ * The four expressions have to agree with each other. Anything in {@link #primaryExpr} or
+ * {@link #secondaryExpr} that is not an aggregate must also appear in {@link #groupByExpr}, or
+ * SQLite will pick an arbitrary row's value for it. The aliases they are selected under match the
+ * field names on {@code StatRow}, which is how Room populates it.
+ * <p>
+ * A grouping with no natural key uses {@code "0"} as its id expression. Those rows cannot be
+ * drilled into, which {@link #isDrillable()} reports.
  */
 public enum StatsGroupBy {
 
@@ -61,7 +70,11 @@ public enum StatsGroupBy {
 			"''",
 			"strftime('%Y-W%W', " + SqlBits.EPOCH_START + ", 'unixepoch', 'localtime')"),
 
-	/** One row per semester number, taken from the course rather than the calendar. */
+	/**
+	 * One row per semester number, taken from the course rather than from the student. A course
+	 * belongs to exactly one semester, whereas the semester on a student record is optional and
+	 * often unset, so the course is the reliable source.
+	 */
 	SEMESTER("Semester",
 			"c.semester",
 			"'Semester ' || c.semester",
@@ -82,7 +95,10 @@ public enum StatsGroupBy {
 			"''",
 			"c.offeringDepartment"),
 
-	/** One row per batch. Whole-class lectures have no batch and group together. */
+	/**
+	 * One row per batch. Whole-class lectures have a null batch, which would otherwise be
+	 * dropped by the grouping, so both expressions coalesce it into a row of its own.
+	 */
 	BATCH("Batch",
 			"COALESCE(l.batchID, 0)",
 			"COALESCE(b.batchName, 'Whole class')",
@@ -117,7 +133,10 @@ public enum StatsGroupBy {
 			"CAST(strftime('%w', " + SqlBits.EPOCH_START + ", 'unixepoch', 'localtime') "
 					+ "AS INTEGER)"),
 
-	/** One row per individual lecture — the most granular view available. */
+	/**
+	 * One row per individual lecture, the most granular view available. Labelled with the course
+	 * code and date, since a lecture has no name of its own.
+	 */
 	LECTURE("Lecture",
 			"l.lectureID",
 			"c.courseCode || ' · ' || strftime('%d %m %Y', " + SqlBits.EPOCH_START
@@ -135,11 +154,14 @@ public enum StatsGroupBy {
 		SECONDARY
 	}
 
-	/** Shown on the group-by chip. */
+	/** Shown on the group-by chip. Display text only, safe to reword. */
 	@NonNull
 	public final String label;
 
-	/** Expression yielding a stable numeric id for the row, used for drill-down. */
+	/**
+	 * Expression yielding a stable numeric id for the row, used for drill-down. {@code "0"} for
+	 * the groupings that have no single subject to drill into.
+	 */
 	@NonNull
 	public final String idExpr;
 
@@ -155,6 +177,7 @@ public enum StatsGroupBy {
 	@NonNull
 	public final String groupByExpr;
 
+	/** Which of the two labels, if either, is a person's name. */
 	@NonNull
 	public final NameField nameField;
 

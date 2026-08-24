@@ -13,12 +13,20 @@ import androidx.recyclerview.widget.RecyclerView;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 
+/**
+ * The student list.
+ * <p>
+ * Item identity is the student and the session together, not the student alone. The same person
+ * appears once per session they are enrolled in, and treating those as one row would make the
+ * list flicker between two sets of details whenever both were on screen.
+ */
 public class AdapterStudent
 		extends ListAdapter<StudentWithYear, AdapterStudent.Holder> {
 
 	public interface OnClick {
 		void onStudentClicked(StudentWithYear student);
 
+		/** Optional: screens that only navigate, such as the dashboard, leave this empty. */
 		default void onStudentLongPressed(StudentWithYear student) {
 		}
 	}

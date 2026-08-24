@@ -45,20 +45,40 @@ public class EntityCourse {
 	@Ignore
 	public static final String TABLE_NAME = "courses";
 
+	/**
+	 * Local identifier, unrelated to the course code. The code is what the college uses and is
+	 * uniquely indexed, but codes get reissued and reworded between syllabus revisions, so
+	 * lectures and batch links are hung off this instead.
+	 */
 	@PrimaryKey(autoGenerate = true)
 	public long courseID;
 
+	/** The professor who takes the course. Mandatory, which is why professors cannot be deleted. */
 	public long profID;
 
+	/** The college's own identifier, such as "PHYS101". Uniquely indexed. */
 	@NonNull
 	public String courseCode;
 
+	/** The title as it appears in the syllabus, for instance "Accelerator Physics". */
 	@NonNull
 	public String courseTopic;
+
+	/*
+	 * The four fields below decide who is on the course's roll. A student is on it when their
+	 * year and stream match, and when whichever of their three departments the course type
+	 * calls for matches the offering department. The whole condition is spelled out in
+	 * DaoStudent.getRollForCourseSync; changing any of these fields changes who can have
+	 * attendance taken for the course.
+	 */
 
 	@NonNull
 	public Stream stream;
 
+	/**
+	 * The department that owns the course, which is not the same as the department of the
+	 * professor teaching it.
+	 */
 	@NonNull
 	public Department offeringDepartment;
 
@@ -70,9 +90,16 @@ public class EntityCourse {
 	@NonNull
 	public CourseType courseType;
 
+	/** Free text for anything the structured fields do not cover. */
 	@Nullable
 	public String remarks;
 
+	/**
+	 * When the course was first offered and when it stopped being offered. A discontinued
+	 * course is kept rather than deleted, because every lecture and attendance record filed
+	 * under it would otherwise lose the thing it describes. A non-null
+	 * {@code dateDiscontinued} is what keeps the course out of the active lists.
+	 */
 	@Nullable
 	public ZonedDateTime dateIntroduced;
 
@@ -96,6 +123,10 @@ public class EntityCourse {
 		this.dateDiscontinued = dateDiscontinued;
 	}
 
+	/**
+	 * Convenience constructor for a course that is being offered now: no introduction date
+	 * recorded, and not discontinued.
+	 */
 	@Ignore
 	public EntityCourse(@NonNull String courseCode, @NonNull String courseTopic,
 	                    @NonNull Stream stream, @NonNull Department offeringDepartment,

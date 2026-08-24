@@ -27,11 +27,16 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
  * Add or edit a professor. Passing a {@code profID} argument switches the form into edit mode.
+ * <p>
+ * The same screen serves both, because the fields and the validation are identical and the only
+ * difference is whether the save inserts or updates. {@link #editingProfID} is what separates
+ * the two.
  */
 public class FragmentAddProfessor extends Fragment {
 
 	private AttendanceViewModel viewModel;
 
+	/** The professor being edited, or -1 when adding a new one. */
 	private long editingProfID = -1L;
 
 	private TextInputEditText etName, etEmail;
@@ -101,6 +106,13 @@ public class FragmentAddProfessor extends Fragment {
 		}
 	}
 
+	/**
+	 * Validates and saves, then navigates back.
+	 * <p>
+	 * The write happens on a background thread and the navigation runs in its callback, so the
+	 * screen stays put if the insert fails on the unique email index. Both callbacks check
+	 * {@code isAdded()} first, since the user is free to leave before the write completes.
+	 */
 	private void onSave(@NonNull View button) {
 
 		tilName.setError(null);

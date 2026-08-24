@@ -84,6 +84,13 @@ public class FragmentStudentDetail extends Fragment {
 		observe();
 	}
 
+	/**
+	 * Adds the edit and delete items to the toolbar.
+	 * <p>
+	 * Registered against the view lifecycle and only while RESUMED, so the items disappear with
+	 * the screen. Registering against the activity without that bound leaves the menu behind
+	 * after navigating away, and the actions would then run against a student no longer shown.
+	 */
 	private void setupMenu() {
 		requireActivity().addMenuProvider(new MenuProvider() {
 
@@ -142,6 +149,10 @@ public class FragmentStudentDetail extends Fragment {
 		});
 	}
 
+	/**
+	 * The choice offered for a student enrolled in more than one session: take them off this one,
+	 * or remove them entirely.
+	 */
 	private void offerWithdrawOrDelete(@NonNull DeletionImpact impact) {
 
 		String[] options = {
@@ -162,6 +173,10 @@ public class FragmentStudentDetail extends Fragment {
 				.show();
 	}
 
+	/**
+	 * Withdrawal keeps the student and their attendance, and removes only this session's
+	 * enrolment and batch memberships. The count quoted is what stays, not what goes.
+	 */
 	private void confirmWithdraw(@NonNull DeletionImpact impact) {
 
 		new MaterialAlertDialogBuilder(requireContext())
@@ -203,6 +218,7 @@ public class FragmentStudentDetail extends Fragment {
 				.show();
 	}
 
+	/** The second confirmation, shown only when there is history to lose. */
 	private void confirmDeleteAgain(@NonNull DeletionImpact impact) {
 
 		new MaterialAlertDialogBuilder(requireContext())
@@ -224,6 +240,10 @@ public class FragmentStudentDetail extends Fragment {
 		});
 	}
 
+	/**
+	 * The identity and the breakdown come from separate queries, so the header fills in as soon
+	 * as the student is read rather than waiting for the attendance to be totalled.
+	 */
 	private void observe() {
 
 		viewModel.getStudent(studentID).observe(getViewLifecycleOwner(), this::bindStudent);
@@ -232,6 +252,11 @@ public class FragmentStudentDetail extends Fragment {
 				.observe(getViewLifecycleOwner(), this::bindBreakdown);
 	}
 
+	/**
+	 * Fills in the header. A null student means the record has gone, which happens briefly after
+	 * a delete while the screen is still being dismissed, so the previous values are left in
+	 * place rather than blanked.
+	 */
 	private void bindStudent(@Nullable StudentWithYear student) {
 		if (student == null) {
 			return;

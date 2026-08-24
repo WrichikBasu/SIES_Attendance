@@ -21,6 +21,14 @@ import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.frontend.adapter.AdapterLecture;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
+/**
+ * The opening screen: four headline counts, today's lectures, and the shortcuts into the
+ * everyday tasks.
+ * <p>
+ * Today's list is deliberately the whole of it. A professor opening the app during a teaching
+ * day wants the lecture in front of them, and anything further out is a browsing task that
+ * belongs on the attendance picker.
+ */
 public class FragmentDashboard extends Fragment {
 
 	private AttendanceViewModel viewModel;
@@ -79,6 +87,10 @@ public class FragmentDashboard extends Fragment {
 		observe();
 	}
 
+	/**
+	 * Wires the counts and the lecture list. Each source is independent, so the screen fills in
+	 * piecemeal as the queries return rather than waiting for all of them.
+	 */
 	private void observe() {
 
 		viewModel.countStudents().observe(getViewLifecycleOwner(), count ->

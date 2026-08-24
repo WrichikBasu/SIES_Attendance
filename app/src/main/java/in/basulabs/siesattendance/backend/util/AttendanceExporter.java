@@ -26,16 +26,22 @@ import in.basulabs.siesattendance.backend.pojo.ExportRow;
  * The sheet deliberately carries held and attended side by side rather than percentages alone.
  * A percentage on its own hides how much it rests on: 2 out of 3 and 40 out of 60 are both 67%,
  * and only one of them is worth acting on early in the term.
+ * <p>
+ * Everything is assembled in memory before a byte is written, because the query returns one row
+ * per student per course and the sheet needs one row per student. A session of a few hundred
+ * students across a few dozen courses is small enough for that to be unremarkable.
  */
 public final class AttendanceExporter {
 
 	/** Shading for a student below the threshold. */
 	private static final String STYLE_DEFAULTER = "ceDefaulter";
 
+	/** The course code row and the Held/Attended row beneath it. */
 	private static final String STYLE_HEADER = "ceHeader";
 
 	private static final String STYLE_SUBHEADER = "ceSubHeader";
 
+	/** The heading block above the table: title, scope and threshold note. */
 	private static final String STYLE_TITLE = "ceTitle";
 
 	/**
@@ -49,6 +55,7 @@ public final class AttendanceExporter {
 	private AttendanceExporter() {
 	}
 
+	/** Whether a threshold was asked for at all, as opposed to one that happens to be low. */
 	private static boolean shadingOn(int threshold) {
 		return threshold != NO_THRESHOLD;
 	}
@@ -56,10 +63,16 @@ public final class AttendanceExporter {
 	/** What the export produced, for the message shown afterwards. */
 	public static class Summary {
 
+		/** Students who appeared on the main sheet. */
 		public final int students;
 
+		/** Courses that became column pairs. */
 		public final int courses;
 
+		/**
+		 * Students shaded on the main sheet. Counts the overall figures only: a student may be
+		 * short in one group and not overall, and would not be counted here.
+		 */
 		public final int defaulters;
 
 		Summary(int students, int courses, int defaulters) {
@@ -146,6 +159,12 @@ public final class AttendanceExporter {
 		return new Summary(students.size(), courseColumns.size(), defaulters);
 	}
 
+	/**
+	 * The heading block that sits above every table: what the sheet covers, and what the shading
+	 * means.
+	 *
+	 * @param group null for the main sheet, otherwise the group whose sheet is being written
+	 */
 	private static void writeTitle(@NonNull OdsWriter ods, int academicYear, int threshold,
 	                               @Nullable CourseGroup group, @NonNull ExportFilter filter) {
 
@@ -261,7 +280,14 @@ public final class AttendanceExporter {
 		ods.addRow(sub);
 	}
 
-	/** @return true if this student is a defaulter */
+	/**
+	 * Writes one student's row and works out whether they fall short.
+	 * <p>
+	 * The totals are taken over the columns on this sheet alone, which is what makes a group
+	 * sheet report the group's percentage rather than the overall one.
+	 *
+	 * @return true if this student is a defaulter on this sheet
+	 */
 	private static boolean writeStudent(@NonNull OdsWriter ods, @NonNull Student student,
 	                                    @NonNull Map<Long, String> courseColumns,
 	                                    int thresholdPercent) {
@@ -313,12 +339,17 @@ public final class AttendanceExporter {
 		return defaulter;
 	}
 
+	/** A student's row while it is being assembled, before the courses become columns. */
 	private static class Student {
 
 		final String rollNo;
 
 		final String name;
 
+		/**
+		 * Course ID to a two-element array of held and attended. An absent key means the student
+		 * does not take the course, which is written as a blank pair rather than as zeroes.
+		 */
 		final Map<Long, int[]> figures = new LinkedHashMap<>();
 
 		Student(String rollNo, String name) {
@@ -327,6 +358,7 @@ public final class AttendanceExporter {
 		}
 	}
 
+	/** The default name offered in the save dialog, for instance "attendance-2025-26.ods". */
 	@NonNull
 	public static String suggestedFileName(int academicYear) {
 		return "attendance-" + academicYear + "-" + ((academicYear + 1) % 100) + ".ods";

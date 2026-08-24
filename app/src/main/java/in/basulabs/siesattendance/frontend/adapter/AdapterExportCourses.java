@@ -34,15 +34,22 @@ import in.basulabs.siesattendance.backend.EntityCourse;
 public class AdapterExportCourses
 		extends RecyclerView.Adapter<AdapterExportCourses.CourseHolder> {
 
+	/** Every course offered, regardless of the current search. */
 	@NonNull
 	private final List<EntityCourse> all = new ArrayList<>();
 
+	/** What the search currently leaves on screen. A subset of {@link #all}, in the same order. */
 	@NonNull
 	private final List<EntityCourse> visible = new ArrayList<>();
 
+	/**
+	 * The caller's set, mutated in place. Deliberately not a copy: the fragment reads it back
+	 * directly, and a selection that survives a search has to outlive {@link #visible}.
+	 */
 	@NonNull
 	private final Set<Long> selected;
 
+	/** Fired after any change to {@link #selected}, so the fragment can update its count. */
 	@NonNull
 	private final Runnable onSelectionChanged;
 
@@ -52,6 +59,7 @@ public class AdapterExportCourses
 		this.onSelectionChanged = onSelectionChanged;
 	}
 
+	/** Replaces the course list and clears any active search. */
 	public void submit(@NonNull List<EntityCourse> courses) {
 		all.clear();
 		all.addAll(courses);
@@ -75,6 +83,7 @@ public class AdapterExportCourses
 		notifyDataSetChanged();
 	}
 
+	/** Everything about a course that search should match, lowercased and run together. */
 	@NonNull
 	private static String haystack(@NonNull EntityCourse course) {
 		return (course.courseCode + " " + course.courseTopic + " "
@@ -96,6 +105,7 @@ public class AdapterExportCourses
 		onSelectionChanged.run();
 	}
 
+	/** How many rows the search currently leaves, which is what the select-all label reports. */
 	public int visibleCount() {
 		return visible.size();
 	}

@@ -10,6 +10,12 @@ import androidx.annotation.NonNull;
  */
 public class ExportRow {
 
+	/*
+	 * Fields are initialised rather than set through a constructor because Room populates a raw
+	 * query result field by field. The empty-string defaults keep a column that the query did
+	 * not select from arriving as null into a @NonNull field.
+	 */
+
 	public long studentID;
 
 	@NonNull

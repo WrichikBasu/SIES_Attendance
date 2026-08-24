@@ -38,9 +38,9 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 /**
  * Backup and restore.
  * <p>
- * Both halves go through the system file picker rather than writing to a fixed path, so the
- * user chooses where a backup lands — a cloud folder, a memory card, wherever they already keep
- * things — and the app needs no storage permission at all.
+ * Both halves go through the system file picker rather than writing to a fixed path, so the user
+ * chooses where a backup lands, whether that is a cloud folder, a memory card or wherever they
+ * already keep things, and the app needs no storage permission at all.
  * <p>
  * A restore ends by restarting the app. Every screen, DAO and observer in memory is bound to
  * the database file that has just been replaced, and there is no sound way to re-point them
@@ -116,6 +116,7 @@ public class FragmentBackup extends Fragment {
 
 	// ── Export ───────────────────────────────────────────────────────────
 
+	/** Runs once the user has picked where the backup goes, and after any password has been set. */
 	private void onExportDestinationChosen(@NonNull Uri destination) {
 
 		if (!switchEncrypt.isChecked()) {
@@ -183,6 +184,10 @@ public class FragmentBackup extends Fragment {
 				.show();
 	}
 
+	/**
+	 * The extra warning shown only for a replacing restore, which is the one mode that discards
+	 * what is currently on the device. A merge needs no such warning: it never deletes anything.
+	 */
 	private void warnBeforeReplace() {
 
 		new MaterialAlertDialogBuilder(requireContext())
@@ -194,6 +199,12 @@ public class FragmentBackup extends Fragment {
 				.show();
 	}
 
+	/**
+	 * Inspects the chosen file and decides what to ask for next.
+	 * <p>
+	 * The header is readable without the password, so an unusable file is rejected with a
+	 * specific message here rather than surfacing later as a decryption failure.
+	 */
 	private void onImportSourceChosen(@NonNull Uri source) {
 
 		pendingImport = source;
@@ -228,6 +239,7 @@ public class FragmentBackup extends Fragment {
 		});
 	}
 
+	/** Hands the restore to the ViewModel, which runs it off the main thread. */
 	private void startRestore(@NonNull Uri source, @Nullable char[] password) {
 		progressLabel.setText(pendingMode == DatabaseBackup.Mode.MERGE
 				? R.string.progress_merging
@@ -320,6 +332,11 @@ public class FragmentBackup extends Fragment {
 				});
 	}
 
+	/**
+	 * Asks for the password of a file being restored. There is no way to check it short of
+	 * attempting the decryption, so a wrong one comes back through {@link #onRestoreFailed} and
+	 * returns here for another try.
+	 */
 	private void askForExistingPassword(@NonNull DatabaseBackup.Info info,
 	                                    @NonNull PasswordCallback callback) {
 
@@ -360,6 +377,10 @@ public class FragmentBackup extends Fragment {
 				});
 	}
 
+	/**
+	 * The shortest password accepted for a new backup. A floor rather than a policy: the key
+	 * derivation is deliberately slow, but nothing saves a password of three characters.
+	 */
 	private static final int MIN_PASSWORD_LENGTH = 8;
 
 	/**
@@ -426,6 +447,10 @@ public class FragmentBackup extends Fragment {
 		});
 	}
 
+	/**
+	 * Turns a {@link DatabaseBackup.Failure} into something worth reading, and sends a wrong
+	 * password back to the prompt rather than making the user start over.
+	 */
 	private void onRestoreFailed(@NonNull DatabaseBackup.Result result) {
 
 		DatabaseBackup.Failure failure =
@@ -585,6 +610,7 @@ public class FragmentBackup extends Fragment {
 		Runtime.getRuntime().exit(0);
 	}
 
+	/** A plain dialog, used wherever the outcome needs more room than a snackbar allows. */
 	private void showMessage(int titleRes, @NonNull String message) {
 
 		if (!isAdded()) {
@@ -599,6 +625,7 @@ public class FragmentBackup extends Fragment {
 	}
 
 	@NonNull
+	/** The backup's creation time, so the user can tell which file they are about to restore. */
 	private String formatDate(long epochMillis) {
 
 		if (epochMillis <= 0L) {

@@ -1,7 +1,15 @@
 package in.basulabs.siesattendance.backend;
 
+/**
+ * Values that more than one part of the app has to agree on, and that would be a bug to state
+ * twice.
+ */
 public final class ConstantsAndStatics {
 
+	/**
+	 * File name of the live database. The restore path replaces the file underneath Room, so
+	 * the name has to be known outside {@link MainDatabase} as well.
+	 */
 	public static final String DATABASE_NAME = "sies_attendance.sqlite3";
 
 	/**
@@ -13,7 +21,10 @@ public final class ConstantsAndStatics {
 	 */
 	public static final int DATABASE_VERSION = 6;
 
-	/** Extension for exported backups. */
+	/**
+	 * Extension for exported backups. Distinctive rather than descriptive, so a backup is
+	 * recognisable in a file manager without inviting anything else to open it.
+	 */
 	public static final String BACKUP_EXTENSION = ".siesbak";
 
 	/**

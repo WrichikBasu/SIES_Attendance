@@ -30,22 +30,34 @@ import in.basulabs.siesattendance.backend.Year;
  * Re-importing is the intended way to bulk-edit a roster. A row whose roll number already
  * exists for that academic year updates the existing student rather than inserting a second
  * copy, so the file can be corrected in a spreadsheet and uploaded again as many times as
- * needed. Students absent from a later file are left untouched — an import never removes
- * anyone, because their attendance history depends on them continuing to exist.
+ * needed. Students absent from a later file are left untouched: an import never removes anyone,
+ * because their attendance history depends on them continuing to exist.
  * <p>
  * The expected header row is:
- * <pre>rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept</pre>
- * Column order does not matter — the header is read to build a name-to-index map. The
- * {@code pronouns}, {@code email}, {@code minorDept} and {@code oeDept} columns may be blank.
- * The remaining columns are required and a row missing any of them is reported as an error
- * rather than silently skipped.
+ * <pre>rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept,semester</pre>
+ * Column order does not matter, since the header is read to build a name-to-index map. The
+ * {@code pronouns}, {@code email}, {@code minorDept}, {@code oeDept} and {@code semester}
+ * columns may be blank, and a file may leave them out altogether. The rest are listed in
+ * {@link #REQUIRED_COLUMNS}, and a row missing any of them is reported as an error rather than
+ * silently skipped.
  * <p>
  * Enum columns accept the constant name case-insensitively, and also tolerate spaces and
  * hyphens in place of underscores, so "Computer Science" resolves to
  * {@link Department#COMPUTER_SCIENCE}.
+ * <p>
+ * A bad row costs only that row. Parsing and writing happen one row at a time and each failure
+ * is caught and recorded with its line number, so a single mistyped department does not abort a
+ * file of four hundred students. The consequence is that an import is not atomic: a run that
+ * reports failures has already committed the rows that succeeded, and correcting the file and
+ * importing it again is the intended fix.
  */
 public final class CsvImporter {
 
+	/**
+	 * Columns without which a row cannot be filed at all. Written in the normalised form that
+	 * {@link #parseHeader} produces, so lower case with separators stripped, and checked once
+	 * against the header before any row is read.
+	 */
 	public static final String[] REQUIRED_COLUMNS =
 			{"rollno", "name", "year", "stream", "majordept"};
 
@@ -61,10 +73,17 @@ public final class CsvImporter {
 		/** Rows that matched an existing student and overwrote their details. */
 		public int updated;
 
+		/** Rows that could not be filed, each of which contributes a line to {@link #errors}. */
 		public int failed;
 
+		/**
+		 * One message per failed row, prefixed with its line number in the file so the user can
+		 * go and correct it. Also carries the whole-file failures, such as a missing column, in
+		 * which case it holds a single entry and nothing was imported.
+		 */
 		public final List<String> errors = new ArrayList<>();
 
+		/** Rows that were filed successfully, whether they created a student or updated one. */
 		public int imported() {
 			return created + updated;
 		}
@@ -79,7 +98,16 @@ public final class CsvImporter {
 
 	/**
 	 * Reads the CSV at {@code uri} and inserts every valid row for the given academic year.
-	 * Must be called off the main thread.
+	 * <p>
+	 * A missing required column stops the run before any row is read, since every row would fail
+	 * for the same reason and four hundred identical errors help nobody. Past that point each row
+	 * stands alone.
+	 * <p>
+	 * Must be called off the main thread: it reads a file and writes to the database.
+	 *
+	 * @param academicYear the session the roster is being imported into, since the rows carry no
+	 *                     session of their own
+	 * @return counts and per-row errors, never null, even when nothing could be read
 	 */
 	@NonNull
 	public static Result importStudents(@NonNull Context context, @NonNull Uri uri,
@@ -148,7 +176,11 @@ public final class CsvImporter {
 	}
 
 	/**
-	 * @return true if this row updated a student who already existed, false if it created one.
+	 * Files one row, resolving and validating every value before anything is written.
+	 *
+	 * @return true if this row updated a student who already existed, false if it created one
+	 * @throws IllegalArgumentException with a message naming the offending field, which the
+	 *                                  caller turns into that row's error line
 	 */
 	private static boolean importRow(MainDatabase db, List<String> cells,
 	                                 Map<String, Integer> columns, int academicYear) {
@@ -215,6 +247,11 @@ public final class CsvImporter {
 
 	// ── Parsing helpers ──────────────────────────────────────────────────
 
+	/**
+	 * Maps normalised column names to their position. Names are lowercased with underscores,
+	 * spaces and hyphens stripped, so "Major Dept", "major_dept" and "majordept" are all read as
+	 * the same column.
+	 */
 	private static Map<String, Integer> parseHeader(String headerLine) {
 		Map<String, Integer> map = new HashMap<>();
 		List<String> cells = splitCsvLine(headerLine);
@@ -266,6 +303,11 @@ public final class CsvImporter {
 		return out;
 	}
 
+	/**
+	 * A cell that must be present and non-blank.
+	 *
+	 * @param label the human name of the field, used in the error message
+	 */
 	private static String required(List<String> cells, Map<String, Integer> columns,
 	                               String key, String label) {
 		String value = optional(cells, columns, key);
@@ -275,6 +317,11 @@ public final class CsvImporter {
 		return value;
 	}
 
+	/**
+	 * A cell that may be missing. Returns null both when the column is absent from the header and
+	 * when the row is short, so a file whose trailing columns are simply not filled in imports
+	 * without complaint.
+	 */
 	@Nullable
 	private static String optional(List<String> cells, Map<String, Integer> columns, String key) {
 		Integer index = columns.get(key);
@@ -284,6 +331,7 @@ public final class CsvImporter {
 		return cells.get(index).trim();
 	}
 
+	/** As {@link #parseOptionalEnum}, but a blank value is an error rather than a null. */
 	private static <E extends Enum<E>> E parseEnum(Class<E> type, String raw, String label) {
 		E value = parseOptionalEnum(type, raw, label);
 		if (value == null) {
@@ -292,10 +340,6 @@ public final class CsvImporter {
 		return value;
 	}
 
-	/**
-	 * Accepts either the constant name or the display label, loosely matched. A roster typed by
-	 * hand is as likely to say "Computer Science" as "COMPUTER_SCIENCE", and both should work.
-	 */
 	/**
 	 * Parses an optional whole number. A blank cell is absence, not zero; anything else that is
 	 * not a number is an error rather than a silent null, because a typo in a semester column
@@ -315,6 +359,14 @@ public final class CsvImporter {
 		}
 	}
 
+	/**
+	 * Accepts either the constant name or the display label, loosely matched. A roster typed by
+	 * hand is as likely to say "Computer Science" as "COMPUTER_SCIENCE", and both should work.
+	 * <p>
+	 * A blank cell yields null, which is a legitimate answer for the optional departments. A
+	 * value that is present but matches nothing is an error, since it is far more likely to be a
+	 * typo than a deliberate blank.
+	 */
 	@Nullable
 	private static <E extends Enum<E>> E parseOptionalEnum(Class<E> type, @Nullable String raw,
 	                                                       String label) {
@@ -330,7 +382,9 @@ public final class CsvImporter {
 	}
 
 	/**
-	 * A ready-to-share template so the user knows exactly what the file should look like.
+	 * A ready-to-share template so the user knows exactly what the file should look like. The
+	 * second example row leaves the optional department columns empty, which is the part people
+	 * most often ask about.
 	 */
 	@NonNull
 	public static String templateCsv() {

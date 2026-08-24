@@ -46,6 +46,10 @@ public class FragmentAttendancePicker extends Fragment {
 
 	private LocalDate selectedDate = LocalDate.now();
 
+	/**
+	 * The LiveData currently feeding the list. Held so it can be detached when the date changes;
+	 * see {@link #observeForDate()}.
+	 */
 	private LiveData<List<LectureDetails>> currentSource;
 
 	@Nullable
@@ -95,6 +99,13 @@ public class FragmentAttendancePicker extends Fragment {
 		observeForDate();
 	}
 
+	/**
+	 * Opens the calendar picker.
+	 * <p>
+	 * The selection comes back as UTC midnight, which is what the Material picker documents, so
+	 * it is converted at UTC rather than at the device zone. Using the local zone here shifts the
+	 * date back a day for anyone east of Greenwich, which includes everyone using this app.
+	 */
 	private void pickDate() {
 		MaterialDatePicker<Long> picker = MaterialDatePicker.Builder.datePicker()
 				.setTitleText(R.string.hint_filter_date)
@@ -129,6 +140,7 @@ public class FragmentAttendancePicker extends Fragment {
 		});
 	}
 
+	/** Today is named rather than dated, since that is the case the screen opens on. */
 	@NonNull
 	private String formatDate(@NonNull LocalDate date) {
 		if (date.equals(LocalDate.now())) {

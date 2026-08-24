@@ -8,6 +8,14 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 
+/**
+ * Converters between the types the entities use and the primitives SQLite can store.
+ * <p>
+ * Two rules run through all of it. Anything that has to be compared or sorted in SQL is stored
+ * as a number, not as formatted text, so a query can work with it without parsing. And anything
+ * shown to the user is stored by its stable identity rather than its label, so rewording a
+ * label is never a data migration.
+ */
 public final class TypeConvertors {
 
 	private static final String SEPARATOR = "|";
@@ -58,9 +66,15 @@ public final class TypeConvertors {
 	}
 
 	// ── Enums ────────────────────────────────────────────────────────────
-	// Enums are stored by name(), never by toString(). The display label is free to change,
-	// and does not even have to be unique — Stream.BSc and Stream.BSc_unaided both read "BSc"
-	// — so storing labels would corrupt the database the first time one was reworded.
+	// Enums are stored by name(), never by toString(). The display label is free to change, and
+	// does not even have to be unique: Stream.BSc and Stream.BSc_unaided both read "BSc". So
+	// storing labels would corrupt the database the first time one was reworded, and would have
+	// made those two streams indistinguishable from the day they were added.
+	//
+	// The consequence is that a constant may be added freely but never renamed or removed once
+	// rows exist that use it. valueOf() below throws on an unknown name rather than returning
+	// null, which is the right failure: a name that no longer resolves means the data and the
+	// code have diverged, and carrying on with a silent null would spread the damage.
 
 	// ── Department ───────────────────────────────────────────────────────
 

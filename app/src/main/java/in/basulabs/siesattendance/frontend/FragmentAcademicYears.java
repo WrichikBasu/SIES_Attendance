@@ -105,6 +105,10 @@ public class FragmentAcademicYears extends Fragment {
 	 */
 	private void showEditor(@Nullable EntityAcademicYear existing) {
 
+		// The year itself is the primary key, so editing one would move the row rather than
+		// change it, orphaning everything that refers to it. The field is locked in edit mode.
+
+
 		View content = LayoutInflater.from(requireContext())
 				.inflate(R.layout.dialog_academic_year, null, false);
 
@@ -157,10 +161,18 @@ public class FragmentAcademicYears extends Fragment {
 				.show();
 	}
 
+	/** Callback for {@link #pickDate}, since the two date buttons want different destinations. */
 	private interface DatePicked {
 		void onPicked(LocalDate date);
 	}
 
+	/**
+	 * Opens the calendar at the date already chosen.
+	 * <p>
+	 * Both the initial selection and the result are handled at UTC, which is the zone the
+	 * Material picker works in. Converting at the device zone shifts the date by a day for
+	 * anyone east of Greenwich.
+	 */
 	private void pickDate(@NonNull LocalDate initial, @NonNull DatePicked callback) {
 
 		MaterialDatePicker<Long> picker = MaterialDatePicker.Builder.datePicker()

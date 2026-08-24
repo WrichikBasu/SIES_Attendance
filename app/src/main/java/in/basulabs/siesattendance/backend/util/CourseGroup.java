@@ -20,6 +20,7 @@ import java.util.Set;
  */
 public class CourseGroup {
 
+	/** What the group is called on the sheet. Supplied by the user, and not required to be unique. */
 	@NonNull
 	public String name;
 
@@ -34,15 +35,25 @@ public class CourseGroup {
 		this.name = name;
 	}
 
+	/**
+	 * Whether the group would contribute anything. An empty group is not an error, since one is
+	 * created the moment the user adds a row and before they have chosen any courses; it is
+	 * simply skipped when the sheet is written.
+	 */
 	public boolean isUsable() {
 		return !courseCodes.isEmpty();
 	}
 
+	/** The member courses as a single line, for the summary shown under the group's name. */
 	@NonNull
 	public String describeCourses() {
 		return String.join(", ", courseCodes);
 	}
 
+	/**
+	 * An empty, mutable list of groups, for the common case of an export with no grouping. A new
+	 * list each time rather than a shared constant, because callers add to what they are given.
+	 */
 	@NonNull
 	public static List<CourseGroup> none() {
 		return new ArrayList<>();

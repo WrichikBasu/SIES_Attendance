@@ -21,6 +21,10 @@ import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.frontend.adapter.AdapterBatch;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
+/**
+ * The batches tab of the courses hub. Lists the batches in the current session, and is the way
+ * into the batch editor for both creating and editing.
+ */
 public class FragmentBatchList extends Fragment {
 
 	private AttendanceViewModel viewModel;

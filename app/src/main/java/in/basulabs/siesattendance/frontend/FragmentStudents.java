@@ -47,6 +47,14 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel.Student
 /**
  * The students screen. Holds three entry points: manual add, CSV import, and the class filter
  * that turns "SY BSc CS" into a student list.
+ * <p>
+ * The filters and the class chips live in an {@link AdapterHeader} in front of the list, so the
+ * whole screen scrolls as one piece while the rows still recycle. The header is created
+ * asynchronously, which is why the most recent results are kept in the {@code last} fields and
+ * replayed into it once it exists.
+ * <p>
+ * The class chips are built from the students actually enrolled rather than from every possible
+ * combination, so the screen only ever offers classes that exist.
  */
 public class FragmentStudents extends Fragment {
 
@@ -178,6 +186,7 @@ public class FragmentStudents extends Fragment {
 	}
 
 
+	/** Wires the search box. Search composes with the filters rather than replacing them. */
 	private void setupSearchIn(@NonNull View view) {
 		TextInputEditText search = view.findViewById(R.id.etSearch);
 
@@ -239,6 +248,10 @@ public class FragmentStudents extends Fragment {
 		binding = false;
 	}
 
+	/**
+	 * Fills the session dropdown. Switching session changes which enrolments are in view, so it
+	 * re-runs the query and rebuilds the class chips.
+	 */
 	private void bindSessions(@NonNull List<EntityAcademicYear> loaded) {
 
 		binding = true;
@@ -289,6 +302,7 @@ public class FragmentStudents extends Fragment {
 		}
 	}
 
+	/** Loads the batches for the chosen session, so membership can be used as a filter. */
 	private void loadBatches() {
 		viewModel.loadBatchesForStudentFilter(loaded -> {
 			if (!isAdded()) {
@@ -322,6 +336,7 @@ public class FragmentStudents extends Fragment {
 		});
 	}
 
+	/** Re-runs the student query with the current filters. A no-op while {@link #binding} is set. */
 	private void rerun() {
 		if (!binding) {
 			viewModel.refreshStudents();
@@ -441,6 +456,7 @@ public class FragmentStudents extends Fragment {
 		}
 	}
 
+	/** Whether anything beyond the session is narrowing the list, which the clear button follows. */
 	private boolean hasActiveFilter() {
 		return viewModel.getFilterYear() != null
 				|| viewModel.getFilterStream() != null
@@ -498,6 +514,10 @@ public class FragmentStudents extends Fragment {
 
 	// ── CSV import ───────────────────────────────────────────────────────
 
+	/**
+	 * Confirms before importing, since an import writes into the chosen session and a file picked
+	 * by mistake is easier to prevent than to unpick.
+	 */
 	private void confirmImport(@NonNull Uri uri) {
 		new AlertDialog.Builder(requireContext())
 				.setTitle(R.string.dialog_import_title)
@@ -553,6 +573,7 @@ public class FragmentStudents extends Fragment {
 				.show();
 	}
 
+	/** Explains the expected columns and offers the template, which is the usual first question. */
 	private void showFormatHelp() {
 		new AlertDialog.Builder(requireContext())
 				.setTitle(R.string.dialog_csv_format_title)

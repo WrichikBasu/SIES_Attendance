@@ -18,6 +18,16 @@ public final class EnumLookup {
 	private EnumLookup() {
 	}
 
+	/**
+	 * Finds the constant a string refers to, or null when none of them do.
+	 * <p>
+	 * Both exact passes run before the loose one, over the whole set each time. Doing it the
+	 * other way round would let a loose match on an early constant win over an exact match on a
+	 * later one, which for {@code Stream} is the difference between "BSc" resolving to
+	 * {@code BSc} and resolving to {@code BSc_unaided}.
+	 *
+	 * @param raw whitespace is trimmed; null and blank both yield null
+	 */
 	@Nullable
 	public static <E extends Enum<E>> E find(@NonNull Class<E> type, @Nullable String raw) {
 

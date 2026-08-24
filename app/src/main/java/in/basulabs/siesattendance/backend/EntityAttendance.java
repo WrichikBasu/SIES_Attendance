@@ -7,6 +7,14 @@ import androidx.room.Index;
 
 /**
  * Represents one attendance record. Each student, per lecture, will get one attendance record.
+ * <p>
+ * The composite primary key of lecture and student is what makes marking idempotent: saving a
+ * sheet twice overwrites the same rows rather than doubling them up. Sheets are always written
+ * whole, through {@code DaoAttendance.saveSheet}, so a partially recorded lecture cannot exist.
+ * <p>
+ * A missing row is not the same as an absence. It means the student was never on the sheet at
+ * all, which is why the export counts lectures held rather than attendance rows when working
+ * out a denominator.
  */
 @Entity(tableName = EntityAttendance.TABLE_NAME,
 		primaryKeys = {"lectureID", "studentID"},
@@ -33,6 +41,11 @@ public class EntityAttendance {
 
 	public long studentID;
 
+	/**
+	 * True when the student was marked present. There is no third state: a sheet starts with
+	 * everyone present and the professor taps the absentees, so every student on a saved sheet
+	 * carries a definite answer.
+	 */
 	public boolean present;
 
 	public EntityAttendance(long lectureID, long studentID, boolean present) {

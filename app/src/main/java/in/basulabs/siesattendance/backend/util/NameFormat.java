@@ -10,8 +10,13 @@ import java.util.Locale;
  * <p>
  * Names arrive from CSV imports in whatever case the college office typed them, which in
  * practice means a mix of ALL CAPS, all lowercase and correct case within the same file. These
- * helpers normalise for display only — the stored value is left exactly as entered, so nothing
- * is lost if the formatting guesses wrong.
+ * helpers normalise for display only. The stored value is left exactly as entered, so nothing is
+ * lost if the formatting guesses wrong, and a name can still be matched against the office's own
+ * records later.
+ * <p>
+ * No attempt is made at the harder cases. A surname such as "McDonald" comes out "Mcdonald", and
+ * particles like "van" are capitalised. Handling those properly needs a dictionary and would
+ * still get some names wrong, only less predictably.
  */
 public final class NameFormat {
 
@@ -102,6 +107,10 @@ public final class NameFormat {
 		return (first + last).toUpperCase(Locale.getDefault());
 	}
 
+	/**
+	 * The first letter of a word, skipping any leading punctuation, or an empty string when the
+	 * word has no letters in it at all.
+	 */
 	@NonNull
 	private static String firstLetter(@NonNull String part) {
 		for (int i = 0; i < part.length(); i++) {
@@ -112,6 +121,10 @@ public final class NameFormat {
 		return "";
 	}
 
+	/**
+	 * Characters that begin a new part of a name. The full stop is included so an initial
+	 * written "a.k. sharma" capitalises after the dot.
+	 */
 	private static boolean isSeparator(char c) {
 		return Character.isWhitespace(c) || c == '-' || c == '\'' || c == '.';
 	}

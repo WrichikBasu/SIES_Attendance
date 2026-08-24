@@ -9,6 +9,10 @@ import androidx.room.Update;
 
 import java.util.List;
 
+/**
+ * Professors. Small and mostly unremarkable, with one deliberate omission: see the note at the
+ * foot of the class.
+ */
 @Dao
 public abstract class DaoProfessor {
 
@@ -34,6 +38,10 @@ public abstract class DaoProfessor {
 	@Query("SELECT COUNT(*) FROM professors")
 	public abstract int countSync();
 
+	/**
+	 * How many courses name this professor. Used to warn before an edit that would change who a
+	 * body of teaching is attributed to.
+	 */
 	@Query("SELECT COUNT(*) FROM courses WHERE profID = :profID")
 	public abstract int countCourses(long profID);
 

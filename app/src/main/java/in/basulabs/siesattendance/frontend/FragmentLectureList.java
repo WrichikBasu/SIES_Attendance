@@ -54,6 +54,11 @@ public class FragmentLectureList extends Fragment {
 
 	private TextView windowLabel, emptyMessage, countLabel;
 
+	/**
+	 * Loaded once and kept, because the filter chooser needs them synchronously when the user
+	 * opens it. Empty until the load returns, which only suppresses the session and month
+	 * options until then.
+	 */
 	private List<EntityAcademicYear> sessions = new ArrayList<>();
 
 	@Nullable
@@ -116,6 +121,10 @@ public class FragmentLectureList extends Fragment {
 		observe();
 	}
 
+	/**
+	 * The list and its heading follow the same window, which lives in the ViewModel rather than
+	 * here so the filter survives the tab being swiped away and back.
+	 */
 	private void observe() {
 
 		viewModel.getFilteredLectures().observe(getViewLifecycleOwner(), lectures -> {
@@ -168,6 +177,7 @@ public class FragmentLectureList extends Fragment {
 				.show();
 	}
 
+	/** Narrows to one session, using the dates on the session row rather than assuming any. */
 	private void chooseSession() {
 
 		if (sessions.isEmpty()) {
@@ -234,6 +244,7 @@ public class FragmentLectureList extends Fragment {
 				.show();
 	}
 
+	/** An arbitrary pair of dates, for the cases the session and month presets do not cover. */
 	private void chooseCustomRange() {
 
 		MaterialDatePicker<androidx.core.util.Pair<Long, Long>> picker =

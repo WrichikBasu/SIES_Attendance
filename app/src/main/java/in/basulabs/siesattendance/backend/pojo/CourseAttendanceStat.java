@@ -4,6 +4,11 @@ import androidx.annotation.NonNull;
 
 /**
  * Per-course attendance aggregate across all its lectures.
+ * <p>
+ * {@code totalRecords} counts attendance rows, whereas {@code lectureCount} counts the lectures
+ * themselves, so the two answer different questions: how much attendance was recorded against
+ * the course, and how many times it actually met. A course with lectures but no records has the
+ * second without the first, which is how an unmarked course shows up.
  */
 public class CourseAttendanceStat {
 
@@ -32,6 +37,7 @@ public class CourseAttendanceStat {
 		this.lectureCount = lectureCount;
 	}
 
+	/** Attendance across the course as a whole, or zero when nothing has been marked yet. */
 	public double percentage() {
 		if (totalRecords == 0) {
 			return 0d;

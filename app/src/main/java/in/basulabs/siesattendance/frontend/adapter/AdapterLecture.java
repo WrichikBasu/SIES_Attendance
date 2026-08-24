@@ -17,6 +17,13 @@ import java.time.format.DateTimeFormatter;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
 
+/**
+ * The lecture list, used by the dashboard, the courses hub and the attendance picker.
+ * <p>
+ * The status chip is the point of the row: it says whether attendance has been taken and, if so,
+ * how many were present. A lecture with no sheet reads as pending rather than as nobody
+ * attending.
+ */
 public class AdapterLecture extends ListAdapter<LectureDetails, AdapterLecture.Holder> {
 
 	public interface OnClick {

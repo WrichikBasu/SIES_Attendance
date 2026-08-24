@@ -10,6 +10,10 @@ import androidx.room.Ignore;
  * <p>
  * One batch can have multiple students, and one student can be enrolled in multiple batches. There
  * may be more than one such batch for a student in a given academic year.
+ * <p>
+ * The row carries nothing beyond the three key columns, so membership is rewritten wholesale
+ * rather than diffed whenever a batch is edited: there is no per-row state that clearing and
+ * reinserting would lose. {@code DaoBatch.updateBatch} does exactly that.
  */
 @Entity(tableName = EntityBatchStudentMap.TABLE_NAME,
 		primaryKeys = {"batchID", "studentID", "academicYear"},

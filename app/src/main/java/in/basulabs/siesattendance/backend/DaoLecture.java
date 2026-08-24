@@ -13,6 +13,17 @@ import java.util.List;
 
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
 
+/**
+ * Lectures, along with the joined view of them that every list in the app displays.
+ * <p>
+ * Anything selecting a lecture for display goes through {@link #DETAILS_SELECT} rather than
+ * {@code SELECT *}, because a lecture on its own shows nothing worth reading: the course code,
+ * the batch name and the marked and present counts all come from elsewhere.
+ * <p>
+ * Date filtering is awkward here and appears in several queries. Timestamps are stored as
+ * "epochSecond|nano|zone", so the leading integer has to be sliced out and cast before it can be
+ * compared as a number.
+ */
 @Dao
 public abstract class DaoLecture {
 
@@ -22,6 +33,14 @@ public abstract class DaoLecture {
 	@Delete
 	public abstract void delete(EntityLecture lecture);
 
+	/**
+	 * The shared projection behind every {@link LectureDetails} query.
+	 * <p>
+	 * The batch join is LEFT because a whole-class lecture has no batch, and an INNER join would
+	 * silently drop exactly those lectures. The two counts are correlated subqueries rather than
+	 * joins onto {@code attendance}, which keeps one row per lecture; joining would multiply the
+	 * lecture out by its attendance rows and make every other column wrong.
+	 */
 	public static final String DETAILS_SELECT =
 			"SELECT l.lectureID, l.courseID, l.batchID, c.courseCode, c.courseTopic, " +
 					"b.batchName, l.startDateTime, l.endDateTime, l.notes, " +
@@ -33,6 +52,10 @@ public abstract class DaoLecture {
 					"INNER JOIN courses c ON c.courseID = l.courseID " +
 					"LEFT JOIN batch_desc b ON b.batchID = l.batchID ";
 
+	/**
+	 * Every lecture on record, newest first. Ordering on the stored string works here because
+	 * the epoch prefix is fixed-width for any date this app will see.
+	 */
 	@Query(DETAILS_SELECT + "ORDER BY l.startDateTime DESC")
 	public abstract LiveData<List<LectureDetails>> getAllDetails();
 
@@ -59,6 +82,7 @@ public abstract class DaoLecture {
 	@Query(DETAILS_SELECT + "WHERE l.courseID = :courseID ORDER BY l.startDateTime DESC")
 	public abstract LiveData<List<LectureDetails>> getDetailsForCourse(long courseID);
 
+	/** How many lectures fall in a window. Used for the dashboard counts. */
 	@Query("SELECT COUNT(*) FROM lectures WHERE " +
 			"CAST(SUBSTR(startDateTime, 1, INSTR(startDateTime, '|') - 1) AS INTEGER) " +
 			"BETWEEN :fromEpoch AND :toEpoch")
@@ -67,6 +91,13 @@ public abstract class DaoLecture {
 	@Query("SELECT * FROM lectures WHERE lectureID = :lectureID")
 	public abstract EntityLecture getByIdSync(long lectureID);
 
+	/**
+	 * Rewrites a lecture in place, keeping its ID and therefore its attendance sheet.
+	 * <p>
+	 * Moving a lecture to a different course or batch can leave marks against students who are
+	 * not on the new roll. {@code DaoAttendance.deleteForLectureExcept} is the other half of
+	 * that operation, and the edit path calls both.
+	 */
 	@Query("UPDATE lectures SET courseID = :courseID, batchID = :batchID, " +
 			"startDateTime = :start, endDateTime = :end, notes = :notes " +
 			"WHERE lectureID = :lectureID")

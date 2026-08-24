@@ -25,6 +25,9 @@ import java.util.zip.ZipOutputStream;
  * Only what the attendance sheet needs is implemented: several sheets, string and number cells,
  * and named cell styles for shading. There are no formulas or merged cells. It opens in
  * LibreOffice, Excel, Google Sheets and Collabora.
+ * <p>
+ * The document is built up in memory and serialised in {@link #writeTo}, so nothing is written
+ * until the whole workbook is known. Rows are appended to whichever sheet was started last.
  */
 public final class OdsWriter {
 
@@ -49,6 +52,7 @@ public final class OdsWriter {
 			this.styleName = style;
 		}
 
+		/** A text cell. A null value is written as an empty cell rather than the word "null". */
 		@NonNull
 		public static Cell text(@Nullable String value, @Nullable String style) {
 			return new Cell(value == null ? "" : value, null, style);
@@ -64,6 +68,10 @@ public final class OdsWriter {
 			return new Cell(shown, value, style);
 		}
 
+		/**
+		 * A blank cell. Distinct from a zero: the sheet uses these for courses a student does not
+		 * take, where a zero would read as a course they attended none of.
+		 */
 		@NonNull
 		public static Cell empty() {
 			return new Cell("", null, null);
@@ -133,6 +141,7 @@ public final class OdsWriter {
 		return candidate;
 	}
 
+	/** Whether a sheet of this name has already been started. */
 	private boolean nameTaken(@NonNull String name) {
 		for (Sheet sheet : sheets) {
 			if (sheet.name.equals(name)) {
@@ -175,10 +184,15 @@ public final class OdsWriter {
 		styles.put(name, xml.toString());
 	}
 
+	/**
+	 * Appends a row to the sheet most recently started. Rows need not be the same length; the
+	 * table is declared as wide as the widest one when the document is written.
+	 */
 	public void addRow(@NonNull List<Cell> cells) {
 		sheets.get(sheets.size() - 1).rows.add(cells);
 	}
 
+	/** A spacer row, used to separate the heading block from the table beneath it. */
 	public void addBlankRow() {
 		sheets.get(sheets.size() - 1).rows.add(new ArrayList<>());
 	}
@@ -213,6 +227,7 @@ public final class OdsWriter {
 		zip.flush();
 	}
 
+	/** Adds one deflated UTF-8 part to the package. */
 	private void put(@NonNull ZipOutputStream zip, @NonNull String name, @NonNull String body)
 			throws IOException {
 		zip.putNextEntry(new ZipEntry(name));
@@ -220,6 +235,10 @@ public final class OdsWriter {
 		zip.closeEntry();
 	}
 
+	/**
+	 * The package manifest, which lists the parts. A reader that cannot find a part listed here
+	 * rejects the file, so this has to be kept in step with what {@link #writeTo} actually adds.
+	 */
 	@NonNull
 	private String manifest() {
 		return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -235,6 +254,10 @@ public final class OdsWriter {
 				+ "</manifest:manifest>";
 	}
 
+	/**
+	 * An empty styles part. ODF expects the file to exist even when every style is defined
+	 * inline in the content, and the cell styles here are all automatic styles.
+	 */
 	@NonNull
 	private String stylesPart() {
 		return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -246,6 +269,7 @@ public final class OdsWriter {
 				+ "office:version=\"1.2\"><office:styles/></office:document-styles>";
 	}
 
+	/** The spreadsheet itself: the style declarations, then a table per sheet. */
 	@NonNull
 	private String content() {
 
@@ -296,6 +320,10 @@ public final class OdsWriter {
 		return xml.toString();
 	}
 
+	/**
+	 * Writes one cell. A cell with neither text nor a number is written as a self-closing
+	 * element, which is what keeps a sheet full of blanks from bloating the file.
+	 */
 	private void appendCell(@NonNull StringBuilder xml, @NonNull Cell cell) {
 
 		xml.append("<table:table-cell");

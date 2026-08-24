@@ -84,6 +84,10 @@ public class FragmentExport extends Fragment {
 
 	private MaterialButton runExport;
 
+	/**
+	 * The defaulter line, or {@code AttendanceExporter.NO_THRESHOLD} for no shading at all.
+	 * Defaults to the 75% most universities use.
+	 */
 	private int thresholdPercent = 75;
 
 	private static final DateTimeFormatter DATE_LABEL =
@@ -132,6 +136,10 @@ public class FragmentExport extends Fragment {
 
 	// ── Dates ────────────────────────────────────────────────────────────
 
+	/**
+	 * The date window, which narrows the lectures counted and so changes the figures in the
+	 * cells. Distinct from the course list, which changes only which columns appear.
+	 */
 	private void bindDates(@NonNull View view) {
 
 		TextInputLayout fromLayout = view.findViewById(R.id.tilFrom);
@@ -188,6 +196,7 @@ public class FragmentExport extends Fragment {
 
 	// ── Courses ──────────────────────────────────────────────────────────
 
+	/** The course picker, with its search box and select-all covering whatever the search leaves. */
 	private void bindCourses(@NonNull View view) {
 
 		RecyclerView list = view.findViewById(R.id.rvCourses);
@@ -241,6 +250,10 @@ public class FragmentExport extends Fragment {
 		});
 	}
 
+	/**
+	 * Keeps the groups and the summary in step with the selection. Groups are rebuilt from the
+	 * courses now in scope, so one can never total a course the export does not cover.
+	 */
 	private void onCourseSelectionChanged() {
 
 		filter.courseIDs.clear();
@@ -276,6 +289,7 @@ public class FragmentExport extends Fragment {
 
 	// ── Threshold ────────────────────────────────────────────────────────
 
+	/** The defaulter threshold control, including the entry that turns shading off entirely. */
 	private void bindThreshold(@NonNull View view) {
 
 		ChipGroup group = view.findViewById(R.id.cgThreshold);
@@ -300,6 +314,11 @@ public class FragmentExport extends Fragment {
 
 	// ── Groups ───────────────────────────────────────────────────────────
 
+	/**
+	 * The course groups, each of which becomes its own sheet with its own total and defaulter
+	 * list. A group's percentage is not derivable from the overall one, which is why they are
+	 * computed separately rather than summarised from the main sheet.
+	 */
 	private void bindGroups(@NonNull View view) {
 
 		RecyclerView list = view.findViewById(R.id.rvGroups);
@@ -334,6 +353,7 @@ public class FragmentExport extends Fragment {
 
 	// ── Summary and run ──────────────────────────────────────────────────
 
+	/** Restates what the export will actually contain, so the scope is visible before it is run. */
 	private void refreshSummary() {
 
 		StringBuilder out = new StringBuilder(filter.describe());
@@ -357,6 +377,7 @@ public class FragmentExport extends Fragment {
 		scopeSummary.setText(out.toString());
 	}
 
+	/** Runs the export off the main thread; the file can take a moment to assemble and write. */
 	private void startExport(@NonNull Uri destination) {
 
 		// Empty groups would produce empty sheets. Dropped rather than refused: leaving one
@@ -375,6 +396,7 @@ public class FragmentExport extends Fragment {
 		viewModel.exportAttendanceSheet(destination, thresholdPercent, usable, filter);
 	}
 
+	/** Reports what was written, or why nothing was. */
 	private void observeResult() {
 
 		viewModel.getExportResult().observe(getViewLifecycleOwner(), summary -> {

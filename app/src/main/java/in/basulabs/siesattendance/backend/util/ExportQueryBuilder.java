@@ -29,6 +29,19 @@ public final class ExportQueryBuilder {
 	private ExportQueryBuilder() {
 	}
 
+	/**
+	 * Builds the query behind {@code DaoAttendance.getExportRowsSync}: one row per student per
+	 * course they are on the roll for, with lectures held and lectures attended.
+	 * <p>
+	 * The join from students to courses repeats the roster condition from
+	 * {@code DaoStudent.getRollForCourseSync}. The two have to agree, since a student who counts
+	 * as taking a course in one and not the other would appear on a sheet without appearing in
+	 * the report, or the reverse.
+	 * <p>
+	 * Argument order is the thing to be careful about here. The arguments are positional and the
+	 * subqueries are appended ahead of the FROM clause they refer to, so each block adds its own
+	 * arguments immediately after appending its SQL rather than all of them at the end.
+	 */
 	@NonNull
 	public static SupportSQLiteQuery build(int academicYear, @NonNull ExportFilter filter) {
 
@@ -130,6 +143,10 @@ public final class ExportQueryBuilder {
 		return date.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toEpochSecond() - 1;
 	}
 
+	/**
+	 * Adds an {@code IN} restriction for a set of IDs, or nothing at all when the set is empty.
+	 * An empty set means no restriction, never an empty {@code IN ()}, which SQLite would reject.
+	 */
 	private static void appendIn(@NonNull StringBuilder sql, @NonNull List<Object> args,
 	                             @NonNull String column, @NonNull Set<Long> values) {
 
@@ -159,6 +176,7 @@ public final class ExportQueryBuilder {
 		}
 	}
 
+	/** A comma-separated run of {@code ?} placeholders, one per value being bound. */
 	@NonNull
 	private static String placeholders(int count) {
 

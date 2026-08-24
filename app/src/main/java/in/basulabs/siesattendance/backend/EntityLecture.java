@@ -17,8 +17,14 @@ import java.time.ZonedDateTime;
  * every row here is a session that actually happened.
  * <p>
  * {@code batchID} is nullable. A null batch means the lecture was held for the course's whole
- * class — the students of that year, stream and department who take the course. A non-null
- * batch narrows it to that batch's members, which is what practicals need.
+ * class, meaning the students of that year, stream and department who take the course. A
+ * non-null batch narrows it to that batch's members, which is what practicals need.
+ * <p>
+ * There is no academic year column. A lecture's session is worked out from its start time,
+ * matched against the bounds in {@link EntityAcademicYear}, so a lecture cannot end up filed
+ * under a session its date contradicts. The cost is that a lecture held outside every defined
+ * session belongs to none of them and drops out of the reports entirely, which is what
+ * {@code DaoAcademicYear.countOrphanLectures} exists to surface.
  */
 @Entity(tableName = EntityLecture.TABLE_NAME,
 		indices = {
@@ -50,18 +56,29 @@ public class EntityLecture {
 
 	public long courseID;
 
+	// The unique index over course, batch and time span is what stops the same session being
+	// recorded twice. It does not catch whole-class lectures on its own, since SQLite treats
+	// NULLs in an index as distinct; DaoLecture.findExisting handles that case explicitly.
+
 	/**
 	 * Null when the lecture was taken for the whole class rather than a single batch.
 	 */
 	@Nullable
 	public Long batchID;
 
+	/**
+	 * Start and end of the session, stored through {@code TypeConvertors} as
+	 * "epochSecond|nano|zone". Queries that compare against them have to slice out the leading
+	 * integer and cast it, which is what {@code SqlBits.EPOCH_START} is for; comparing the
+	 * stored string directly would sort lexicographically.
+	 */
 	@NonNull
 	public ZonedDateTime startDateTime;
 
 	@NonNull
 	public ZonedDateTime endDateTime;
 
+	/** Free text about the session itself, such as the topic covered or a room change. */
 	@Nullable
 	public String notes;
 

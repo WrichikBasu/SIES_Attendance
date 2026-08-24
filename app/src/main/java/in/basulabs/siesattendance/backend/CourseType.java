@@ -13,11 +13,31 @@ import androidx.annotation.Nullable;
  */
 public enum CourseType {
 
+	/** Taken by students majoring in the offering department. */
 	MAJOR("Major"),
+
+	/**
+	 * Taken as a secondary subject. The roll for a minor course also admits students whose
+	 * major is the offering department, because the minor field on the student form is
+	 * optional and often left blank; see the roster query in {@code DaoStudent} for why.
+	 */
 	MINOR("Minor"),
+
+	/** The laboratory half of a major course, following the same department condition. */
 	MAJOR_PRACTICALS("Major practicals"),
+
+	/** The laboratory half of a minor course, following the same department condition. */
 	MINOR_PRACTICALS("Minor practicals"),
+
+	/** Open elective, matched against the student's declared OE department. */
 	OE("OE"),
+
+	/*
+	 * The types below are taken by a whole year and stream regardless of department, so no
+	 * department condition applies to them at all. They are the ones that have to be listed
+	 * explicitly in the roster query.
+	 */
+
 	VSC("VSC"),
 	VSC_PRACTICALS("VSC practicals"),
 	SEC("SEC"),
@@ -38,6 +58,10 @@ public enum CourseType {
 		return label;
 	}
 
+	/**
+	 * Resolves a course type from stored data or user input, accepting the constant name or the
+	 * display label. Returns null when nothing matches.
+	 */
 	@Nullable
 	public static CourseType fromAny(@Nullable String raw) {
 		return EnumLookup.find(CourseType.class, raw);

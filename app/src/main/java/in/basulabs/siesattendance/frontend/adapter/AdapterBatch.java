@@ -13,8 +13,15 @@ import androidx.recyclerview.widget.RecyclerView;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
 
+/**
+ * The batch list, one row per batch in the chosen session.
+ * <p>
+ * The description is optional, so the second line falls back to the session on its own rather
+ * than leaving a dangling separator.
+ */
 public class AdapterBatch extends ListAdapter<EntityBatchDesc, AdapterBatch.Holder> {
 
+	/** Tap to edit the batch and its membership, hold to delete it. */
 	public interface OnAction {
 		void onEdit(EntityBatchDesc batch);
 

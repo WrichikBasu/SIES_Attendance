@@ -25,8 +25,8 @@ public final class StatsQueryBuilder {
 	 * than from whichever session the user happens to be looking at.
 	 * <p>
 	 * {@code student_year} is joined on that resolved session, so a student appears under the
-	 * roll number and class they held <em>at the time of the lecture</em> — which is what makes
-	 * a report for a past year read correctly after the student has been promoted.
+	 * roll number and class they held <em>at the time of the lecture</em>. That is what makes a
+	 * report for a past year read correctly after the student has been promoted.
 	 * <p>
 	 * The session join is INNER by design: a lecture outside every defined session has no
 	 * session to be counted in, and silently attributing it to a neighbouring one would be
@@ -50,6 +50,9 @@ public final class StatsQueryBuilder {
 
 	/**
 	 * The grouped report: one row per value of the chosen dimension.
+	 * <p>
+	 * The two DISTINCT counts matter. Attendance is one row per student per lecture, so a plain
+	 * count of lectures would multiply each one by the size of its sheet.
 	 */
 	@NonNull
 	public static SupportSQLiteQuery grouped(@NonNull StatsFilter filter) {
@@ -73,6 +76,10 @@ public final class StatsQueryBuilder {
 
 	/**
 	 * The headline figures for the same filter: one row, no grouping.
+	 * <p>
+	 * Shares {@link #FROM_CLAUSE} and {@link #whereClause} with the grouped query, which is the
+	 * point: the totals shown above a report are computed from exactly the same rows as the
+	 * report itself, and cannot drift from it.
 	 */
 	@NonNull
 	public static SupportSQLiteQuery summary(@NonNull StatsFilter filter) {
@@ -175,6 +182,13 @@ public final class StatsQueryBuilder {
 		return where.toString();
 	}
 
+	/**
+	 * The ORDER BY body. Built from the enum alone, with nothing bound, since sort order is a
+	 * fixed choice rather than a value.
+	 * <p>
+	 * Every branch falls back to the primary label as a tiebreak, so a report does not reshuffle
+	 * rows that compare equal each time it is refreshed.
+	 */
 	@NonNull
 	private static String orderByClause(@NonNull StatsFilter filter) {
 

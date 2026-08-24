@@ -12,6 +12,21 @@ import java.io.File;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+/**
+ * The Room database, and the single place that decides where it lives on disk.
+ * <p>
+ * Room is built against device-protected storage rather than the usual credential-protected
+ * directory, so the app is usable after a reboot before the user has unlocked the device.
+ * Everything that has to find the file itself has to resolve it under the same context, which
+ * is what {@link #storageContext} is for: an ordinary application context points at a different
+ * directory and would report, quite truthfully and quite uselessly, that no database exists
+ * there.
+ * <p>
+ * Beyond the usual singleton, this class carries the handful of operations the backup and
+ * restore paths need, none of which fit in a DAO because they act on the database as a file
+ * rather than on its contents: {@link #checkpoint}, {@link #databaseFile}, {@link #openStaging}
+ * and {@link #closeInstance}.
+ */
 @Database(entities = {
 		EntityStudent.class,
 		EntityStudentYear.class,
@@ -35,6 +50,12 @@ public abstract class MainDatabase extends RoomDatabase {
 	 */
 	public static final ExecutorService DB_EXECUTOR = Executors.newFixedThreadPool(4);
 
+	/**
+	 * The live database, opened on first use. Synchronised rather than double-checked because
+	 * this is called once per screen at most, and a restore can null the field out from under a
+	 * concurrent caller.
+	 */
+	@NonNull
 	public static synchronized MainDatabase getInstance(@NonNull Context context) {
 
 		if (self == null) {
@@ -79,7 +100,7 @@ public abstract class MainDatabase extends RoomDatabase {
 	 * <p>
 	 * {@link #getInstance} builds Room against device-protected storage so the app works
 	 * before the user unlocks the device after a reboot. Anything that needs to find the file
-	 * on disk has to look under the same context — a plain application context resolves to a
+	 * on disk has to look under the same context. A plain application context resolves to a
 	 * different directory and would silently report that no database exists.
 	 */
 	@NonNull
@@ -131,6 +152,11 @@ public abstract class MainDatabase extends RoomDatabase {
 			self = null;
 		}
 	}
+
+	/*
+	 * The DAOs. Room generates the implementations; the split between them follows the tables
+	 * rather than the screens, so a screen that needs students and lectures asks both.
+	 */
 
 	public abstract DaoStudent daoStudent();
 

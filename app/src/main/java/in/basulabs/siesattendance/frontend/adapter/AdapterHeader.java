@@ -35,6 +35,7 @@ public class AdapterHeader extends RecyclerView.Adapter<AdapterHeader.Holder> {
 		this.header = header;
 	}
 
+	/** The header view, so the fragment can find its children and keep them up to date. */
 	@NonNull
 	public View header() {
 		return header;

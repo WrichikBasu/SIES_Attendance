@@ -6,6 +6,9 @@ import in.basulabs.siesattendance.backend.util.NameFormat;
 
 /**
  * Per-student attendance aggregate, used by the statistics screen.
+ * <p>
+ * Counts attendance rows rather than lectures held, so a student who was left off a sheet is
+ * not counted absent for it. The export deliberately does the opposite; see {@code ExportRow}.
  */
 public class StudentAttendanceStat {
 
@@ -44,6 +47,9 @@ public class StudentAttendanceStat {
 
 	/**
 	 * Most Indian universities require 75% attendance. This flags students below that line.
+	 * <p>
+	 * The threshold is fixed here, unlike on the statistics screen, where {@code StatsFilter}
+	 * makes it adjustable. This one backs the simpler lists, which have nowhere to set it.
 	 */
 	public boolean isShort() {
 		return totalLectures > 0 && percentage() < 75d;

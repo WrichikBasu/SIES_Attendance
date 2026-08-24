@@ -33,6 +33,7 @@ public class StudentCourseStat {
 		return totalLectures == 0 ? 0d : (attended * 100d) / totalLectures;
 	}
 
+	/** Below the usual 75% requirement, using the same fixed threshold as the per-student view. */
 	public boolean isShort() {
 		return totalLectures > 0 && percentage() < 75d;
 	}

@@ -198,6 +198,10 @@ public class FragmentEditBatch extends Fragment {
 				});
 	}
 
+	/**
+	 * Wires the search box. Search narrows what is shown and never touches the selection, so a
+	 * student ticked before the search stays ticked after it.
+	 */
 	private void setupSearch() {
 		etSearch.addTextChangedListener(new TextWatcher() {
 			@Override
@@ -217,6 +221,11 @@ public class FragmentEditBatch extends Fragment {
 
 	// ── Loading ──────────────────────────────────────────────────────────
 
+	/**
+	 * Loads the students for the session and, when editing, the batch and its current membership.
+	 * Both arrive asynchronously, which is why {@link #loadedBatch} is held for a header that may
+	 * not exist yet.
+	 */
 	private void load() {
 		viewModel.loadBatchEditor(batchID, (batch, students, memberIDs) -> {
 			if (!isAdded()) {
@@ -247,6 +256,7 @@ public class FragmentEditBatch extends Fragment {
 
 	// ── Selection ────────────────────────────────────────────────────────
 
+	/** Records a tick against {@link #selected}, which spans everyone rather than the visible rows. */
 	private void onStudentToggled(long studentID, boolean isSelected) {
 		if (isSelected) {
 			selected.add(studentID);
@@ -280,6 +290,10 @@ public class FragmentEditBatch extends Fragment {
 		updateCount();
 	}
 
+	/**
+	 * The students the current filters and search leave on screen. The "show selected only" chip
+	 * is applied here too, so it composes with the rest rather than overriding them.
+	 */
 	private List<StudentWithYear> visibleStudents() {
 
 		if (etSearch == null) {
@@ -318,6 +332,7 @@ public class FragmentEditBatch extends Fragment {
 		return visible;
 	}
 
+	/** Recomputes the visible list and hands it to the adapter along with the unchanged selection. */
 	private void applyFilter() {
 		List<StudentWithYear> visible = visibleStudents();
 		adapter.submit(visible, selected);
@@ -326,6 +341,7 @@ public class FragmentEditBatch extends Fragment {
 		}
 	}
 
+	/** Keeps the running total honest: it counts the whole selection, not the visible part of it. */
 	private void updateCount() {
 		save.setEnabled(!selected.isEmpty());
 		if (selectedCount == null) {
@@ -337,6 +353,12 @@ public class FragmentEditBatch extends Fragment {
 
 	// ── Save ─────────────────────────────────────────────────────────────
 
+	/**
+	 * Saves the batch and its membership together.
+	 * <p>
+	 * Membership is written wholesale rather than diffed, so the order of {@link #selected}
+	 * decides the insert order; it is a LinkedHashSet for exactly that reason.
+	 */
 	private void onSave(@NonNull View button) {
 
 		if (tilName != null) {

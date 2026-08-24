@@ -33,6 +33,11 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * <p>
  * The app bar is a MaterialToolbar in the layout rather than a window-decor action bar, so it
  * occupies real space above the fragment container instead of drawing over it.
+ * <p>
+ * There is one {@link AttendanceViewModel} for the whole app, scoped to this activity. Every
+ * fragment reaches it through {@code requireActivity()}, which is what lets a filter chosen on
+ * one screen still be in force on the next, and lets work started in a fragment report back
+ * after that fragment has gone.
  */
 public class ActivityHome extends AppCompatActivity {
 
@@ -126,6 +131,10 @@ public class ActivityHome extends AppCompatActivity {
 		});
 	}
 
+	/**
+	 * Shows the bottom bar only on the tab destinations. A detail or editor screen is somewhere
+	 * the user navigated into and should leave by going back, not by switching tabs.
+	 */
 	private void onDestinationChanged(@NonNull NavController controller,
 	                                  @NonNull NavDestination destination,
 	                                  @Nullable Bundle arguments) {
@@ -138,6 +147,10 @@ public class ActivityHome extends AppCompatActivity {
 	/**
 	 * All user-facing messages funnel through the ViewModel so background work started in one
 	 * fragment can still report back after that fragment has gone away.
+	 * <p>
+	 * The message is cleared as soon as it is shown. Without that it would be redelivered on
+	 * every configuration change, and a rotation would replay a snackbar the user had already
+	 * read and dismissed.
 	 */
 	private void observeToasts() {
 		viewModel.getToastMessage().observe(this, message -> {

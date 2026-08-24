@@ -69,7 +69,7 @@ public final class Migrations {
 	 * Version 2 to 3: adds the {@code academic_years} table.
 	 * <p>
 	 * The table is seeded so that no existing data becomes unreachable. Statistics join lectures
-	 * to sessions, so a lecture falling in no session would vanish from every report — the seed
+	 * to sessions, so a lecture falling in no session would vanish from every report. The seed
 	 * therefore covers three things:
 	 * <ol>
 	 *   <li>every {@code academicYear} value already referenced by students, batches and batch

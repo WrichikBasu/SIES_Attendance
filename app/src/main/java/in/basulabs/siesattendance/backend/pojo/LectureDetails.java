@@ -8,6 +8,9 @@ import java.time.ZonedDateTime;
 /**
  * A lecture joined with its course and batch names, plus a count of how many attendance rows
  * already exist for it. A count of zero means attendance has not been marked yet.
+ * <p>
+ * This is what every lecture list in the app displays. A bare {@code EntityLecture} carries only
+ * IDs and timestamps, none of which are worth showing on their own.
  */
 public class LectureDetails {
 
@@ -37,6 +40,10 @@ public class LectureDetails {
 	@Nullable
 	public String notes;
 
+	/**
+	 * How many students appear on the sheet, and how many of those were present. Both are
+	 * counted per lecture rather than joined, so they stay correct regardless of the roll size.
+	 */
 	public int markedCount;
 
 	public int presentCount;
@@ -59,6 +66,10 @@ public class LectureDetails {
 		this.presentCount = presentCount;
 	}
 
+	/**
+	 * Whether attendance has been taken. The lecture list uses this to separate sessions still
+	 * awaiting a sheet from those already recorded.
+	 */
 	public boolean isMarked() {
 		return markedCount > 0;
 	}

@@ -17,9 +17,20 @@ import java.time.format.DateTimeFormatter;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 
+/**
+ * The academic sessions list.
+ * <p>
+ * Content equality ignores the epoch bounds, since those are derived from the dates and cannot
+ * differ without them differing too. Comparing them as well would be harmless but misleading
+ * about where the truth lies.
+ */
 public class AdapterAcademicYear
 		extends ListAdapter<EntityAcademicYear, AdapterAcademicYear.Holder> {
 
+	/**
+	 * Tapping a row opens it for editing; holding it offers to delete. The same split is used by
+	 * the other list adapters in this package.
+	 */
 	public interface OnAction {
 		void onEdit(EntityAcademicYear year);
 
@@ -31,6 +42,10 @@ public class AdapterAcademicYear
 
 	private final OnAction listener;
 
+	/**
+	 * The session the app is currently working in, which gets a chip. Sentinel rather than a
+	 * boxed Integer, because no real session will ever carry this value.
+	 */
 	private int currentYear = Integer.MIN_VALUE;
 
 	private static final DiffUtil.ItemCallback<EntityAcademicYear> DIFF =

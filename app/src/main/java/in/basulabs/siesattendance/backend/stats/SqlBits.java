@@ -2,6 +2,10 @@ package in.basulabs.siesattendance.backend.stats;
 
 /**
  * Shared SQL fragments for the statistics queries.
+ * <p>
+ * Small, but worth having in one place: the expression below is repeated across the group-by
+ * definitions, the WHERE clause and the join to the sessions table, and a copy of it that drifted
+ * would produce a report that quietly disagreed with itself.
  */
 public final class SqlBits {
 

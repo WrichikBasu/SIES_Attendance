@@ -57,6 +57,10 @@ public class ExportFilter {
 	@NonNull
 	public final Set<Stream> streams = new LinkedHashSet<>();
 
+	/**
+	 * True when nothing has been narrowed. Worth checking before describing the filter, since
+	 * the honest description of an empty filter is a sentence rather than an empty string.
+	 */
 	public boolean isUnrestricted() {
 		return from == null && to == null && courseIDs.isEmpty() && departments.isEmpty()
 				&& years.isEmpty() && streams.isEmpty();
@@ -87,6 +91,10 @@ public class ExportFilter {
 		return out.toString();
 	}
 
+	/**
+	 * Appends one clause to the description, with a separator if anything precedes it. A null
+	 * value means the restriction is not in use and contributes nothing.
+	 */
 	private static void append(@NonNull StringBuilder out, @NonNull String label,
 	                           @Nullable String value) {
 
@@ -100,6 +108,10 @@ public class ExportFilter {
 		out.append(label).append(": ").append(value);
 	}
 
+	/**
+	 * The display labels of a set of enum values, comma separated, or null when the set is
+	 * empty. Labels rather than constant names, since this text is read by a person.
+	 */
 	@Nullable
 	private static String names(@NonNull Set<? extends Enum<?>> values) {
 

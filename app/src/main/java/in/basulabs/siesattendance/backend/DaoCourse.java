@@ -10,6 +10,13 @@ import androidx.room.Update;
 import java.time.ZonedDateTime;
 import java.util.List;
 
+/**
+ * Courses, and the links between courses and batches.
+ * <p>
+ * Two things are deliberately absent: there is no delete, and the batch lookup does not filter
+ * by course. Both are explained in the comments below, since in each case the obvious version
+ * was written first and caused a problem.
+ */
 @Dao
 public abstract class DaoCourse {
 
@@ -28,6 +35,10 @@ public abstract class DaoCourse {
 	 * marked with a discontinuation date instead, which the entity already supports.
 	 */
 
+	/**
+	 * Marks a course as no longer offered. This is what stands in for deletion: the row and
+	 * everything filed under it survive, and only the active listings drop it.
+	 */
 	@Query("UPDATE courses SET dateDiscontinued = :discontinuedOn WHERE courseID = :courseID")
 	public abstract void setDiscontinued(long courseID, ZonedDateTime discontinuedOn);
 
@@ -43,6 +54,10 @@ public abstract class DaoCourse {
 	@Query("SELECT * FROM courses WHERE courseID = :courseID")
 	public abstract EntityCourse getByIdSync(long courseID);
 
+	/**
+	 * Courses still being offered. This is what the pickers use, so a discontinued course
+	 * cannot have new lectures recorded against it while remaining visible in the reports.
+	 */
 	@Query("SELECT * FROM courses WHERE dateDiscontinued IS NULL ORDER BY courseCode ASC")
 	public abstract List<EntityCourse> getActiveSync();
 
@@ -66,8 +81,8 @@ public abstract class DaoCourse {
 	 * roll. That coupled the batch list to the roster's department matching, so a course whose
 	 * roster came back empty also offered no batches, and the same batch appeared or vanished
 	 * depending on the type of the course selected. A batch is just a named group of students
-	 * for a session — a practicals division, a tutorial group — and nothing about it belongs
-	 * to one course or one department.
+	 * for a session, a practicals division or a tutorial group, and nothing about it belongs to
+	 * one course or one department.
 	 *
 	 * The picker now lists every batch in the session, via DaoBatch.getAllForYearSync. Whoever
 	 * is taking attendance knows which batch is in front of them; the app does not need to

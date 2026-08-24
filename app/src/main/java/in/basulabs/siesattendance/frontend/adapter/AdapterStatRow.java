@@ -30,8 +30,13 @@ public class AdapterStatRow extends ListAdapter<StatRow, AdapterStatRow.Holder> 
 
 	private final OnRowClick listener;
 
+	/**
+	 * The grouping the current rows came from. Needed at bind time to decide which label holds a
+	 * name, which counts are worth showing, and whether a row can be tapped.
+	 */
 	private StatsGroupBy groupBy = StatsGroupBy.STUDENT;
 
+	/** The line below which a percentage is tinted as short. Set from the filter. */
 	private double threshold = 75d;
 
 	private static final DiffUtil.ItemCallback<StatRow> DIFF =

@@ -22,6 +22,10 @@ public class DeletionImpact {
 	/** Attendance rows for this student in one particular session. */
 	public int attendanceThisSession;
 
+	/**
+	 * True when the student has any attendance at all. This is the line between a correction
+	 * and a loss: a student with no history was almost certainly entered by mistake.
+	 */
 	public boolean hasHistory() {
 		return attendanceRecords > 0;
 	}

@@ -14,9 +14,14 @@ import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.backend.util.NameFormat;
 
+/**
+ * The professor list. Names arrive from the roster in whatever case was typed, so both the
+ * initials and the displayed name go through {@link NameFormat}.
+ */
 public class AdapterProfessor
 		extends ListAdapter<EntityProfessor, AdapterProfessor.Holder> {
 
+	/** Tap to edit. Long press is offered for consistency, though professors cannot be deleted. */
 	public interface OnAction {
 		void onEdit(EntityProfessor professor);
 

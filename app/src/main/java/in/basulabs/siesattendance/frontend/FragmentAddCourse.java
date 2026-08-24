@@ -35,6 +35,14 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
  * Add or edit a course. Passing a {@code courseID} argument switches the form into edit mode.
+ * <p>
+ * The academic fields are linked through {@link DropdownBinder}, so choosing a department
+ * narrows the streams and choosing a stream narrows the years. The course type is independent of
+ * all of them, and is what decides who ends up on the course's roll; see the roster query in
+ * {@code DaoStudent}.
+ * <p>
+ * A course cannot be saved without a professor, which is why the form warns up front when none
+ * have been entered yet rather than failing at save time.
  */
 public class FragmentAddCourse extends Fragment {
 
@@ -49,6 +57,10 @@ public class FragmentAddCourse extends Fragment {
 	private AutoCompleteTextView actvStream, actvDept, actvYear, actvSemester,
 			actvType, actvProfessor;
 
+	/**
+	 * Loaded asynchronously to fill the professor dropdown. Empty until the load returns, which
+	 * is what {@link #pendingProfID} exists to deal with.
+	 */
 	private List<EntityProfessor> professors = new ArrayList<>();
 
 	/** Professor to select once the dropdown finishes loading, used when editing. */
@@ -142,6 +154,12 @@ public class FragmentAddCourse extends Fragment {
 		});
 	}
 
+	/**
+	 * Loads the course being edited and fills the form in.
+	 * <p>
+	 * The professor is recorded in {@link #pendingProfID} rather than selected here, since the
+	 * professor list may not have arrived yet.
+	 */
 	private void prefillFromExisting() {
 		viewModel.loadCourseSync(editingCourseID, course -> {
 			if (course == null || !isAdded()) {
@@ -216,6 +234,13 @@ public class FragmentAddCourse extends Fragment {
 		}));
 	}
 
+	/**
+	 * Validates and saves.
+	 * <p>
+	 * {@link AcademicRules#validate} runs here even though the dropdowns already steer towards
+	 * valid combinations. Narrowing is one-directional, so a value chosen before the field above
+	 * it was changed can survive as a contradiction, and this is the only place that catches it.
+	 */
 	private void onSave(@NonNull View button) {
 
 		tilCode.setError(null);
@@ -290,6 +315,10 @@ public class FragmentAddCourse extends Fragment {
 		}
 	}
 
+	/**
+	 * Where the currently chosen professor sits in {@link #professors}, or -1 when none is
+	 * chosen. Used to preselect the entry in the picker dialog.
+	 */
 	private int indexOfSelectedProfessor() {
 		String selected = actvProfessor.getText().toString().trim();
 		for (int i = 0; i < professors.size(); i++) {

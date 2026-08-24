@@ -40,10 +40,10 @@ import in.basulabs.siesattendance.backend.MainDatabase;
  * Whole-database export and import, for backing the app up and moving it to another device.
  * <p>
  * The payload is the SQLite file itself rather than a dump of rows to CSV or JSON. A byte-level
- * copy carries everything — indices, foreign keys, the Room schema hash, and the
- * {@code user_version} that drives migrations — so a restore reproduces the database exactly
- * instead of replaying inserts that would renumber primary keys and break the attendance
- * records pointing at them.
+ * copy carries everything, including the indices, the foreign keys, the Room schema hash and the
+ * {@code user_version} that drives migrations, so a restore reproduces the database exactly
+ * instead of replaying inserts that would renumber primary keys and break the attendance records
+ * pointing at them.
  *
  * <h3>File layout</h3>
  * <pre>
@@ -129,13 +129,22 @@ public final class DatabaseBackup {
 		IO
 	}
 
+	/**
+	 * The outcome of an export or a restore. Carries a reason rather than throwing, since every
+	 * failure here is something the user needs a sentence about rather than a stack trace.
+	 */
 	public static class Result {
 
 		public final boolean success;
 
+		/** The reason, when {@link #success} is false. Null on success. */
 		@Nullable
 		public final Failure failure;
 
+		/**
+		 * Extra context for the message, where there is any worth showing. Often null even on a
+		 * failure, because most of the {@link Failure} values say all there is to say.
+		 */
 		@Nullable
 		public final String detail;
 
@@ -151,10 +160,12 @@ public final class DatabaseBackup {
 			this.report = report;
 		}
 
+		/** Success with nothing further to report: an export, or a completed replace. */
 		static Result ok() {
 			return new Result(true, null, null, null);
 		}
 
+		/** Success with a merge report, which the UI shows as a breakdown of what came across. */
 		static Result merged(@NonNull DatabaseMerger.MergeReport report) {
 			return new Result(true, null, null, report);
 		}
@@ -164,15 +175,26 @@ public final class DatabaseBackup {
 		}
 	}
 
-	/** What the header says about a file, read without needing the password. */
+	/**
+	 * What the header says about a file, read without needing the password. This is what lets
+	 * the UI ask for a password only when the file actually has one, and reject an unreadable
+	 * file with a clear message rather than a decryption error.
+	 */
 	public static class Info {
 
 		public final boolean encrypted;
 
+		/**
+		 * The Room {@code user_version} the file was written at. A negative value is the signal
+		 * that the container format itself is too new to read, in which case nothing else here
+		 * is meaningful.
+		 */
 		public final int schemaVersion;
 
+		/** When the backup was written, as epoch milliseconds. */
 		public final long createdAt;
 
+		/** The app version that wrote it. Zero when it could not be determined. */
 		public final int appVersionCode;
 
 		Info(boolean encrypted, int schemaVersion, long createdAt, int appVersionCode) {
@@ -287,6 +309,13 @@ public final class DatabaseBackup {
 		}
 	}
 
+	/**
+	 * Reads and checks the fixed header, leaving the stream positioned at the encryption
+	 * parameters if there are any, and at the payload otherwise.
+	 *
+	 * @return null when the file is not one of ours at all, or an {@link Info} with a negative
+	 *         schema version when the container format is newer than this build reads
+	 */
 	@Nullable
 	private static Info readHeader(@NonNull DataInputStream in) throws IOException {
 
@@ -435,12 +464,11 @@ public final class DatabaseBackup {
 				Cipher cipher = BackupCrypto.decryptCipher(key, iv);
 
 				// doFinal on the whole payload rather than a CipherInputStream. GCM only
-				// knows the data was untampered once it reaches the tag at the very end,
-				// and a streaming reader tends to report that as a plain end-of-stream —
-				// which would look like a short but valid file and get written over the
-				// live database. Buffering costs memory but turns a wrong password into a
-				// thrown exception, which is the whole point of using an authenticated
-				// mode.
+				// knows the data was untampered once it reaches the tag at the very end, and
+				// a streaming reader tends to report that as a plain end-of-stream. That
+				// would look like a short but valid file and get written over the live
+				// database. Buffering costs memory but turns a wrong password into a thrown
+				// exception, which is the whole point of using an authenticated mode.
 				byte[] plaintext = cipher.doFinal(ciphertext);
 				Arrays.fill(ciphertext, (byte) 0);
 				compressed = new ByteArrayInputStream(plaintext);
@@ -601,11 +629,13 @@ public final class DatabaseBackup {
 
 	// ── Helpers ──────────────────────────────────────────────────────────
 
+	/** A file beside the database with a suffix appended, for the WAL, SHM and rescue copies. */
 	@NonNull
 	private static File sidecar(@NonNull File dbFile, @NonNull String suffix) {
 		return new File(dbFile.getParentFile(), dbFile.getName() + suffix);
 	}
 
+	/** Streams one file into another. Neither stream is closed; the caller owns both. */
 	private static void copy(@NonNull InputStream in, @NonNull OutputStream out)
 			throws IOException {
 
@@ -618,6 +648,10 @@ public final class DatabaseBackup {
 		out.flush();
 	}
 
+	/**
+	 * The running app's version code, recorded in the header. Returns 0 if it cannot be read,
+	 * which is not worth failing an export over: the field is informational.
+	 */
 	private static int appVersionCode(@NonNull Context context) {
 		try {
 			return (int) context.getPackageManager()

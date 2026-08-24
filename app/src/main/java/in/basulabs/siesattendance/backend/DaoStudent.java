@@ -15,17 +15,44 @@ import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 
+/**
+ * Students, and the per-session enrolments that sit alongside them.
+ * <p>
+ * Almost nothing here deals with {@code students} alone. A student is only meaningful in the
+ * context of a session, since that is where the roll number and the class live, so the queries
+ * return {@link StudentWithYear} and take an academic year almost without exception.
+ * <p>
+ * Methods come in {@code LiveData} and {@code Sync} pairs. The LiveData ones back a screen and
+ * update themselves; the Sync ones are for work that has to complete before the next step can
+ * begin, such as building a batch from a class, and must be called off the main thread.
+ */
 @Dao
 public abstract class DaoStudent {
 
+	/**
+	 * Aborts on conflict rather than replacing, because the unique index is on the email
+	 * address: a clash means this is somebody already on file, and overwriting them would
+	 * quietly merge two people. {@link #upsertStudentWithYear} handles that case properly.
+	 */
 	@Insert(onConflict = OnConflictStrategy.ABORT)
 	public abstract long insertStudent(EntityStudent student);
 
+	/**
+	 * Replaces on conflict, unlike the student insert above. The key here is the student and
+	 * the session, so a conflict means re-entering a student's details for a year they are
+	 * already enrolled in, and taking the newer version is the intended outcome.
+	 */
 	@Insert(onConflict = OnConflictStrategy.REPLACE)
 	public abstract void insertStudentYear(EntityStudentYear studentYear);
 
 	@Update
 	public abstract void updateStudent(EntityStudent student);
+
+	/*
+	 * The two lookups below are how an incoming row is matched to a student already on file.
+	 * Roll number is tried first because it is what a roster is keyed by, and email second
+	 * because it survives a promotion when the roll number does not.
+	 */
 
 	@Query("SELECT studentID FROM students WHERE email = :email LIMIT 1")
 	public abstract Long findStudentIdByEmail(String email);
@@ -37,7 +64,14 @@ public abstract class DaoStudent {
 	/**
 	 * Inserts a student and their year record together. If a student with the same roll number
 	 * already exists for that academic year, the existing student ID is reused and only the year
-	 * record is refreshed — this makes CSV import idempotent.
+	 * record is refreshed, which is what makes CSV import idempotent: importing the same file
+	 * twice leaves one student, not two.
+	 * <p>
+	 * Matching falls back to the email address when the roll number is not found, so a student
+	 * who has been promoted is recognised as the same person rather than entered again under
+	 * their new number.
+	 *
+	 * @return the ID of the student, whether newly inserted or already on file
 	 */
 	@Transaction
 	public long upsertStudentWithYear(EntityStudent student, int academicYear, String rollNo,
@@ -153,6 +187,11 @@ public abstract class DaoStudent {
 	@Query("SELECT COUNT(*) FROM student_year WHERE academicYear = :academicYear")
 	public abstract LiveData<Integer> countStudents(int academicYear);
 
+	/**
+	 * Sessions that actually have students enrolled in them, newest first. Distinct from the
+	 * rows in {@code academic_years}, which may include a session that has been defined but not
+	 * yet populated.
+	 */
 	@Query("SELECT DISTINCT academicYear FROM student_year ORDER BY academicYear DESC")
 	public abstract LiveData<List<Integer>> getKnownAcademicYears();
 
@@ -170,6 +209,11 @@ public abstract class DaoStudent {
 			"WHERE s.studentID = :studentID AND y.academicYear = :academicYear")
 	public abstract StudentWithYear getOneSync(long studentID, int academicYear);
 
+	/**
+	 * Updates the enrolment half of a student record. Deliberately not an {@code @Update} on the
+	 * entity: the primary key is the student and session together, and rewriting the whole row
+	 * from an object risks carrying a stale academic year into the key.
+	 */
 	@Query("UPDATE student_year SET rollNo = :rollNo, year = :year, stream = :stream, " +
 			"majorDept = :majorDept, minorDept = :minorDept, oeDept = :oeDept, " +
 			"semester = :semester " +
@@ -206,11 +250,13 @@ public abstract class DaoStudent {
 	 *
 	 * Deleting outright removes the attendance too, because the foreign keys are RESTRICT and,
 	 * more to the point, an attendance row naming nobody is not a record of anything. This is
-	 * for entries that should never have existed — a duplicate, a typo, a test row — not for
-	 * students who have left.
+	 * for entries that should never have existed, such as a duplicate, a typo or a test row, and
+	 * not for students who have left.
 	 *
 	 * Both run in a transaction and delete children before parents, since the constraints
 	 * refuse it in any other order.
+	 *
+	 * Neither is offered without the counts from deletionImpact in front of the user first.
 	 */
 
 	/**
@@ -273,6 +319,7 @@ public abstract class DaoStudent {
 		deleteEnrolment(studentID, academicYear);
 	}
 
+	/** How many sessions the student is enrolled in, across the whole database. */
 	@Query("SELECT COUNT(*) FROM student_year WHERE studentID = :studentID")
 	public abstract int countEnrolments(long studentID);
 
@@ -309,7 +356,7 @@ public abstract class DaoStudent {
 	 * <p>
 	 * A minor course matches either the student's minor department or their major. Matching
 	 * the minor alone left minor courses with an empty roll, because the minor field on the
-	 * student form is optional and is frequently blank — and an empty roll means attendance
+	 * student form is optional and is frequently blank, and an empty roll means attendance
 	 * cannot be taken at all, which is worse than a roll that is slightly too wide. The
 	 * department still has to match, so this never reaches across departments.
 	 * <p>
@@ -349,6 +396,15 @@ public abstract class DaoStudent {
 
 	// ── Per-course breakdown for one student ─────────────────────────────
 
+	/**
+	 * One row per course this student has any attendance recorded against, across every
+	 * session.
+	 * <p>
+	 * The denominator counts the student's own attendance rows, not lectures held, so a lecture
+	 * they were left off entirely does not appear here at all. That is the opposite of what the
+	 * export does, and it is the right way round for this screen: this is a breakdown of what
+	 * was recorded for one student, whereas the export is a report on how much they attended.
+	 */
 	@Query("SELECT c.courseID, c.courseCode, c.courseTopic, " +
 			"COUNT(a.lectureID) AS totalLectures, " +
 			"SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) AS attended " +

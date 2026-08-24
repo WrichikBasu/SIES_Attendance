@@ -33,11 +33,14 @@ public class AdapterExportGroups extends RecyclerView.Adapter<AdapterExportGroup
 
 	public interface Callbacks {
 
+		/** The group's remove button was pressed. The fragment owns the list, so it does the removal. */
 		void onRemove(int position);
 
+		/** A course was ticked or unticked, so any summary of the groups needs refreshing. */
 		void onChanged();
 	}
 
+	/** The fragment's own list, mutated in place as the user edits names and ticks chips. */
 	@NonNull
 	private final List<CourseGroup> groups;
 

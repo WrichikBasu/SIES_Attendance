@@ -13,8 +13,16 @@ import androidx.recyclerview.widget.RecyclerView;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityCourse;
 
+/**
+ * The course list.
+ * <p>
+ * Discontinued courses are shown rather than hidden, because their lectures and attendance are
+ * still worth reading; they are dimmed and labelled so they cannot be mistaken for something
+ * still on offer.
+ */
 public class AdapterCourse extends ListAdapter<EntityCourse, AdapterCourse.Holder> {
 
+	/** Tap to edit the course, hold for the actions that are not reversible. */
 	public interface OnAction {
 		void onEdit(EntityCourse course);
 

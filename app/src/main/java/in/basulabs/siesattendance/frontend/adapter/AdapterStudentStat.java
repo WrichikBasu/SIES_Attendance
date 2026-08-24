@@ -17,6 +17,10 @@ import java.util.Locale;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.pojo.StudentAttendanceStat;
 
+/**
+ * Per-student attendance rows on the statistics screen. Ordered by the query rather than here,
+ * which puts the lowest percentages at the top.
+ */
 public class AdapterStudentStat
 		extends ListAdapter<StudentAttendanceStat, AdapterStudentStat.Holder> {
 

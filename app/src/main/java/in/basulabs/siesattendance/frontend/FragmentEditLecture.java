@@ -40,9 +40,9 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 /**
  * Corrects a lecture that has already been recorded: its course, batch, date, times or notes.
  * <p>
- * Mistakes here are ordinary — attendance taken against yesterday's date, or against the
- * practicals batch when it was the whole class, noticed only after saving. Without this the
- * only remedy was to delete the record and call the roll again from memory.
+ * Mistakes here are ordinary: attendance taken against yesterday's date, or against the
+ * practicals batch when it was the whole class, noticed only after saving. Without this the only
+ * remedy was to delete the record and call the roll again from memory.
  * <p>
  * Changing the course or batch is the one edit that is not purely cosmetic, because it changes
  * who is on the roll. Marks belonging to students who are not on the new roll are counted and
@@ -132,6 +132,7 @@ public class FragmentEditLecture extends Fragment {
 
 	// ── Loading ──────────────────────────────────────────────────────────
 
+	/** Loads the lecture along with the course and batch lists the dropdowns need. */
 	private void load() {
 		viewModel.loadLectureForEdit(lectureID, lecture -> {
 
@@ -147,6 +148,10 @@ public class FragmentEditLecture extends Fragment {
 		});
 	}
 
+	/**
+	 * Fills the form from the loaded lecture and records the original course and batch, which is
+	 * what {@link #groupChanged()} later compares against.
+	 */
 	private void prefill(@NonNull EntityLecture lecture) {
 
 		originalCourseID = lecture.courseID;
@@ -169,6 +174,7 @@ public class FragmentEditLecture extends Fragment {
 		bindBatches();
 	}
 
+	/** Fills the course dropdown. Changing the course changes the roll, so it triggers a recheck. */
 	private void bindCourses() {
 		viewModel.loadCoursesSync(list -> {
 
@@ -210,6 +216,11 @@ public class FragmentEditLecture extends Fragment {
 		});
 	}
 
+	/**
+	 * Fills the batch dropdown, with a leading entry for the whole class. Every batch in the
+	 * session is offered rather than only those linked to the course; see the note at the foot of
+	 * {@code DaoCourse}.
+	 */
 	private void bindBatches() {
 		viewModel.loadBatchesForSession(list -> {
 
@@ -300,6 +311,10 @@ public class FragmentEditLecture extends Fragment {
 
 	// ── Roll warning ─────────────────────────────────────────────────────
 
+	/**
+	 * Whether the course or batch differs from what the lecture was opened with. Only then can
+	 * marks be left stranded, so only then is the roll recomputed.
+	 */
 	private boolean groupChanged() {
 		long courseID = selectedCourse == null ? originalCourseID : selectedCourse.courseID;
 		boolean sameBatch = selectedBatchID == null
@@ -396,6 +411,11 @@ public class FragmentEditLecture extends Fragment {
 				});
 	}
 
+	/**
+	 * Puts the stranded marks to the user before anything is written. Keeping them would leave
+	 * students counted against a course they do not take; dropping them silently would discard
+	 * attendance the user may not realise is at stake.
+	 */
 	private void askAboutStranded(@NonNull View button, @NonNull ZonedDateTime start,
 	                              @NonNull ZonedDateTime end, @NonNull String notes,
 	                              int stranded) {
@@ -415,6 +435,7 @@ public class FragmentEditLecture extends Fragment {
 				.show();
 	}
 
+	/** Writes the edit, having settled what happens to any marks that no longer belong. */
 	private void commit(@NonNull View button, @NonNull ZonedDateTime start,
 	                    @NonNull ZonedDateTime end, @NonNull String notes,
 	                    boolean dropStranded) {
