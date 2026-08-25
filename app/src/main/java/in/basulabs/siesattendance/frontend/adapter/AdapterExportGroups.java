@@ -64,20 +64,29 @@ public class AdapterExportGroups extends RecyclerView.Adapter<AdapterExportGroup
 	 * <p>
 	 * Codes that have left the scope are dropped from every group, because a group holding a
 	 * course the export no longer covers would silently contribute nothing to its own total.
+	 * <p>
+	 * An empty scope is the exception, and means the opposite of what it looks like: ticking no
+	 * courses exports every course, so nothing has left the export and no group has lost a
+	 * member. Pruning against it took the widest possible selection as the narrowest and
+	 * emptied every group the user had built — clearing the ticks would quietly destroy the
+	 * groups. The cards still show the "pick some courses first" hint, since a group is a
+	 * deliberate subset and offering the whole register as chips helps nobody.
 	 */
 	public void setInScope(@NonNull List<EntityCourse> courses) {
 
 		inScope = courses;
 
-		for (CourseGroup group : groups) {
-			group.courseCodes.removeIf(code -> {
-				for (EntityCourse course : courses) {
-					if (course.courseCode.equals(code)) {
-						return false;
+		if (!courses.isEmpty()) {
+			for (CourseGroup group : groups) {
+				group.courseCodes.removeIf(code -> {
+					for (EntityCourse course : courses) {
+						if (course.courseCode.equals(code)) {
+							return false;
+						}
 					}
-				}
-				return true;
-			});
+					return true;
+				});
+			}
 		}
 		notifyDataSetChanged();
 	}

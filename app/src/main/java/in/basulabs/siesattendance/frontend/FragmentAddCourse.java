@@ -31,6 +31,7 @@ import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -136,10 +137,7 @@ public class FragmentAddCourse extends Fragment {
 			if (count > 0 || !isAdded()) {
 				return;
 			}
-			requireActivity().runOnUiThread(() -> {
-				if (!isAdded()) {
-					return;
-				}
+			Ui.onMain(this, () -> {
 				new MaterialAlertDialogBuilder(requireContext())
 						.setTitle(R.string.dialog_no_professors_title)
 						.setMessage(R.string.dialog_no_professors_message)
@@ -165,7 +163,7 @@ public class FragmentAddCourse extends Fragment {
 			if (course == null || !isAdded()) {
 				return;
 			}
-			requireActivity().runOnUiThread(() -> {
+			Ui.onMain(this, () -> {
 				etCode.setText(course.courseCode);
 				etTopic.setText(course.courseTopic);
 				etRemarks.setText(course.remarks);
@@ -222,7 +220,7 @@ public class FragmentAddCourse extends Fragment {
 				chosenType, value -> chosenType = value);
 
 		// Professors are loaded off the main thread, then the dropdown is populated back on it.
-		viewModel.loadProfessorsSync(list -> requireActivity().runOnUiThread(() -> {
+		viewModel.loadProfessorsSync(list -> Ui.onMain(this, () -> {
 			professors = list;
 			List<String> labels = new ArrayList<>();
 			for (EntityProfessor professor : list) {
@@ -301,10 +299,8 @@ public class FragmentAddCourse extends Fragment {
 		}
 		course.profID = professors.get(index).profID;
 
-		Runnable navigateBack = () -> requireActivity().runOnUiThread(() -> {
-			if (isAdded()) {
-				Navigation.findNavController(button).navigateUp();
-			}
+		Runnable navigateBack = () -> Ui.onMain(this, () -> {
+			Navigation.findNavController(button).navigateUp();
 		});
 
 		if (editingCourseID > 0) {

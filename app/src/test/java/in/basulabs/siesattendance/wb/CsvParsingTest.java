@@ -9,6 +9,7 @@ import org.junit.Test;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import in.basulabs.siesattendance.backend.util.CsvImporter;
@@ -148,21 +149,45 @@ public class CsvParsingTest {
 	}
 
 	@Test
-	public void aByteOrderMarkIsNotStrippedFromTheFirstHeaderCell() throws Exception {
-		// A UTF-8 CSV saved by Excel or Google Sheets begins with U+FEFF. The importer opens
-		// the stream as plain UTF-8 and normalises header names by lowercasing and removing
-		// underscores, spaces and hyphens only, so the mark stays attached to the first
-		// column name and that column is never found.
+	public void aByteOrderMarkIsStrippedFromTheFirstHeaderCell() throws Exception {
+		// A UTF-8 CSV saved by Excel or Google Sheets begins with U+FEFF. It is invisible, and
+		// it attaches to the first column name only, so leaving it in place rejected the file
+		// for a missing rollNo whose header plainly said rollNo while every other column
+		// resolved.
 		Map<String, Integer> columns = parseHeader(
 				"\uFEFF" + "rollNo,name,year,stream,majorDept");
 
-		assertFalse("a BOM-prefixed roster would fail with 'Missing required column: rollno'",
-				columns.containsKey("rollno"));
-		assertTrue(columns.containsKey("\uFEFF" + "rollno"));
+		assertEquals(Integer.valueOf(0), columns.get("rollno"));
+		assertFalse(columns.containsKey("\uFEFF" + "rollno"));
 
-		// Every other column is unaffected, which is why the failure looks so arbitrary.
-		assertTrue(columns.containsKey("name"));
-		assertTrue(columns.containsKey("majordept"));
+		for (String required : CsvImporter.REQUIRED_COLUMNS) {
+			assertTrue("a roster saved by a spreadsheet must still import: " + required,
+					columns.containsKey(required));
+		}
+	}
+
+	@Test
+	public void aHeaderWithoutAByteOrderMarkIsUntouched() {
+		// The strip must not eat a real first character.
+		assertEquals(Arrays.asList("rollNo", "name"),
+				CsvImporter.splitCsvLine("rollNo,name"));
+	}
+
+	@Test
+	public void headerNamesLowercaseIndependentlyOfTheDeviceLocale() throws Exception {
+		// Turkish maps I to a dotless i, which would lose minorDept on a Turkish phone if the
+		// default locale were used here. These are internal keys compared against ASCII.
+		Locale original = Locale.getDefault();
+		try {
+			Locale.setDefault(new Locale("tr", "TR"));
+			Map<String, Integer> columns = parseHeader("ROLLNO,NAME,MINORDEPT,OEDEPT");
+
+			assertTrue(columns.containsKey("rollno"));
+			assertTrue(columns.containsKey("minordept"));
+			assertTrue(columns.containsKey("oedept"));
+		} finally {
+			Locale.setDefault(original);
+		}
 	}
 
 	@Test

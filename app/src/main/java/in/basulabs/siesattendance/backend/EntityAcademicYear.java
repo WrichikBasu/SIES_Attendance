@@ -7,6 +7,7 @@ import androidx.room.PrimaryKey;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.Locale;
 
 /**
  * One academic session, with the dates that bound it.
@@ -105,7 +106,22 @@ public class EntityAcademicYear {
 	/** e.g. "2025-26". */
 	@NonNull
 	public String label() {
-		return academicYear + "-" + String.format("%02d", (academicYear + 1) % 100);
+		return labelFor(academicYear);
+	}
+
+	/**
+	 * The same label for a session that has not been read from the database, or that has no row
+	 * at all. Kept static because the label is derived entirely from the starting year, and
+	 * several callers have the year without the row.
+	 * <p>
+	 * The trailing year is padded, so 2099-2100 reads "2099-00" rather than "2099-0", and the
+	 * format is fixed to {@link Locale#ROOT} because this is an identifier that appears in file
+	 * names and is compared by eye against the college's own paperwork, not a localised number.
+	 */
+	@NonNull
+	public static String labelFor(int academicYear) {
+		return academicYear + "-"
+				+ String.format(Locale.ROOT, "%02d", (academicYear + 1) % 100);
 	}
 
 	public boolean contains(@NonNull LocalDate date) {

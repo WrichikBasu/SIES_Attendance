@@ -23,10 +23,14 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
+import in.basulabs.siesattendance.backend.pojo.SessionImpact;
 import in.basulabs.siesattendance.frontend.adapter.AdapterAcademicYear;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -47,6 +51,14 @@ public class FragmentAcademicYears extends Fragment {
 	private AdapterAcademicYear adapter;
 
 	private TextView warning;
+
+	/**
+	 * The sessions currently on record, newest first, kept so the add sheet can offer the year
+	 * after the latest one. Empty until the first emission, which only affects the default the
+	 * editor opens with.
+	 */
+	@NonNull
+	private List<EntityAcademicYear> sessions = new ArrayList<>();
 
 	@Nullable
 	@Override
@@ -83,6 +95,7 @@ public class FragmentAcademicYears extends Fragment {
 		fab.setOnClickListener(v -> showEditor(null));
 
 		viewModel.getAcademicYears().observe(getViewLifecycleOwner(), years -> {
+			sessions = years == null ? new ArrayList<>() : years;
 			adapter.submitList(years);
 			adapter.setCurrent(viewModel.academicYearValue());
 		});
@@ -124,10 +137,15 @@ public class FragmentAcademicYears extends Fragment {
 			dates[0] = existing.startDate;
 			dates[1] = existing.endDate;
 		} else {
-			int suggested = viewModel.academicYearValue();
+			// The year after the latest already defined. Offering the current session
+			// instead put an existing year in the field, and since the upsert replaces on
+			// the key, saving it rewrote that session's dates rather than adding one.
+			int suggested = nextSessionYear();
+			EntityAcademicYear shape = EntityAcademicYear.defaultFor(suggested);
+
 			etYear.setText(String.valueOf(suggested));
-			dates[0] = LocalDate.of(suggested, 6, 1);
-			dates[1] = LocalDate.of(suggested + 1, 5, 31);
+			dates[0] = shape.startDate;
+			dates[1] = shape.endDate;
 		}
 
 		btnStart.setText(dates[0].format(DATE_LABEL));
@@ -154,11 +172,31 @@ public class FragmentAcademicYears extends Fragment {
 					} catch (NumberFormatException e) {
 						return;
 					}
-					viewModel.saveAcademicYear(year, dates[0], dates[1], () -> {
-					});
+					viewModel.saveAcademicYear(year, dates[0], dates[1],
+							existing == null, () -> {
+							});
 				})
 				.setNegativeButton(R.string.action_cancel, null)
 				.show();
+	}
+
+	/**
+	 * The year to offer when adding a session: the one after the latest already defined, since
+	 * sessions are added going forwards.
+	 * <p>
+	 * Falls back to the current session only when nothing is defined at all, which happens
+	 * before the first seed and nowhere else. The list is not assumed to be sorted, so that
+	 * this does not quietly depend on the query's ORDER BY.
+	 */
+	private int nextSessionYear() {
+
+		int latest = Integer.MIN_VALUE;
+
+		for (EntityAcademicYear session : sessions) {
+			latest = Math.max(latest, session.academicYear);
+		}
+
+		return latest == Integer.MIN_VALUE ? viewModel.academicYearValue() : latest + 1;
 	}
 
 	/** Callback for {@link #pickDate}, since the two date buttons want different destinations. */
@@ -187,12 +225,32 @@ public class FragmentAcademicYears extends Fragment {
 
 	/**
 	 * Removing a session does not touch any attendance, but it does hide every lecture inside
-	 * it from statistics until another session covers those dates.
+	 * it from statistics, and it makes an export for that year come back empty rather than
+	 * short. The counts are read first so the dialog can say which of those is at stake here
+	 * rather than warning in the abstract.
 	 */
 	private void confirmDelete(@NonNull EntityAcademicYear year) {
+
+		viewModel.loadSessionDeletionImpact(year, impact -> Ui.onMain(this, () ->
+				showDeleteConfirmation(year, impact)));
+	}
+
+	private void showDeleteConfirmation(@NonNull EntityAcademicYear year,
+	                                    @Nullable SessionImpact impact) {
+
+		String message = getString(R.string.dialog_delete_session_message, year.label())
+				+ "\n\n"
+				+ (impact == null || impact.isEmpty()
+				? getString(R.string.dialog_delete_session_empty)
+				: getString(R.string.dialog_delete_session_impact,
+						getResources().getQuantityString(R.plurals.count_lectures_plain,
+								impact.lectures, impact.lectures),
+						getResources().getQuantityString(R.plurals.count_enrolments_plain,
+								impact.enrolments, impact.enrolments)));
+
 		new MaterialAlertDialogBuilder(requireContext())
 				.setTitle(R.string.dialog_delete_session_title)
-				.setMessage(getString(R.string.dialog_delete_session_message, year.label()))
+				.setMessage(message)
 				.setPositiveButton(R.string.action_delete, (d, w) ->
 						viewModel.deleteAcademicYear(year, () -> {
 						}))

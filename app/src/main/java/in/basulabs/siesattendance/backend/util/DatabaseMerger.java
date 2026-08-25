@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.MainDatabase;
 
 /**
@@ -287,6 +288,8 @@ public final class DatabaseMerger {
 						mergeTable(db, spec, maps, report);
 					}
 
+					noteOverlappingSessions(db, report);
+
 					db.setTransactionSuccessful();
 				} finally {
 					db.endTransaction();
@@ -344,6 +347,39 @@ public final class DatabaseMerger {
 		new File(staging.getPath() + "-wal").delete();
 		//noinspection ResultOfMethodCallIgnored
 		new File(staging.getPath() + "-shm").delete();
+	}
+
+	/**
+	 * Reports any sessions that now overlap each other, which merging can introduce.
+	 * <p>
+	 * Sessions are matched on {@code academicYear} alone, so a backup can move an existing
+	 * session's dates or add one whose span runs into a session already here. The sessions
+	 * screen refuses an overlap when the dates are edited by hand, but nothing on this path
+	 * re-applies that rule, and the result is quiet rather than loud: a lecture inside the
+	 * overlap belongs to two sessions at once, and which one a report files it under stops
+	 * being obvious.
+	 * <p>
+	 * Not a reason to fail the merge. Nothing is lost, the queries resolve the ambiguity the
+	 * same way everywhere, and the fix is for someone to look at the dates — so it is said
+	 * rather than acted on.
+	 */
+	private static void noteOverlappingSessions(@NonNull SupportSQLiteDatabase db,
+	                                            @NonNull MergeReport report) {
+
+		try (Cursor cursor = db.query(
+				"SELECT a.academicYear, b.academicYear FROM main.academic_years a "
+						+ "INNER JOIN main.academic_years b "
+						+ "   ON b.academicYear > a.academicYear "
+						+ "WHERE a.startEpoch <= b.endEpoch AND b.startEpoch <= a.endEpoch "
+						+ "ORDER BY a.academicYear")) {
+
+			while (cursor.moveToNext()) {
+				report.skipped.add("The " + EntityAcademicYear.labelFor(cursor.getInt(0))
+						+ " and " + EntityAcademicYear.labelFor(cursor.getInt(1))
+						+ " sessions now overlap. Lectures in the overlap fall in both; "
+						+ "check their dates on the sessions screen.");
+			}
+		}
 	}
 
 	// ── Students, matched by hand ────────────────────────────────────────

@@ -33,6 +33,7 @@ import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
 import in.basulabs.siesattendance.frontend.adapter.AdapterLecture;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel.LectureWindow;
 
@@ -115,7 +116,7 @@ public class FragmentLectureList extends Fragment {
 			if (!isAdded()) {
 				return;
 			}
-			requireActivity().runOnUiThread(() -> sessions = loaded);
+			Ui.onMain(this, () -> sessions = loaded);
 		});
 
 		observe();

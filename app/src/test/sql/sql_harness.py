@@ -184,6 +184,24 @@ def build_fixture():
     return conn
 
 
+def dao_sql(dao, method):
+    """
+    The SQL Room generated for one @Query method, read out of the generated DAO
+    implementation. Reading it rather than copying it by hand is the same principle the
+    schema follows: the harness should not contain its own idea of what the app runs.
+    """
+    src = open(os.path.join(
+        PROJECT,
+        "app/build/generated/ap_generated_sources/debug/out/in/basulabs/siesattendance",
+        "backend", dao + "_Impl.java"), encoding="utf-8").read()
+
+    at = src.index(" " + method + "(")
+    literal = re.search(r'final String _sql = "((?:[^"\\]|\\.)*)";', src[at:])
+    if literal is None:
+        raise AssertionError("no SQL found for " + dao + "." + method)
+    return literal.group(1).encode().decode("unicode_escape")
+
+
 def read_statement(name):
     text = open(os.path.join(SQLDIR, name + ".sql"), encoding="utf-8").read()
     sql, _, rest = text.partition("\n----ARGS----\n")
@@ -637,12 +655,11 @@ def test_delete_for_lecture_except_with_an_empty_keep_list(conn):
         probe.execute("DELETE FROM attendance WHERE lectureID = 1 AND studentID NOT IN ()")
         after = probe.execute(
             "SELECT COUNT(*) FROM attendance WHERE lectureID = 1").fetchone()[0]
-        defect("AttendanceViewModel.updateLecture comment: \"NOT IN () ... is never true "
-               "in SQLite, which would delete nothing rather than everything\" is backwards",
-               before == 3 and after == 0,
-               "SQLite accepts NOT IN () and it is TRUE for every row, so the unguarded "
-               "statement would delete the whole sheet. The guard produces the same "
-               "outcome, so only the comment is wrong.")
+        check("NOT IN () is accepted by SQLite and is TRUE for every row, so the "
+              "empty-roll guard in updateLecture is what keeps the sheet from being "
+              "cleared by accident rather than by decision",
+              before == 3 and after == 0,
+              f"before={before} after={after}")
     except sqlite3.OperationalError as e:
         check("NOT IN () behaviour", True,
               f"SQLite rejects it outright ({e}); the guard is still required")
@@ -650,39 +667,29 @@ def test_delete_for_lecture_except_with_an_empty_keep_list(conn):
         probe.close()
 
 
-def test_student_stats_dao_query_spans_all_sessions(conn):
+def test_student_stats_ordering_and_scope(conn):
     """
-    DaoAttendance.getStudentStats filters students by session but joins attendance with
-    no session condition at all.
+    DaoAttendance.getStudentStats, read straight out of Room's generated implementation.
     """
-    sql = ("SELECT s.studentID, s.name, y.rollNo, "
-           "COUNT(a.lectureID) AS totalLectures, "
-           "SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) AS attended "
-           "FROM students s "
-           "INNER JOIN student_year y ON y.studentID = s.studentID "
-           "   AND y.academicYear = ? "
-           "LEFT JOIN attendance a ON a.studentID = s.studentID "
-           "GROUP BY s.studentID, s.name, y.rollNo "
-           "ORDER BY (CAST(SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) AS REAL) / "
-           "          NULLIF(COUNT(a.lectureID), 0)) ASC")
-
+    sql = dao_sql("DaoAttendance", "getStudentStats")
     rows = {r[2]: r for r in conn.execute(sql, (2025,))}
+
     check("student stats: a student with nothing recorded still appears at zero of zero",
           rows["2025PH01"][3] == 0, f"{rows['2025PH01']}")
-    null_first = [r[0] for r in conn.execute(
-        "SELECT x FROM (SELECT 2 x UNION SELECT NULL UNION SELECT 1) ORDER BY x ASC")]
-    defect("DaoAttendance.getStudentStats: the NULLIF trick is documented as sorting "
-           "students with no records to the END, but SQLite sorts NULLs FIRST in ASC "
-           "order, so they head the worst-attendance list",
-           list(rows)[0] == "2025PH01" and null_first[0] is None,
-           f"order={list(rows)} -- 2025PH01 has 0 of 0 recorded and sorts first")
 
-    # The orphan lecture's rows are outside every session but still counted here.
-    aarav = rows["2025CS01"]
+    # The load-bearing one: SQLite sorts nulls first in ASC, so dividing through NULLIF on
+    # its own put the no-record students at the head of a worst-attendance list.
+    check("student stats: students with no records sort last, not first",
+          list(rows)[-1] == "2025PH01", f"order={list(rows)}")
+    check("student stats: the worst real attender leads the list",
+          list(rows)[0] == "2025CS02", f"order={list(rows)}")
+
+    # The attendance join carries no session condition, so the orphan lecture's rows count
+    # here even though they fall outside every session. Pinned rather than judged: this
+    # query is describing what was recorded for a student, not bounding it to a year.
     check("student stats: counts every attendance row the student has, "
           "regardless of which session the lecture falls in",
-          aarav[3] == 4, f"totalLectures={aarav[3]}")
-
+          rows["2025CS01"][3] == 4, f"totalLectures={rows['2025CS01'][3]}")
 
 
 def test_overlapping_sessions_double_count(conn):
@@ -714,19 +721,32 @@ def test_overlapping_sessions_double_count(conn):
     after_all = run(probe, "stats_all_sessions")
     after_total = sum(r["total"] for r in after_all)
 
-    defect("Overlapping academic sessions double-count every lecture inside the overlap. "
-           "AttendanceViewModel.saveAcademicYear refuses an overlap on the sessions screen, "
-           "but DatabaseMerger folds academic_years in on academicYear alone and never "
-           "rechecks, so a merged backup can introduce one",
-           after_total > before_total,
-           f"attendance rows counted went from {before_total} to {after_total} with no "
-           f"attendance added")
+    # The invariant that matters: no attendance row may be counted more than once. Before
+    # the fix the BETWEEN join matched the overlap twice and every figure inflated.
+    true_rows = {r[0]: r[1] for r in conn.execute(
+        "SELECT studentID, COUNT(*) FROM attendance GROUP BY studentID")}
+    roll_to_id = {"2025CS01": 1, "2025CS02": 2, "2025CS03": 3}
+
+    inflated = []
+    for r in run(probe, "stats_grouped_STUDENT"):
+        sid = roll_to_id.get(r["primaryLabel"])
+        if sid is not None and r["total"] > true_rows[sid]:
+            inflated.append((r["primaryLabel"], r["total"], true_rows[sid]))
+
+    check("overlapping sessions no longer double-count: no student's total exceeds the "
+          "attendance rows they actually have",
+          not inflated, f"inflated rows {inflated}")
+
+    check("overlap: the report never counts more than the table holds",
+          after_total <= before_total,
+          f"counted {after_total} of {before_total} attendance rows")
 
     sql, _ = read_statement("stats_grouped_ACADEMIC_YEAR")
     unfiltered = sql.replace(" AND ay.academicYear = ?", "")
     by_year = [r[1] for r in probe.execute(unfiltered)]
-    check("overlap: the same lectures are reported under more than one session",
-          len(by_year) >= 2, f"{by_year}")
+    check("overlap: each session still appears once, and a lecture inside the overlap is "
+          "attributed to the later of the two rather than to both",
+          len(by_year) == len(set(by_year)), f"{by_year}")
 
     probe.close()
 
@@ -758,12 +778,11 @@ def test_export_column_order_follows_first_encounter(conn):
             seen.append(r["courseCode"])
     probe.close()
 
-    defect("AttendanceExporter.export: the course columns are documented as coming out "
-           "\"in the order the query returned them (by code)\", but they are added in "
-           "first-encounter order, so a course only a later student takes lands after "
-           "courses with higher codes",
-           seen != sorted(seen),
-           f"column order would be {seen}, code order is {sorted(seen)}")
+    check("export: the query still returns first-encounter order, which is why the "
+          "exporter sorts the columns by code afterwards (see "
+          "ExporterInternalsTest.courseColumnsComeOutInCodeOrder)",
+          seen != sorted(seen),
+          f"query order {seen}, code order {sorted(seen)}")
 
 
 def main():
@@ -792,7 +811,7 @@ def main():
     test_unique_index_does_not_catch_whole_class_duplicates(conn)
     test_deletion_impact(conn)
     test_delete_for_lecture_except_with_an_empty_keep_list(conn)
-    test_student_stats_dao_query_spans_all_sessions(conn)
+    test_student_stats_ordering_and_scope(conn)
     test_overlapping_sessions_double_count(conn)
     test_export_column_order_follows_first_encounter(conn)
 

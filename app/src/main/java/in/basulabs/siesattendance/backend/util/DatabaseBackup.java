@@ -1,10 +1,12 @@
 package in.basulabs.siesattendance.backend.util;
 
 import android.content.Context;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.net.Uri;
+import android.os.Build;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -651,11 +653,23 @@ public final class DatabaseBackup {
 	/**
 	 * The running app's version code, recorded in the header. Returns 0 if it cannot be read,
 	 * which is not worth failing an export over: the field is informational.
+	 * <p>
+	 * {@code getLongVersionCode()} only exists from API 28, and this app runs from 26. Calling
+	 * it unguarded throws {@link NoSuchMethodError}, which is an {@code Error} rather than an
+	 * {@code Exception} and so passes straight through the catch below and out of the export
+	 * thread. The deprecated field carries the same number on those releases, since nothing
+	 * below API 28 could store a version code wider than an int in the first place.
 	 */
+	@SuppressWarnings("deprecation")
 	private static int appVersionCode(@NonNull Context context) {
 		try {
-			return (int) context.getPackageManager()
-					.getPackageInfo(context.getPackageName(), 0).getLongVersionCode();
+			PackageInfo info = context.getPackageManager()
+					.getPackageInfo(context.getPackageName(), 0);
+
+			return Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+					? (int) info.getLongVersionCode()
+					: info.versionCode;
+
 		} catch (PackageManager.NameNotFoundException e) {
 			return 0;
 		}

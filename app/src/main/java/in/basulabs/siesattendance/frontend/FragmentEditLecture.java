@@ -35,6 +35,7 @@ import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.EntityLecture;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -140,10 +141,8 @@ public class FragmentEditLecture extends Fragment {
 				return;
 			}
 
-			requireActivity().runOnUiThread(() -> {
-				if (isAdded()) {
-					prefill(lecture);
-				}
+			Ui.onMain(this, () -> {
+				prefill(lecture);
 			});
 		});
 	}
@@ -174,19 +173,22 @@ public class FragmentEditLecture extends Fragment {
 		bindBatches();
 	}
 
-	/** Fills the course dropdown. Changing the course changes the roll, so it triggers a recheck. */
+	/**
+	 * Fills the course dropdown. Changing the course changes the roll, so it triggers a
+	 * recheck.
+	 * <p>
+	 * Only courses still being offered are listed, so an edit cannot move a lecture onto a
+	 * retired course. The lecture's own course is kept in the list whatever its state, since
+	 * the form has to show what is actually recorded.
+	 */
 	private void bindCourses() {
-		viewModel.loadCoursesSync(list -> {
+		viewModel.loadCoursesForEdit(originalCourseID, list -> {
 
 			if (list == null || !isAdded()) {
 				return;
 			}
 
-			requireActivity().runOnUiThread(() -> {
-				if (!isAdded()) {
-					return;
-				}
-
+			Ui.onMain(this, () -> {
 				courses = list;
 
 				List<String> labels = new ArrayList<>();
@@ -220,19 +222,18 @@ public class FragmentEditLecture extends Fragment {
 	 * Fills the batch dropdown, with a leading entry for the whole class. Every batch in the
 	 * session is offered rather than only those linked to the course; see the note at the foot of
 	 * {@code DaoCourse}.
+	 * <p>
+	 * The lecture's own batch is included even when it belongs to an earlier session, since
+	 * batches do not carry forward and the field has to show what is actually recorded.
 	 */
 	private void bindBatches() {
-		viewModel.loadBatchesForSession(list -> {
+		viewModel.loadBatchesForEdit(selectedBatchID, list -> {
 
 			if (!isAdded()) {
 				return;
 			}
 
-			requireActivity().runOnUiThread(() -> {
-				if (!isAdded()) {
-					return;
-				}
-
+			Ui.onMain(this, () -> {
 				batches = list;
 
 				List<String> labels = new ArrayList<>();
@@ -326,26 +327,28 @@ public class FragmentEditLecture extends Fragment {
 	/**
 	 * Shows how many existing marks the current selection would strand, while there is still
 	 * time to reconsider.
+	 * <p>
+	 * The count is taken against the date and time currently in the form rather than the ones
+	 * the lecture was loaded with, because moving it into another session changes which roll
+	 * it is measured against. Those fields are filled in by {@link #prefill}, so they are only
+	 * null if the lecture failed to load, in which case there is nothing to warn about.
 	 */
 	private void refreshRollWarning() {
 
-		if (!groupChanged() || selectedCourse == null) {
+		if (!groupChanged() || selectedCourse == null || date == null || startTime == null) {
 			rollWarning.setVisibility(View.GONE);
 			return;
 		}
 
 		viewModel.countStrandedMarks(lectureID, selectedCourse.courseID, selectedBatchID,
+				ZonedDateTime.of(date, startTime, ZoneId.systemDefault()),
 				stranded -> {
 
 					if (!isAdded()) {
 						return;
 					}
 
-					requireActivity().runOnUiThread(() -> {
-						if (!isAdded()) {
-							return;
-						}
-
+					Ui.onMain(this, () -> {
 						if (stranded == null || stranded == 0) {
 							rollWarning.setVisibility(View.GONE);
 							return;
@@ -391,17 +394,14 @@ public class FragmentEditLecture extends Fragment {
 		// The roll is about to change, so ask what should happen to marks that will no longer
 		// belong to anyone on it before writing anything.
 		viewModel.countStrandedMarks(lectureID, selectedCourse.courseID, selectedBatchID,
+				start,
 				stranded -> {
 
 					if (!isAdded()) {
 						return;
 					}
 
-					requireActivity().runOnUiThread(() -> {
-						if (!isAdded()) {
-							return;
-						}
-
+					Ui.onMain(this, () -> {
 						if (stranded == null || stranded == 0) {
 							commit(button, start, end, notes, false);
 						} else {
@@ -415,23 +415,26 @@ public class FragmentEditLecture extends Fragment {
 	 * Puts the stranded marks to the user before anything is written. Keeping them would leave
 	 * students counted against a course they do not take; dropping them silently would discard
 	 * attendance the user may not realise is at stake.
+	 * <p>
+	 * The two choices are buttons rather than a list. A dialog cannot show both: AppCompat's
+	 * {@code AlertController} only swaps its scroll view for the item list when no message has
+	 * been set, so a builder given both renders the message and silently drops every option,
+	 * leaving the user nothing to press but Cancel. The count is what makes this decision
+	 * answerable, so the message stays and the options become buttons.
 	 */
 	private void askAboutStranded(@NonNull View button, @NonNull ZonedDateTime start,
 	                              @NonNull ZonedDateTime end, @NonNull String notes,
 	                              int stranded) {
 
-		String[] options = {
-				getString(R.string.option_drop_stranded),
-				getString(R.string.option_keep_stranded)
-		};
-
 		new MaterialAlertDialogBuilder(requireContext())
 				.setTitle(R.string.dialog_stranded_title)
 				.setMessage(getResources().getQuantityString(
 						R.plurals.dialog_stranded_message, stranded, stranded))
-				.setNegativeButton(R.string.action_cancel, null)
-				.setItems(options, (d, which) ->
-						commit(button, start, end, notes, which == 0))
+				.setNeutralButton(R.string.action_cancel, null)
+				.setNegativeButton(R.string.option_keep_stranded, (d, w) ->
+						commit(button, start, end, notes, false))
+				.setPositiveButton(R.string.option_drop_stranded, (d, w) ->
+						commit(button, start, end, notes, true))
 				.show();
 	}
 
@@ -446,10 +449,8 @@ public class FragmentEditLecture extends Fragment {
 
 		viewModel.updateLecture(lectureID, selectedCourse.courseID, selectedBatchID,
 				start, end, notes.isEmpty() ? null : notes, dropStranded,
-				() -> requireActivity().runOnUiThread(() -> {
-					if (isAdded()) {
-						Navigation.findNavController(button).navigateUp();
-					}
+				() -> Ui.onMain(this, () -> {
+					Navigation.findNavController(button).navigateUp();
 				}));
 	}
 }

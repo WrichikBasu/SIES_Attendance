@@ -246,12 +246,11 @@ public class ExporterInternalsTest {
 	}
 
 	@Test
-	public void aStudentWithNoLecturesHeldIsPrintedAsOneHundredPerCent() throws Exception {
-		// DEFECT: the 100.0 that keeps such a student out of the defaulter list is also what
-		// gets written into the "%" column, so a student for whom no lecture has been held
-		// reads on the sheet as a perfect attender. The defaulter test is separately guarded
-		// by totalHeld > 0, so the placeholder is not needed for that and only reaches the
-		// cell. A blank, or the em dash the app's own screens use, would be honest.
+	public void aStudentWithNoLecturesHeldGetsABlankPercentage() throws Exception {
+		// Neither 0% nor 100% is true of a student nobody has held a lecture for. 0% would
+		// shade the whole sheet red on the first day of term; 100% would print a perfect
+		// attender who has never been counted, which is what this used to do. The cell is
+		// left empty, as the app's own screens leave it.
 		OdsWriter ods = new OdsWriter("S");
 		Object s = student("R1", "N");
 		figures(s, 1L, 0, 0);
@@ -259,19 +258,18 @@ public class ExporterInternalsTest {
 		writeStudent(ods, s, columns(1L, "CS201"), 75);
 
 		List<String> row = lastRow(contentOf(ods));
-		// roll, name, held, attended, totalHeld, totalAttended, percent
 		assertEquals("0", row.get(2));
 		assertEquals("0", row.get(3));
 		assertEquals("0", row.get(4));
 		assertEquals("0", row.get(5));
-		assertEquals("100", row.get(6));
+		assertEquals("the percentage cell must be blank, not invented", null, row.get(6));
 	}
 
 	@Test
-	public void aStudentTakingNoneOfTheSheetsCoursesAlsoReadsAsOneHundredPerCent()
+	public void aStudentTakingNoneOfTheSheetsCoursesAlsoGetsABlankPercentage()
 			throws Exception {
-		// The same defect from the other direction: on a group sheet, a student with no
-		// figures at all for any of the group's courses totals 0 of 0 and prints 100%.
+		// The same case from the other direction: on a group sheet, a student with no figures
+		// for any of the group's courses totals 0 of 0.
 		OdsWriter ods = new OdsWriter("S");
 		Object s = student("R1", "N");
 		figures(s, 99L, 10, 10);
@@ -281,7 +279,23 @@ public class ExporterInternalsTest {
 		List<String> row = lastRow(contentOf(ods));
 		assertEquals(null, row.get(2));
 		assertEquals("0", row.get(4));
-		assertEquals("100", row.get(6));
+		assertEquals(null, row.get(6));
+	}
+
+	@Test
+	public void aBlankPercentageStillCarriesTheRowsShadingWhenThereIsAny() throws Exception {
+		// Blank means "no figure", not "no cell": a blank written without the row's style
+		// would break the shading band across a defaulter's row. Such a student is never a
+		// defaulter, so this only pins that the blank is a styled cell rather than a hole.
+		OdsWriter ods = new OdsWriter("S");
+		Object s = student("R1", "N");
+		figures(s, 1L, 0, 0);
+
+		writeStudent(ods, s, columns(1L, "CS201"), 75);
+
+		assertTrue("the blank must be a real cell",
+				contentOf(ods).contains("<table:table-cell/>")
+						|| contentOf(ods).contains("<table:table-cell "));
 	}
 
 	@Test
@@ -316,14 +330,38 @@ public class ExporterInternalsTest {
 	}
 
 	@Test
-	public void theSuggestedFileNameDoesNotPadAcrossTheCenturyRollover() {
-		// DEFECT: EntityAcademicYear.label() formats the trailing year with %02d and gets
-		// "2099-00"; the exporter uses a bare modulo in two places and gets "2099-0", so the
-		// file name and the heading inside the file disagree with every other label in the
-		// app. Cosmetic, but the two spellings are meant to be the same thing.
-		assertEquals("attendance-2099-0.ods", AttendanceExporter.suggestedFileName(2099));
+	public void theSuggestedFileNamePadsAcrossTheCenturyRollover() {
+		// The file name, the heading inside the file and every session label elsewhere in the
+		// app now come from one formatter, so 2099-2100 reads the same in all three places.
+		assertEquals("attendance-2099-00.ods", AttendanceExporter.suggestedFileName(2099));
 		assertEquals("2099-00",
 				in.basulabs.siesattendance.backend.EntityAcademicYear
 						.defaultFor(2099).label());
+		assertEquals("2099-00",
+				in.basulabs.siesattendance.backend.EntityAcademicYear.labelFor(2099));
+	}
+
+	@Test
+	public void courseColumnsComeOutInCodeOrder() throws Exception {
+		// The query orders by roll number first, so a map filled as rows arrive records a
+		// course at the point the first student who takes it appears. A course only a later
+		// student takes used to land after courses whose codes sort above it.
+		java.lang.reflect.Method sort =
+				AttendanceExporter.class.getDeclaredMethod("byCourseCode", Map.class);
+		sort.setAccessible(true);
+
+		Map<Long, String> encountered = new LinkedHashMap<>();
+		encountered.put(10L, "CS201");
+		encountered.put(20L, "MA201");
+		encountered.put(30L, "AA101");
+
+		@SuppressWarnings("unchecked")
+		Map<Long, String> ordered = (Map<Long, String>) sort.invoke(null, encountered);
+
+		assertEquals(java.util.Arrays.asList("AA101", "CS201", "MA201"),
+				new java.util.ArrayList<>(ordered.values()));
+		assertEquals("the course IDs must follow their codes",
+				java.util.Arrays.asList(30L, 10L, 20L),
+				new java.util.ArrayList<>(ordered.keySet()));
 	}
 }

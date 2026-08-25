@@ -32,14 +32,26 @@ public final class StatsQueryBuilder {
 	 * session to be counted in, and silently attributing it to a neighbouring one would be
 	 * worse than leaving it out. {@code DaoAcademicYear.countOrphanLectures} exists to surface
 	 * exactly that case so the sessions can be extended.
+	 * <p>
+	 * It resolves to exactly one session rather than joining on the bounds directly. Sessions
+	 * are not supposed to overlap, and the sessions screen refuses an overlap outright, but a
+	 * merged backup can carry one in: {@code DatabaseMerger} matches {@code academic_years} on
+	 * the year alone and never rechecks the dates. A plain {@code BETWEEN} join would then
+	 * match a lecture twice and silently double every figure in the report. Picking the latest
+	 * containing session is the same rule {@code DaoAcademicYear.findContainingSync} already
+	 * applies everywhere else, so an ambiguous lecture at least lands in one place
+	 * consistently.
 	 */
 	private static final String FROM_CLAUSE =
 			" FROM attendance a"
 					+ " INNER JOIN lectures l ON l.lectureID = a.lectureID"
 					+ " INNER JOIN courses c ON c.courseID = l.courseID"
 					+ " INNER JOIN students s ON s.studentID = a.studentID"
-					+ " INNER JOIN academic_years ay ON " + SqlBits.EPOCH_START
-					+ "    BETWEEN ay.startEpoch AND ay.endEpoch"
+					+ " INNER JOIN academic_years ay ON ay.academicYear = ("
+					+ "    SELECT ay2.academicYear FROM academic_years ay2"
+					+ "    WHERE " + SqlBits.EPOCH_START
+					+ "       BETWEEN ay2.startEpoch AND ay2.endEpoch"
+					+ "    ORDER BY ay2.academicYear DESC LIMIT 1)"
 					+ " INNER JOIN student_year y ON y.studentID = a.studentID"
 					+ "    AND y.academicYear = ay.academicYear"
 					+ " LEFT JOIN batch_desc b ON b.batchID = l.batchID"

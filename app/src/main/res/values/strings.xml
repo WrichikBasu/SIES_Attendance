@@ -260,6 +260,19 @@
     <string name="dialog_delete_session_message">%1$s will be removed. No attendance is deleted,
         but lectures held during these dates will not appear in any report until another session
         covers them.</string>
+    <string name="dialog_delete_session_empty">Nothing is filed under it yet, so removing it
+        costs nothing.</string>
+    <string name="dialog_delete_session_impact">%1$s and %2$s are filed under it. The lectures
+        drop out of every report, and an export for this session comes back empty, until
+        another session covers these dates.</string>
+    <plurals name="count_lectures_plain">
+        <item quantity="one">1 lecture</item>
+        <item quantity="other">%1$d lectures</item>
+    </plurals>
+    <plurals name="count_enrolments_plain">
+        <item quantity="one">1 enrolment</item>
+        <item quantity="other">%1$d enrolments</item>
+    </plurals>
 
     <!-- Lecture list filtering -->
     <string name="title_filter_lectures">Show lectures from</string>
@@ -323,6 +336,7 @@
     <string name="hint_group_pick_courses">Tap the courses that belong to this group</string>
     <string name="hint_group_no_courses">Select some courses above first.</string>
 
+    <string name="label_summary_session">Session: %1$s</string>
     <string name="label_summary_threshold">Shading students below %1$d%%</string>
     <string name="label_summary_no_shading">No defaulter shading</string>
     <plurals name="label_group_sheets">

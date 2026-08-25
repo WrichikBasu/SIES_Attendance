@@ -30,6 +30,7 @@ import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.frontend.adapter.AdapterStudentCourseStat;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -49,6 +50,16 @@ public class FragmentStudentDetail extends Fragment {
 
 	private long studentID;
 
+	/**
+	 * The session this screen is showing the student in.
+	 * <p>
+	 * Supplied by whoever opened it, because the two routes here mean different years: the
+	 * students list has a session of its own, and a drill-down from the report has another.
+	 * Everything on the screen — the header, the deletion counts, the withdrawal and the edit
+	 * form — uses this one value, so they cannot disagree about which year is on show.
+	 */
+	private int academicYear;
+
 	@Nullable
 	@Override
 	public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
@@ -62,6 +73,11 @@ public class FragmentStudentDetail extends Fragment {
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
 		studentID = getArguments() == null ? -1L : getArguments().getLong("studentID", -1L);
+
+		// Absent when the students list opened this, which is already showing the session it
+		// wants; the report passes its own when it has one selected.
+		int requested = getArguments() == null ? 0 : getArguments().getInt("academicYear", 0);
+		academicYear = requested > 0 ? requested : viewModel.studentFilter().academicYear;
 
 		initials = view.findViewById(R.id.tvInitials);
 		name = view.findViewById(R.id.tvStudentName);
@@ -104,6 +120,7 @@ public class FragmentStudentDetail extends Fragment {
 				if (item.getItemId() == R.id.action_edit) {
 					Bundle args = new Bundle();
 					args.putLong("studentID", studentID);
+					args.putInt("academicYear", academicYear);
 					Navigation.findNavController(requireView())
 							.navigate(R.id.action_studentDetail_to_editStudent, args);
 					return true;
@@ -128,18 +145,13 @@ public class FragmentStudentDetail extends Fragment {
 	 */
 	private void askHowToRemove() {
 
-		viewModel.loadDeletionImpact(studentID, impact -> {
+		viewModel.loadDeletionImpact(studentID, academicYear, impact -> {
 
 			if (!isAdded() || impact == null) {
 				return;
 			}
 
-			requireActivity().runOnUiThread(() -> {
-
-				if (!isAdded()) {
-					return;
-				}
-
+			Ui.onMain(this, () -> {
 				if (impact.spansMultipleSessions()) {
 					offerWithdrawOrDelete(impact);
 				} else {
@@ -185,7 +197,8 @@ public class FragmentStudentDetail extends Fragment {
 						impact.attendanceThisSession))
 				.setNegativeButton(R.string.action_cancel, null)
 				.setPositiveButton(R.string.action_withdraw, (d, w) ->
-						viewModel.withdrawStudentFromSession(studentID, this::leaveScreen))
+						viewModel.withdrawStudentFromSession(studentID, academicYear,
+							this::leaveScreen))
 				.show();
 	}
 
@@ -233,10 +246,8 @@ public class FragmentStudentDetail extends Fragment {
 
 	/** The student this screen is showing is gone, so there is nothing left to display. */
 	private void leaveScreen() {
-		requireActivity().runOnUiThread(() -> {
-			if (isAdded()) {
-				Navigation.findNavController(requireView()).navigateUp();
-			}
+		Ui.onMain(this, () -> {
+			Navigation.findNavController(requireView()).navigateUp();
 		});
 	}
 
@@ -246,7 +257,8 @@ public class FragmentStudentDetail extends Fragment {
 	 */
 	private void observe() {
 
-		viewModel.getStudent(studentID).observe(getViewLifecycleOwner(), this::bindStudent);
+		viewModel.getStudent(studentID, academicYear)
+				.observe(getViewLifecycleOwner(), this::bindStudent);
 
 		viewModel.getStudentCourseBreakdown(studentID)
 				.observe(getViewLifecycleOwner(), this::bindBreakdown);

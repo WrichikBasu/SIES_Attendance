@@ -37,12 +37,14 @@ import java.util.List;
 import java.util.Set;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.util.AttendanceExporter;
 import in.basulabs.siesattendance.backend.util.CourseGroup;
 import in.basulabs.siesattendance.backend.util.ExportFilter;
 import in.basulabs.siesattendance.frontend.adapter.AdapterExportCourses;
 import in.basulabs.siesattendance.frontend.adapter.AdapterExportGroups;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -90,6 +92,16 @@ public class FragmentExport extends Fragment {
 	 */
 	private int thresholdPercent = 75;
 
+	/**
+	 * The session being exported, fixed when the screen opens.
+	 * <p>
+	 * Taken from the report this screen was opened from rather than from the app-wide value,
+	 * so filtering the report to a past year and tapping Export produces that year. Read once
+	 * rather than per use, so the file name, the scope line and the data cannot come from
+	 * different sessions if the report changes underneath.
+	 */
+	private int academicYear;
+
 	private static final DateTimeFormatter DATE_LABEL =
 			DateTimeFormatter.ofPattern("d MMM yyyy");
 
@@ -117,6 +129,7 @@ public class FragmentExport extends Fragment {
 		super.onViewCreated(view, savedInstanceState);
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
+		academicYear = viewModel.exportAcademicYear();
 
 		bindDates(view);
 		bindCourses(view);
@@ -128,7 +141,7 @@ public class FragmentExport extends Fragment {
 		runExport = view.findViewById(R.id.btnRunExport);
 
 		runExport.setOnClickListener(v -> picker.launch(
-				AttendanceExporter.suggestedFileName(viewModel.academicYearValue())));
+				AttendanceExporter.suggestedFileName(academicYear)));
 
 		observeResult();
 		refreshSummary();
@@ -238,10 +251,7 @@ public class FragmentExport extends Fragment {
 				return;
 			}
 
-			requireActivity().runOnUiThread(() -> {
-				if (!isAdded()) {
-					return;
-				}
+			Ui.onMain(this, () -> {
 				allCourses = courses;
 				courseAdapter.submit(courses);
 				noCourses.setVisibility(courses.isEmpty() ? View.VISIBLE : View.GONE);
@@ -356,7 +366,13 @@ public class FragmentExport extends Fragment {
 	/** Restates what the export will actually contain, so the scope is visible before it is run. */
 	private void refreshSummary() {
 
-		StringBuilder out = new StringBuilder(filter.describe());
+		// The session leads, because it is the one part of the scope the user did not choose
+		// on this screen: it comes from the report they opened this from.
+		StringBuilder out = new StringBuilder(
+				getString(R.string.label_summary_session,
+						EntityAcademicYear.labelFor(academicYear)));
+
+		out.append("\n").append(filter.describe());
 
 		int usable = 0;
 		for (CourseGroup group : groups) {
@@ -393,7 +409,8 @@ public class FragmentExport extends Fragment {
 		progress.setVisibility(View.VISIBLE);
 		runExport.setEnabled(false);
 
-		viewModel.exportAttendanceSheet(destination, thresholdPercent, usable, filter);
+		viewModel.exportAttendanceSheet(destination, academicYear, thresholdPercent, usable,
+				filter);
 	}
 
 	/** Reports what was written, or why nothing was. */

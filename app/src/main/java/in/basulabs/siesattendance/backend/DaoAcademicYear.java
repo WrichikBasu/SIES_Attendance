@@ -1,5 +1,6 @@
 package in.basulabs.siesattendance.backend;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.lifecycle.LiveData;
 import androidx.room.Dao;
@@ -10,6 +11,8 @@ import androidx.room.Query;
 import androidx.room.Update;
 
 import java.util.List;
+
+import in.basulabs.siesattendance.backend.pojo.SessionImpact;
 
 /**
  * The academic sessions, and the queries that check nothing has fallen outside them.
@@ -66,6 +69,23 @@ public interface DaoAcademicYear {
 
 	@Query("SELECT COUNT(*) FROM academic_years")
 	int countSync();
+
+	/**
+	 * What a session has filed under it, for the confirmation shown before removing one.
+	 * <p>
+	 * Lectures are counted by date, since they carry no session column; enrolments by the
+	 * column that names the session directly. Both go dark when the row is deleted, and the
+	 * export goes further than dark: its INNER JOIN onto this table matches nothing, so the
+	 * spreadsheet comes out empty rather than short.
+	 */
+	@Query("SELECT "
+			+ "(SELECT COUNT(*) FROM lectures l WHERE "
+			+ "   CAST(SUBSTR(l.startDateTime, 1, INSTR(l.startDateTime, '|') - 1) AS INTEGER) "
+			+ "   BETWEEN :startEpoch AND :endEpoch) AS lectures, "
+			+ "(SELECT COUNT(*) FROM student_year WHERE academicYear = :academicYear) "
+			+ "   AS enrolments")
+	@NonNull
+	SessionImpact deletionImpactSync(int academicYear, long startEpoch, long endEpoch);
 
 	/**
 	 * Lectures whose start falls outside every defined session. Statistics join lectures to

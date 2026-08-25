@@ -37,6 +37,7 @@ import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.frontend.adapter.AdapterHeader;
 import in.basulabs.siesattendance.frontend.adapter.AdapterSelectableStudent;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -231,11 +232,7 @@ public class FragmentEditBatch extends Fragment {
 			if (!isAdded()) {
 				return;
 			}
-			requireActivity().runOnUiThread(() -> {
-				if (!isAdded()) {
-					return;
-				}
-
+			Ui.onMain(this, () -> {
 				if (batch != null && etName != null) {
 					etName.setText(batch.batchName);
 					etDescription.setText(batch.batchDesc);
@@ -385,10 +382,8 @@ public class FragmentEditBatch extends Fragment {
 
 		List<Long> ids = new ArrayList<>(selected);
 
-		Runnable navigateBack = () -> requireActivity().runOnUiThread(() -> {
-			if (isAdded()) {
-				Navigation.findNavController(button).navigateUp();
-			}
+		Runnable navigateBack = () -> Ui.onMain(this, () -> {
+			Navigation.findNavController(button).navigateUp();
 		});
 
 		if (isCreating()) {

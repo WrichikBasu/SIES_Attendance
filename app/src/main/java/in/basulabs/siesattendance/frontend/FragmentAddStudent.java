@@ -28,6 +28,7 @@ import in.basulabs.siesattendance.backend.EntityStudent;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -51,6 +52,13 @@ public class FragmentAddStudent extends Fragment {
 
 	/** -1 means "creating a new student"; anything else is an edit. */
 	private long editingStudentID = -1L;
+
+	/**
+	 * The session this form reads from and writes back to. Held rather than looked up each
+	 * time so a load and the save that follows it cannot land in different years.
+	 */
+	private int academicYear;
+
 
 	private TextInputEditText etName, etPronouns, etEmail, etRollNo;
 
@@ -97,6 +105,11 @@ public class FragmentAddStudent extends Fragment {
 				? -1L
 				: getArguments().getLong("studentID", -1L);
 
+		// The session to read from and write back to. Absent when adding, and when the
+		// students list opened this; the detail screen passes the one it is showing.
+		int requested = getArguments() == null ? 0 : getArguments().getInt("academicYear", 0);
+		academicYear = requested > 0 ? requested : viewModel.studentFilter().academicYear;
+
 		etName = view.findViewById(R.id.etName);
 		etPronouns = view.findViewById(R.id.etPronouns);
 		etEmail = view.findViewById(R.id.etEmail);
@@ -138,11 +151,11 @@ public class FragmentAddStudent extends Fragment {
 	 * which have to be rebound so their lists match the loaded values.
 	 */
 	private void prefillFromExisting() {
-		viewModel.loadStudentSync(editingStudentID, student -> {
+		viewModel.loadStudentSync(editingStudentID, academicYear, student -> {
 			if (student == null || !isAdded()) {
 				return;
 			}
-			requireActivity().runOnUiThread(() -> {
+			Ui.onMain(this, () -> {
 				etName.setText(student.name);
 				etPronouns.setText(student.pronouns);
 				etEmail.setText(student.email);
@@ -318,15 +331,14 @@ public class FragmentAddStudent extends Fragment {
 		EntityStudent student =
 				new EntityStudent(name, pronouns, email.isEmpty() ? null : email);
 
-		Runnable navigateBack = () -> requireActivity().runOnUiThread(() -> {
-			if (isAdded()) {
-				Navigation.findNavController(button).navigateUp();
-			}
+		Runnable navigateBack = () -> Ui.onMain(this, () -> {
+			Navigation.findNavController(button).navigateUp();
 		});
 
 		if (isEditing()) {
 			student.studentID = editingStudentID;
-			viewModel.updateStudent(student, rollNo, year, stream, major, minor, oe,
+			viewModel.updateStudent(student, academicYear, rollNo, year, stream, major,
+					minor, oe,
 					chosenSemester, navigateBack);
 		} else {
 			viewModel.addStudent(student, rollNo, year, stream, major, minor, oe,

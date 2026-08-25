@@ -111,9 +111,12 @@ public abstract class DaoAttendance {
 	 * Per-student totals across every lecture they have a mark for, worst attendance first.
 	 * <p>
 	 * The join to attendance is LEFT, so a student with nothing recorded still appears, with
-	 * zero of zero. The ordering divides through {@code NULLIF}, which turns that into a null
-	 * and sorts those students to the end rather than showing them at the top as if they had
-	 * attended nothing.
+	 * zero of zero. Those students sort last rather than first, which takes an explicit
+	 * clause: dividing through {@code NULLIF} yields a null percentage for them, and SQLite
+	 * sorts nulls <em>first</em> in ascending order, so on its own it would head the list with
+	 * exactly the students the list is not about. {@code COUNT(...) = 0} is 0 or 1, so
+	 * ordering on it ascending puts everyone with a record ahead of everyone without, and the
+	 * percentage then orders within that group where it is never null.
 	 */
 	@Query("SELECT s.studentID, s.name, y.rollNo, " +
 			"COUNT(a.lectureID) AS totalLectures, " +
@@ -123,8 +126,10 @@ public abstract class DaoAttendance {
 			"   AND y.academicYear = :academicYear " +
 			"LEFT JOIN attendance a ON a.studentID = s.studentID " +
 			"GROUP BY s.studentID, s.name, y.rollNo " +
-			"ORDER BY (CAST(SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) AS REAL) / " +
-			"          NULLIF(COUNT(a.lectureID), 0)) ASC")
+			"ORDER BY (COUNT(a.lectureID) = 0) ASC, " +
+			"         (CAST(SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) AS REAL) / " +
+			"          NULLIF(COUNT(a.lectureID), 0)) ASC, " +
+			"         y.rollNo ASC")
 	public abstract LiveData<List<StudentAttendanceStat>> getStudentStats(int academicYear);
 
 	/**

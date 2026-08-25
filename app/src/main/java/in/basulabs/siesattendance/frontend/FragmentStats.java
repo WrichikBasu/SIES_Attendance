@@ -51,6 +51,7 @@ import in.basulabs.siesattendance.backend.stats.StatsGroupBy;
 import in.basulabs.siesattendance.frontend.adapter.AdapterHeader;
 import in.basulabs.siesattendance.frontend.adapter.AdapterStatRow;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -401,11 +402,7 @@ public class FragmentStats extends Fragment {
 			if (!isAdded()) {
 				return;
 			}
-			requireActivity().runOnUiThread(() -> {
-				if (!isAdded()) {
-					return;
-				}
-
+			Ui.onMain(this, () -> {
 				binding = true;
 				courses = courseList;
 				batches = batchList;
@@ -588,6 +585,13 @@ public class FragmentStats extends Fragment {
 		if (groupBy == StatsGroupBy.STUDENT) {
 			Bundle args = new Bundle();
 			args.putLong("studentID", row.rowId);
+
+			// The detail screen otherwise falls back to whichever session the students list
+			// is on, which is not the one this row was computed for.
+			Integer session = viewModel.statsFilter().academicYear;
+			if (session != null) {
+				args.putInt("academicYear", session);
+			}
 			Navigation.findNavController(requireView())
 					.navigate(R.id.action_stats_to_studentDetail, args);
 			return;

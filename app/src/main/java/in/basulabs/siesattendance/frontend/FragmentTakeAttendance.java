@@ -38,6 +38,7 @@ import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.pojo.AttendanceRow;
 import in.basulabs.siesattendance.frontend.adapter.AdapterAttendance;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -216,11 +217,11 @@ public class FragmentTakeAttendance extends Fragment {
 
 	/** Fills the course dropdown from the active courses, then applies any restored selection. */
 	private void loadCourses() {
-		viewModel.loadCoursesSync(list -> {
+		viewModel.loadActiveCoursesSync(list -> {
 			if (!isAdded()) {
 				return;
 			}
-			requireActivity().runOnUiThread(() -> {
+			Ui.onMain(this, () -> {
 				courses = list;
 				List<String> labels = new ArrayList<>();
 				for (EntityCourse course : list) {
@@ -330,11 +331,7 @@ public class FragmentTakeAttendance extends Fragment {
 			if (!isAdded()) {
 				return;
 			}
-			requireActivity().runOnUiThread(() -> {
-				if (!isAdded()) {
-					return;
-				}
-
+			Ui.onMain(this, () -> {
 				batches = list;
 
 				List<String> labels = new ArrayList<>();
@@ -554,10 +551,7 @@ public class FragmentTakeAttendance extends Fragment {
 
 		viewModel.recordLectureWithAttendance(selectedCourse.courseID, selectedBatchID,
 				start, end, notes.isEmpty() ? null : notes,
-				() -> requireActivity().runOnUiThread(() -> {
-					if (!isAdded()) {
-						return;
-					}
+				() -> Ui.onMain(this, () -> {
 					if (thenDuplicate) {
 						carryForwardToNextPeriod();
 					} else {

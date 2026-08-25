@@ -42,6 +42,7 @@ import in.basulabs.siesattendance.backend.pojo.ClassKey;
 import in.basulabs.siesattendance.backend.pojo.CourseAttendanceStat;
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
 import in.basulabs.siesattendance.backend.pojo.StudentAttendanceStat;
+import in.basulabs.siesattendance.backend.pojo.SessionImpact;
 import in.basulabs.siesattendance.backend.pojo.StatRow;
 import in.basulabs.siesattendance.backend.pojo.StatsSummary;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
@@ -72,8 +73,8 @@ import in.basulabs.siesattendance.backend.util.DatabaseBackup;
  * once, at a moment of its choosing, goes through a method named {@code ...Sync} taking a
  * callback. Those callbacks fire on a background thread, so a fragment receiving one has to post
  * to the main thread itself before touching a view; the fragments do this with
- * {@code requireActivity().runOnUiThread}, guarded by {@code isAdded()} because the user may have
- * navigated away in the meantime.
+ * {@code Ui.onMain(this, …)}, which posts only while the fragment is still attached because the
+ * user may have navigated away in the meantime.
  *
  * <h3>The academic session</h3>
  * {@link #academicYear} is the session new work is filed under, resolved from the
@@ -212,6 +213,28 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return currentSession;
 	}
 
+	/**
+	 * The session a moment in time falls in, which is the session anything about a lecture has
+	 * to be read against.
+	 * <p>
+	 * {@link #academicYearValue()} is the session <em>new</em> work is filed under, and it is
+	 * the wrong answer for a lecture that already exists: a lecture from a past session has to
+	 * be looked at through that session's roll numbers and enrolments, not through this year's.
+	 * Using the current value instead would rebuild a past lecture's roll from students who
+	 * were never in the room.
+	 * <p>
+	 * Falls back to the current session when the timestamp lands in a gap between defined
+	 * sessions, which is the same lecture {@code DaoAcademicYear.countOrphanLectures} exists to
+	 * surface. Reads the database, so it must be called off the main thread.
+	 */
+	private int sessionYearFor(@NonNull ZonedDateTime when) {
+
+		EntityAcademicYear session =
+				db.daoAcademicYear().findContainingSync(when.toEpochSecond());
+
+		return session == null ? academicYearValue() : session.academicYear;
+	}
+
 	// ── Academic sessions ────────────────────────────────────────────────
 
 	public LiveData<List<EntityAcademicYear>> getAcademicYears() {
@@ -232,14 +255,34 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return db.daoAcademicYear().countOrphanLectures();
 	}
 
+	/**
+	 * Creates or edits a session.
+	 *
+	 * @param creating true when this is a new session rather than an edit. The upsert
+	 *                 underneath replaces on a matching key, so without this an "add" that
+	 *                 named an existing year would silently rewrite that session's dates
+	 *                 instead of being refused. Those dates are what every lecture's session
+	 *                 is decided by, so overwriting them by accident moves attendance between
+	 *                 sessions.
+	 */
 	public void saveAcademicYear(int year, @NonNull LocalDate start, @NonNull LocalDate end,
-	                             @NonNull Runnable onDone) {
+	                             boolean creating, @NonNull Runnable onDone) {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				if (!end.isAfter(start)) {
 					toastMessage.postValue("The end date must be after the start date");
 					return;
+				}
+
+				if (creating) {
+					EntityAcademicYear clash = db.daoAcademicYear().getByIdSync(year);
+
+					if (clash != null) {
+						toastMessage.postValue("The " + clash.label()
+								+ " session already exists. Edit it instead.");
+						return;
+					}
 				}
 
 				// Overlapping sessions would make a lecture's session ambiguous, and the join
@@ -263,6 +306,17 @@ public class AttendanceViewModel extends AndroidViewModel {
 				toastMessage.postValue("Could not save: " + e.getMessage());
 			}
 		});
+	}
+
+	/**
+	 * What removing a session would strand, for the confirmation to quote back. The callback
+	 * runs off the main thread.
+	 */
+	public void loadSessionDeletionImpact(@NonNull EntityAcademicYear year,
+	                                      @NonNull java.util.function.Consumer<SessionImpact> cb) {
+
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoAcademicYear()
+				.deletionImpactSync(year.academicYear, year.startEpoch, year.endEpoch)));
 	}
 
 	public void deleteAcademicYear(@NonNull EntityAcademicYear year, @NonNull Runnable onDone) {
@@ -322,19 +376,34 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
-	 * Writes the register for the current session as a spreadsheet.
+	 * The session an export should cover.
+	 * <p>
+	 * The export screen is opened from the report, and the report has a session picker of its
+	 * own precisely so a past year can be examined; taking the app-wide value instead would
+	 * hand back a spreadsheet for a different year than the one on screen, with a file name
+	 * agreeing with the data so that nothing contradicted it. A spreadsheet has to name one
+	 * session, so "every session" on the report falls back to the current one.
+	 */
+	public int exportAcademicYear() {
+		Integer reportYear = statsFilter().academicYear;
+		return reportYear == null ? academicYearValue() : reportYear;
+	}
+
+	/**
+	 * Writes the register for one session as a spreadsheet.
 	 *
+	 * @param academicYear     the session to cover; see {@link #exportAcademicYear()}
 	 * @param thresholdPercent overall attendance below which a student is shaded as a
 	 *                         defaulter, or {@link AttendanceExporter#NO_THRESHOLD} for none
 	 * @param groups           extra sheets, each totalling only its own courses. Copied here
 	 *                         because the caller's list belongs to a dialog that is about to
 	 *                         close.
 	 */
-	public void exportAttendanceSheet(@NonNull Uri destination, int thresholdPercent,
+	public void exportAttendanceSheet(@NonNull Uri destination, int academicYear,
+	                                  int thresholdPercent,
 	                                  @NonNull List<CourseGroup> groups,
 	                                  @NonNull ExportFilter filter) {
 
-		final int acadYear = academicYearValue();
 		busy.setValue(true);
 
 		// Off the query pool: building the sheet walks every student and every course, and
@@ -342,7 +411,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		FILE_TASK_EXECUTOR.execute(() -> {
 			try {
 				AttendanceExporter.Summary summary = AttendanceExporter.export(
-						getApplication(), destination, acadYear, thresholdPercent,
+						getApplication(), destination, academicYear, thresholdPercent,
 						new ArrayList<>(groups), filter);
 				exportResult.postValue(summary);
 			} catch (Exception e) {
@@ -679,8 +748,67 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
+	/**
+	 * Every course on record, discontinued ones included.
+	 * <p>
+	 * This is for the screens that look backwards: the export and the report both have to
+	 * cover a retired course's history, since the lectures filed under it really happened.
+	 * Anything that is about to record new work wants {@link #loadActiveCoursesSync} instead.
+	 */
 	public void loadCoursesSync(@NonNull java.util.function.Consumer<List<EntityCourse>> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoCourse().getAllSync()));
+	}
+
+	/**
+	 * The courses still being offered, for the pickers that create new lectures.
+	 * <p>
+	 * This is what makes {@link #discontinueCourse} mean anything: without it a retired course
+	 * stays in the take-attendance dropdown and can go on collecting lectures, which is the
+	 * whole thing marking it discontinued is supposed to stop.
+	 */
+	public void loadActiveCoursesSync(
+			@NonNull java.util.function.Consumer<List<EntityCourse>> cb) {
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoCourse().getActiveSync()));
+	}
+
+	/**
+	 * The active courses, plus the one a lecture is already filed under even if it has since
+	 * been discontinued.
+	 * <p>
+	 * The edit screen cannot simply offer the active list. A lecture filed under a course that
+	 * was retired afterwards would find no match, leave the field blank, and refuse to save
+	 * for want of a course the user never removed. Keeping it in the list shows the record as
+	 * it stands while still steering any change towards a course that is still running.
+	 *
+	 * @param mustInclude the lecture's current course; ignored when it is already active
+	 */
+	public void loadCoursesForEdit(long mustInclude,
+	                               @NonNull java.util.function.Consumer<List<EntityCourse>> cb) {
+
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+
+			List<EntityCourse> courses = new ArrayList<>(db.daoCourse().getActiveSync());
+
+			boolean present = false;
+			for (EntityCourse course : courses) {
+				if (course.courseID == mustInclude) {
+					present = true;
+					break;
+				}
+			}
+
+			if (!present) {
+				EntityCourse discontinued = db.daoCourse().getByIdSync(mustInclude);
+				if (discontinued != null) {
+					courses.add(discontinued);
+					// getActiveSync orders by code; keep the appended row in that order
+					// rather than leaving it stranded at the end of the dropdown.
+					courses.sort((a, b) -> a.courseCode.compareToIgnoreCase(b.courseCode));
+				}
+			}
+
+			cb.accept(courses);
+		});
 	}
 
 	public void loadProfessorsSync(
@@ -964,6 +1092,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 	/**
 	 * Loads the roll for one lecture. Any attendance already saved for it is pre-applied, so
 	 * reopening a marked lecture shows the previous answers rather than a blank sheet.
+	 * <p>
+	 * The roll is read against the session the lecture itself falls in, not the session new
+	 * work is being filed under. Those differ whenever a past year's lecture is opened, and
+	 * taking the current one would list this year's students instead: the marks actually
+	 * stored would have nobody to show them against, and saving the sheet would replace them
+	 * wholesale.
 	 */
 	public void loadAttendanceSheet(long lectureID) {
 		busy.setValue(true);
@@ -981,7 +1115,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 			// A lecture with no batch was taken for the course's whole class, so the roll is
 			// rebuilt from the course rather than from batch membership.
 			List<StudentWithYear> students = details.batchID == null
-					? db.daoStudent().getRollForCourseSync(details.courseID, academicYearValue())
+					? db.daoStudent().getRollForCourseSync(details.courseID,
+					sessionYearFor(details.startDateTime))
 					: db.daoBatch().getStudentsInBatchSync(details.batchID);
 			List<Long> presentIds = db.daoAttendance().getPresentIdsSync(lectureID);
 
@@ -1065,42 +1200,48 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	// ── Student detail, edit and delete ──────────────────────────────────
 
-	public LiveData<StudentWithYear> getStudent(long studentID) {
-		return db.daoStudent().getOne(studentID, academicYearValue());
+	/**
+	 * One student as they were in one session.
+	 * <p>
+	 * The session is passed in rather than taken from the app-wide value, because the detail
+	 * screen is reached from two places that mean different years — the students list, which
+	 * has its own session, and a drill-down from the report, which has another. Reading the
+	 * current session here while every action on the same screen read the session being
+	 * browsed left the header blank for any student who is not enrolled in both.
+	 */
+	public LiveData<StudentWithYear> getStudent(long studentID, int academicYear) {
+		return db.daoStudent().getOne(studentID, academicYear);
 	}
 
 	public LiveData<List<StudentCourseStat>> getStudentCourseBreakdown(long studentID) {
 		return db.daoStudent().getCourseBreakdown(studentID);
 	}
 
-	public void loadStudentSync(long studentID,
+	public void loadStudentSync(long studentID, int academicYear,
 	                            @NonNull java.util.function.Consumer<StudentWithYear> cb) {
-		final int acadYear = studentFilter().academicYear;
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoStudent().getOneSync(studentID, acadYear)));
+				cb.accept(db.daoStudent().getOneSync(studentID, academicYear)));
 	}
 
 	/**
 	 * Counts what deleting this student would cost, for the confirmation dialog. Read against
-	 * the session currently on screen, since that is the one a withdrawal would apply to.
+	 * the session the caller is showing, since that is the one a withdrawal would apply to.
 	 */
-	public void loadDeletionImpact(long studentID,
+	public void loadDeletionImpact(long studentID, int academicYear,
 	                               @NonNull java.util.function.Consumer<DeletionImpact> cb) {
-		final int acadYear = studentFilter().academicYear;
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoStudent().deletionImpact(studentID, acadYear)));
+				cb.accept(db.daoStudent().deletionImpact(studentID, academicYear)));
 	}
 
 	/**
-	 * Takes the student off the current session's roster, keeping them and their attendance.
+	 * Takes the student off one session's roster, keeping them and their attendance.
 	 */
-	public void withdrawStudentFromSession(long studentID, @NonNull Runnable onDone) {
-
-		final int acadYear = studentFilter().academicYear;
+	public void withdrawStudentFromSession(long studentID, int academicYear,
+	                                       @NonNull Runnable onDone) {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoStudent().withdrawFromSession(studentID, acadYear);
+				db.daoStudent().withdrawFromSession(studentID, academicYear);
 				toastMessage.postValue("Student removed from this session");
 				refreshStudents();
 				onDone.run();
@@ -1127,18 +1268,21 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
-	public void updateStudent(@NonNull EntityStudent student, @NonNull String rollNo,
+	/**
+	 * Applies an edit to a student's record for one session. The session is passed in so that
+	 * the form writes back to the same year it read from, whichever screen opened it.
+	 */
+	public void updateStudent(@NonNull EntityStudent student, int academicYear,
+	                          @NonNull String rollNo,
 	                          @NonNull Year year, @NonNull Stream stream,
 	                          @NonNull Department majorDept, @Nullable Department minorDept,
 	                          @Nullable Department oeDept, @Nullable Integer semester,
 	                          @NonNull Runnable onDone) {
 
-		final int acadYear = studentFilter().academicYear;
-
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoStudent().updateStudentWithYear(student, acadYear, rollNo, year, stream,
-						majorDept, minorDept, oeDept, semester);
+				db.daoStudent().updateStudentWithYear(student, academicYear, rollNo, year,
+						stream, majorDept, minorDept, oeDept, semester);
 				toastMessage.postValue("Student updated");
 				refreshStudents();
 				onDone.run();
@@ -1289,21 +1433,25 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	/**
 	 * How many students already marked on this lecture would not be on the roll if it were
-	 * moved to {@code courseID} / {@code batchID}.
+	 * moved to {@code courseID} / {@code batchID} at {@code start}.
 	 * <p>
 	 * Asked before the change is committed, because moving a lecture to another course is the
 	 * one edit that can leave marks stranded: the attendance rows stay valid as far as the
 	 * database is concerned, but they record a student against a course they do not take, and
 	 * no sheet will ever show them again.
+	 * <p>
+	 * {@code start} is the time the lecture is being moved to, not the one it currently holds,
+	 * because that is what decides which session's roll it will be measured against. Counting
+	 * against a different session from the one {@link #updateLecture} then acts on would put a
+	 * number in front of the user that the edit does not honour.
 	 */
 	public void countStrandedMarks(long lectureID, long courseID, @Nullable Long batchID,
+	                               @NonNull ZonedDateTime start,
 	                               @NonNull java.util.function.Consumer<Integer> cb) {
-
-		final int acadYear = academicYearValue();
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			List<Long> marked = db.daoAttendance().getMarkedIdsSync(lectureID);
-			Set<Long> onRoll = rollIds(courseID, batchID, acadYear);
+			Set<Long> onRoll = rollIds(courseID, batchID, sessionYearFor(start));
 
 			int stranded = 0;
 			for (Long id : marked) {
@@ -1340,8 +1488,6 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                          @Nullable String notes, boolean dropStranded,
 	                          @NonNull Runnable onDone) {
 
-		final int acadYear = academicYearValue();
-
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				if (!end.isAfter(start)) {
@@ -1362,11 +1508,16 @@ public class AttendanceViewModel extends AndroidViewModel {
 				db.daoLecture().updateLecture(lectureID, courseID, batchID, start, end, notes);
 
 				if (dropStranded) {
-					Set<Long> onRoll = rollIds(courseID, batchID, acadYear);
+					// Read against the session the lecture is being moved into, matching
+					// what countStrandedMarks put in front of the user. Taking the current
+					// session instead would find none of a past lecture's students on the
+					// roll and delete every mark it has.
+					Set<Long> onRoll = rollIds(courseID, batchID, sessionYearFor(start));
 
-					// NOT IN () with an empty list is never true in SQLite, which would
-					// delete nothing rather than everything. Clearing the sheet outright is
-					// what an empty roll actually means.
+					// Room writes an empty list as NOT IN (), which SQLite accepts and
+					// evaluates as true for every row, so leaving it to the statement would
+					// clear the sheet by accident rather than by decision. Doing it
+					// explicitly is what an empty roll actually means.
 					if (onRoll.isEmpty()) {
 						db.daoAttendance().clearForLecture(lectureID);
 					} else {
@@ -1568,6 +1719,50 @@ public class AttendanceViewModel extends AndroidViewModel {
 		final int acadYear = academicYearValue();
 		MainDatabase.DB_EXECUTOR.execute(() ->
 				cb.accept(db.daoBatch().getAllForYearSync(acadYear)));
+	}
+
+	/**
+	 * The current session's batches, plus the one a lecture is already filed under even if it
+	 * belongs to an earlier session.
+	 * <p>
+	 * Batches do not carry forward, so a lecture from a past year names a batch the current
+	 * session's list does not contain. Without it the edit form found no match, fell back to
+	 * the first entry and showed "Whole class" for a lecture that has a batch — telling the
+	 * user something untrue about the record they are editing.
+	 *
+	 * @param mustInclude the lecture's current batch, or null for a whole-class lecture
+	 */
+	public void loadBatchesForEdit(@Nullable Long mustInclude,
+	                               @NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
+
+		final int acadYear = academicYearValue();
+
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+
+			List<EntityBatchDesc> batches =
+					new ArrayList<>(db.daoBatch().getAllForYearSync(acadYear));
+
+			if (mustInclude != null) {
+
+				boolean present = false;
+				for (EntityBatchDesc batch : batches) {
+					if (batch.batchID == mustInclude) {
+						present = true;
+						break;
+					}
+				}
+
+				if (!present) {
+					EntityBatchDesc older = db.daoBatch().getByIdSync(mustInclude);
+					if (older != null) {
+						batches.add(older);
+						batches.sort((a, b) -> a.batchName.compareToIgnoreCase(b.batchName));
+					}
+				}
+			}
+
+			cb.accept(batches);
+		});
 	}
 
 	/**

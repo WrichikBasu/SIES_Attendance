@@ -23,6 +23,7 @@ import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -95,7 +96,7 @@ public class FragmentAddProfessor extends Fragment {
 				if (professor == null || !isAdded()) {
 					return;
 				}
-				requireActivity().runOnUiThread(() -> {
+				Ui.onMain(this, () -> {
 					etName.setText(professor.name);
 					etEmail.setText(professor.email);
 					chosenDepartment = professor.department;
@@ -146,10 +147,8 @@ public class FragmentAddProfessor extends Fragment {
 		EntityProfessor professor =
 				new EntityProfessor(name, email, department, designation);
 
-		Runnable navigateBack = () -> requireActivity().runOnUiThread(() -> {
-			if (isAdded()) {
-				Navigation.findNavController(button).navigateUp();
-			}
+		Runnable navigateBack = () -> Ui.onMain(this, () -> {
+			Navigation.findNavController(button).navigateUp();
 		});
 
 		if (editingProfID > 0) {

@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import in.basulabs.siesattendance.backend.AcademicRules;
@@ -251,16 +252,33 @@ public final class CsvImporter {
 	 * Maps normalised column names to their position. Names are lowercased with underscores,
 	 * spaces and hyphens stripped, so "Major Dept", "major_dept" and "majordept" are all read as
 	 * the same column.
+	 * <p>
+	 * A leading byte order mark is dropped first. Excel and Google Sheets both write one at the
+	 * start of a UTF-8 CSV, and it is invisible: it stays attached to the first column name, so
+	 * only that column fails to resolve and the file is rejected for a missing {@code rollNo}
+	 * whose header plainly says {@code rollNo}.
+	 * <p>
+	 * Lowercasing is fixed to {@link Locale#ROOT}. These are internal keys compared against
+	 * ASCII literals, and the default locale would map "MINORDEPT" to "mınordept" on a Turkish
+	 * device, losing the column for that reason instead.
 	 */
 	private static Map<String, Integer> parseHeader(String headerLine) {
+
 		Map<String, Integer> map = new HashMap<>();
-		List<String> cells = splitCsvLine(headerLine);
+		List<String> cells = splitCsvLine(stripByteOrderMark(headerLine));
+
 		for (int i = 0; i < cells.size(); i++) {
-			String key = cells.get(i).trim().toLowerCase()
+			String key = cells.get(i).trim().toLowerCase(Locale.ROOT)
 					.replace("_", "").replace(" ", "").replace("-", "");
 			map.put(key, i);
 		}
 		return map;
+	}
+
+	/** Removes the byte order mark a UTF-8 file may open with. */
+	@NonNull
+	private static String stripByteOrderMark(@NonNull String line) {
+		return line.isEmpty() || line.charAt(0) != '\uFEFF' ? line : line.substring(1);
 	}
 
 	/**

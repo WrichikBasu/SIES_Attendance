@@ -39,6 +39,7 @@ import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.pojo.AttendanceRow;
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
 import in.basulabs.siesattendance.frontend.adapter.AdapterAttendance;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -99,7 +100,7 @@ public class FragmentAttendance extends Fragment {
 
 		MaterialButton save = view.findViewById(R.id.btnSaveAttendance);
 		save.setOnClickListener(v -> viewModel.saveAttendance(
-				() -> requireActivity().runOnUiThread(() ->
+				() -> Ui.onMain(this, () ->
 						Navigation.findNavController(v).navigateUp())));
 
 		viewModel.getAttendanceRows().observe(getViewLifecycleOwner(), this::onRowsChanged);
@@ -204,10 +205,8 @@ public class FragmentAttendance extends Fragment {
 
 	/** The lecture this screen was showing has gone, so there is nothing left to display. */
 	private void leaveScreen() {
-		requireActivity().runOnUiThread(() -> {
-			if (isAdded()) {
-				Navigation.findNavController(requireView()).navigateUp();
-			}
+		Ui.onMain(this, () -> {
+			Navigation.findNavController(requireView()).navigateUp();
 		});
 	}
 
@@ -364,11 +363,7 @@ public class FragmentAttendance extends Fragment {
 			return;
 		}
 
-		requireActivity().runOnUiThread(() -> {
-			if (!isAdded()) {
-				return;
-			}
-
+		Ui.onMain(this, () -> {
 			Bundle args = new Bundle();
 			args.putLong("lectureID", newLectureID);
 

@@ -41,6 +41,7 @@ import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.frontend.adapter.AdapterHeader;
 import in.basulabs.siesattendance.frontend.adapter.AdapterStudent;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel.StudentFilter;
 
@@ -89,6 +90,17 @@ public class FragmentStudents extends Fragment {
 
 	/** Suppresses re-queries while dropdowns are populated in code. */
 	private boolean binding;
+
+	/**
+	 * Whether the session dropdown has been filled in yet.
+	 * <p>
+	 * {@link #bindPendingState()} runs on every student result, and it used to rebind the
+	 * sessions each time to cover the case where the header is built after they arrive.
+	 * Rebinding ends by reloading the batch list, so a database round trip was fired for every
+	 * keystroke in the search box. It only has to happen once, and then again whenever the
+	 * sessions themselves change.
+	 */
+	private boolean sessionsBound;
 
 	/**
 	 * Launcher for the system file picker. Registered at construction time because
@@ -255,6 +267,7 @@ public class FragmentStudents extends Fragment {
 	private void bindSessions(@NonNull List<EntityAcademicYear> loaded) {
 
 		binding = true;
+		sessionsBound = true;
 		sessions = loaded;
 
 		List<String> labels = new ArrayList<>();
@@ -308,11 +321,7 @@ public class FragmentStudents extends Fragment {
 			if (!isAdded()) {
 				return;
 			}
-			requireActivity().runOnUiThread(() -> {
-				if (!isAdded()) {
-					return;
-				}
-
+			Ui.onMain(this, () -> {
 				binding = true;
 				batches = loaded;
 
@@ -451,7 +460,10 @@ public class FragmentStudents extends Fragment {
 			buildClassChips(lastClasses);
 		}
 
-		if (lastSessions != null && !lastSessions.isEmpty()) {
+		// Only to catch sessions that arrived before the header existed. The observer rebinds
+		// whenever they actually change, so doing it again per student result would reload the
+		// batch list on every keystroke.
+		if (!sessionsBound && lastSessions != null && !lastSessions.isEmpty()) {
 			bindSessions(lastSessions);
 		}
 	}
@@ -595,10 +607,7 @@ public class FragmentStudents extends Fragment {
 			if (!isAdded()) {
 				return;
 			}
-			requireActivity().runOnUiThread(() -> {
-				if (!isAdded()) {
-					return;
-				}
+			Ui.onMain(this, () -> {
 				viewModel.setBatchSeed(ids);
 
 				Bundle args = new Bundle();

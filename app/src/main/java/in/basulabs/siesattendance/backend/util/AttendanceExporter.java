@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.MainDatabase;
 import in.basulabs.siesattendance.backend.pojo.ExportRow;
 
@@ -106,13 +107,16 @@ public final class AttendanceExporter {
 		List<ExportRow> rows = MainDatabase.getInstance(context).daoAttendance()
 				.getExportRowsSync(ExportQueryBuilder.build(academicYear, filter));
 
-		// Courses become column pairs, in the order the query returned them (by code). A
-		// LinkedHashMap keeps that order without a second sort.
-		Map<Long, String> courseColumns = new LinkedHashMap<>();
+		// Courses become column pairs and students become rows. The query orders by roll
+		// number first and course code second, so a map filled as the rows arrive records
+		// each course at the point the first student who takes it appears, not in code
+		// order: a course only a later student takes would land after courses whose codes
+		// sort above it. The columns are put back into code order afterwards.
+		Map<Long, String> encountered = new LinkedHashMap<>();
 		Map<Long, Student> students = new LinkedHashMap<>();
 
 		for (ExportRow row : rows) {
-			courseColumns.put(row.courseID, row.courseCode);
+			encountered.put(row.courseID, row.courseCode);
 
 			Student student = students.get(row.studentID);
 
@@ -122,6 +126,8 @@ public final class AttendanceExporter {
 			}
 			student.figures.put(row.courseID, new int[]{row.held, row.attended});
 		}
+
+		Map<Long, String> courseColumns = byCourseCode(encountered);
 
 		OdsWriter ods = new OdsWriter("Attendance " + academicYear);
 		ods.defineStyle(STYLE_TITLE, null, null, true);
@@ -168,8 +174,8 @@ public final class AttendanceExporter {
 	private static void writeTitle(@NonNull OdsWriter ods, int academicYear, int threshold,
 	                               @Nullable CourseGroup group, @NonNull ExportFilter filter) {
 
-		String heading = "Attendance register " + academicYear + "-"
-				+ ((academicYear + 1) % 100);
+		String heading = "Attendance register "
+				+ EntityAcademicYear.labelFor(academicYear);
 
 		if (group != null) {
 			heading = group.name + " \u2013 " + heading;
@@ -305,11 +311,15 @@ public final class AttendanceExporter {
 			}
 		}
 
-		// A student with no lectures held yet is not a defaulter. Treating 0 of 0 as 0% would
-		// shade the entire sheet red at the start of term, when nobody has missed anything.
-		double percent = totalHeld == 0 ? 100.0 : (100.0 * totalAttended) / totalHeld;
+		// A student with no lectures held yet has no percentage at all, and inventing one
+		// either way misreports them: 0% would shade the whole sheet red at the start of term,
+		// and 100% would print a perfect attender who has never been counted. The cell is left
+		// blank instead, which is what the app's own screens show for this case, and the
+		// defaulter test is guarded on its own rather than on a stand-in value.
+		boolean anyHeld = totalHeld > 0;
+		double percent = anyHeld ? (100.0 * totalAttended) / totalHeld : 0d;
 		boolean defaulter = shadingOn(thresholdPercent)
-				&& totalHeld > 0 && percent < thresholdPercent;
+				&& anyHeld && percent < thresholdPercent;
 
 		String style = defaulter ? STYLE_DEFAULTER : null;
 
@@ -333,10 +343,29 @@ public final class AttendanceExporter {
 
 		row.add(OdsWriter.Cell.number(totalHeld, style));
 		row.add(OdsWriter.Cell.number(totalAttended, style));
-		row.add(OdsWriter.Cell.number(Math.round(percent * 10) / 10.0, style));
+		row.add(anyHeld
+				? OdsWriter.Cell.number(Math.round(percent * 10) / 10.0, style)
+				: OdsWriter.Cell.text("", style));
 
 		ods.addRow(row);
 		return defaulter;
+	}
+
+	/**
+	 * The same course map ordered by course code, which is the order a reader scans the sheet
+	 * in and the order the column headings are expected to run in.
+	 */
+	@NonNull
+	private static Map<Long, String> byCourseCode(@NonNull Map<Long, String> courses) {
+
+		List<Map.Entry<Long, String>> entries = new ArrayList<>(courses.entrySet());
+		entries.sort((a, b) -> a.getValue().compareToIgnoreCase(b.getValue()));
+
+		Map<Long, String> ordered = new LinkedHashMap<>();
+		for (Map.Entry<Long, String> entry : entries) {
+			ordered.put(entry.getKey(), entry.getValue());
+		}
+		return ordered;
 	}
 
 	/** A student's row while it is being assembled, before the courses become columns. */
@@ -361,6 +390,6 @@ public final class AttendanceExporter {
 	/** The default name offered in the save dialog, for instance "attendance-2025-26.ods". */
 	@NonNull
 	public static String suggestedFileName(int academicYear) {
-		return "attendance-" + academicYear + "-" + ((academicYear + 1) % 100) + ".ods";
+		return "attendance-" + EntityAcademicYear.labelFor(academicYear) + ".ods";
 	}
 }
