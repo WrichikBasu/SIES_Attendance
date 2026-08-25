@@ -1,5 +1,6 @@
 package in.basulabs.siesattendance.frontend.adapter;
 
+import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -7,6 +8,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.ListAdapter;
@@ -20,9 +22,19 @@ import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 /**
  * One student's attendance broken down by course, on the student detail screen. Shares its row
  * layout with {@link AdapterStudentStat}, since both show a label, a fraction and a bar.
+ * <p>
+ * A row opens the dates behind its fraction, which is the only place in the app that says which
+ * lectures a student actually missed.
  */
 public class AdapterStudentCourseStat
 		extends ListAdapter<StudentCourseStat, AdapterStudentCourseStat.Holder> {
+
+	public interface OnClick {
+		void onCourseClicked(@NonNull StudentCourseStat stat);
+	}
+
+	@Nullable
+	private final OnClick listener;
 
 	private static final DiffUtil.ItemCallback<StudentCourseStat> DIFF =
 			new DiffUtil.ItemCallback<StudentCourseStat>() {
@@ -39,8 +51,9 @@ public class AdapterStudentCourseStat
 				}
 			};
 
-	public AdapterStudentCourseStat() {
+	public AdapterStudentCourseStat(@Nullable OnClick listener) {
 		super(DIFF);
+		this.listener = listener;
 	}
 
 	@NonNull
@@ -55,7 +68,7 @@ public class AdapterStudentCourseStat
 		holder.bind(getItem(position));
 	}
 
-	static class Holder extends RecyclerView.ViewHolder {
+	class Holder extends RecyclerView.ViewHolder {
 
 		private final TextView name, detail, percentage;
 
@@ -67,6 +80,16 @@ public class AdapterStudentCourseStat
 			detail = itemView.findViewById(R.id.tvStatDetail);
 			percentage = itemView.findViewById(R.id.tvStatPercentage);
 			bar = itemView.findViewById(R.id.progressStat);
+
+			// The row layout is shared with AdapterStudentStat, whose rows go nowhere, so the
+			// ripple is attached here rather than in the XML. A row that lights up under a
+			// finger and then does nothing is worse than one that never responds at all.
+			if (listener != null) {
+				TypedValue background = new TypedValue();
+				itemView.getContext().getTheme().resolveAttribute(
+						android.R.attr.selectableItemBackground, background, true);
+				itemView.setBackgroundResource(background.resourceId);
+			}
 		}
 
 		void bind(@NonNull StudentCourseStat stat) {
@@ -80,6 +103,11 @@ public class AdapterStudentCourseStat
 
 			percentage.setTextColor(ContextCompat.getColor(itemView.getContext(),
 					stat.isShort() ? R.color.attendance_short : R.color.attendance_ok));
+
+			itemView.setOnClickListener(listener == null
+					? null
+					: v -> listener.onCourseClicked(stat));
+			itemView.setClickable(listener != null);
 		}
 	}
 }

@@ -1,12 +1,14 @@
 package in.basulabs.siesattendance.backend;
 
 import android.content.Context;
+import android.database.Cursor;
 
 import androidx.annotation.NonNull;
 import androidx.room.Database;
 import androidx.room.Room;
 import androidx.room.RoomDatabase;
 import androidx.room.TypeConverters;
+import androidx.sqlite.db.SupportSQLiteDatabase;
 
 import java.io.File;
 import java.util.concurrent.ExecutorService;
@@ -118,16 +120,34 @@ public abstract class MainDatabase extends RoomDatabase {
 	}
 
 	/**
-	 * Folds the write-ahead log back into the main file.
+	 * Folds the write-ahead log of the live database back into the main file.
 	 * <p>
 	 * Room runs in WAL mode, so recent writes live in a {@code -wal} sidecar until SQLite
 	 * decides to checkpoint. Copying the database file without doing this first produces a
 	 * backup that is missing the most recent work, which is precisely the part the user
 	 * would notice.
+	 *
+	 * @return false if SQLite could not fold the whole log back, in which case the file on
+	 *         disk is not the whole database and must not be copied as though it were
 	 */
-	public static void checkpoint(@NonNull Context context) {
-		getInstance(context).getOpenHelper().getWritableDatabase()
-				.query("PRAGMA wal_checkpoint(TRUNCATE)").close();
+	public static boolean checkpoint(@NonNull Context context) {
+		return checkpoint(getInstance(context).getOpenHelper().getWritableDatabase());
+	}
+
+	/**
+	 * The same, on a database the caller already has open.
+	 * <p>
+	 * The cursor has to be stepped. A query is only prepared when it is created and does not
+	 * run until something asks it for a row, so building this one and closing it unread — which
+	 * is what used to happen here — left the pragma prepared and never executed, and the log
+	 * where it was. The first column of the row it returns is the busy flag: 1 means SQLite
+	 * gave up waiting for a reader and the log still holds pages the main file does not.
+	 */
+	public static boolean checkpoint(@NonNull SupportSQLiteDatabase db) {
+
+		try (Cursor cursor = db.query("PRAGMA wal_checkpoint(TRUNCATE)")) {
+			return cursor.moveToFirst() && cursor.getInt(0) == 0;
+		}
 	}
 
 	/** The {@code user_version} of the live database, which is what drives migrations. */

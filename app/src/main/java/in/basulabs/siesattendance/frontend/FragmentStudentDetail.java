@@ -36,6 +36,9 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 /**
  * One student's record: identity, class, and a per-course attendance breakdown. Edit and delete
  * live in the toolbar overflow.
+ * <p>
+ * Each course in the breakdown opens onto the dates behind its fraction; see
+ * {@link FragmentStudentCourseDates}.
  */
 public class FragmentStudentDetail extends Fragment {
 
@@ -91,13 +94,33 @@ public class FragmentStudentDetail extends Fragment {
 		emptyBreakdown = view.findViewById(R.id.tvEmptyBreakdown);
 
 		RecyclerView recyclerView = view.findViewById(R.id.rvCourseBreakdown);
-		adapter = new AdapterStudentCourseStat();
+		adapter = new AdapterStudentCourseStat(this::openCourseDates);
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
 		recyclerView.setNestedScrollingEnabled(false);
 		recyclerView.setAdapter(adapter);
 
 		setupMenu();
 		observe();
+	}
+
+	/**
+	 * Opens the dates behind one course's fraction.
+	 * <p>
+	 * The course code and topic travel as arguments rather than being looked up again on the
+	 * next screen: they are already on this row, and re-querying them would leave the heading
+	 * blank for as long as the round trip took.
+	 */
+	private void openCourseDates(@NonNull StudentCourseStat stat) {
+
+		Bundle args = new Bundle();
+		args.putLong("studentID", studentID);
+		args.putLong("courseID", stat.courseID);
+		args.putInt("academicYear", academicYear);
+		args.putString("courseCode", stat.courseCode);
+		args.putString("courseTopic", stat.courseTopic);
+
+		Navigation.findNavController(requireView())
+				.navigate(R.id.action_studentDetail_to_studentCourseDates, args);
 	}
 
 	/**

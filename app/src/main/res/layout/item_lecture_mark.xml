@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="16dp"
+    android:paddingVertical="12dp">
+
+    <!-- A colour bar rather than a chip: the list is scanned for runs of absences, and a
+         stripe down the left edge reads as a pattern where repeated words do not. -->
+    <View
+        android:id="@+id/viewMarkStripe"
+        android:layout_width="4dp"
+        android:layout_height="34dp"
+        android:layout_marginEnd="12dp"
+        android:background="@color/attendance_ok" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tvMarkDate"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceTitleSmall"
+            tools:text="Tue, 22 Jul 2026" />
+
+        <TextView
+            android:id="@+id/tvMarkDetails"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            tools:text="10:00 – 11:00 · Batch A" />
+
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvMarkStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:textAppearance="?attr/textAppearanceLabelLarge"
+        tools:text="Present" />
+
+</LinearLayout>

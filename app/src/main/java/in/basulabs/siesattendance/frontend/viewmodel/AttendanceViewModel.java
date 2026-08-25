@@ -46,6 +46,7 @@ import in.basulabs.siesattendance.backend.pojo.SessionImpact;
 import in.basulabs.siesattendance.backend.pojo.StatRow;
 import in.basulabs.siesattendance.backend.pojo.StatsSummary;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
+import in.basulabs.siesattendance.backend.pojo.StudentLectureMark;
 import in.basulabs.siesattendance.backend.stats.StatsFilter;
 import in.basulabs.siesattendance.backend.stats.StatsQueryBuilder;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
@@ -1215,6 +1216,15 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	public LiveData<List<StudentCourseStat>> getStudentCourseBreakdown(long studentID) {
 		return db.daoStudent().getCourseBreakdown(studentID);
+	}
+
+	/**
+	 * The lectures behind one course of that breakdown, each with the mark this student carries
+	 * for it. Backs the drill-down that says which dates they were present and absent on.
+	 */
+	public LiveData<List<StudentLectureMark>> getStudentLectureMarks(long studentID,
+	                                                                 long courseID) {
+		return db.daoStudent().getLectureMarks(studentID, courseID);
 	}
 
 	public void loadStudentSync(long studentID, int academicYear,

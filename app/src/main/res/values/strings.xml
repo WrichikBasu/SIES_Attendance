@@ -163,6 +163,16 @@
     <string name="empty_course_breakdown">This student has not been marked in any lecture
         yet.</string>
 
+    <!-- Per-course dates: which lectures a student was present at and which they missed -->
+    <string name="title_attendance_dates">Attendance dates</string>
+    <string name="section_lecture_by_lecture">Lecture by lecture</string>
+    <string name="label_present">Present</string>
+    <string name="label_absent">Absent</string>
+    <!-- 1: lectures attended, 2: lectures marked, 3: lectures missed -->
+    <string name="label_present_absent_summary">Present at %1$d of %2$d · absent %3$d</string>
+    <string name="empty_lecture_marks">This student has no marks recorded for this course
+        yet.</string>
+
                 <string name="dialog_delete_batch_title">Delete this batch?</string>
     <string name="dialog_delete_batch_message">%1$s will be removed along with its student
         membership and course links.</string>

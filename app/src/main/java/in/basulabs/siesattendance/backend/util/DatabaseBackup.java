@@ -225,8 +225,15 @@ public final class DatabaseBackup {
 		try {
 			// Room keeps recent writes in the -wal sidecar. Without this the copied file
 			// would be missing whatever was saved since the last automatic checkpoint,
-			// which is exactly the attendance the user just took.
-			MainDatabase.checkpoint(context);
+			// which is exactly the attendance the user just took, or the detail they came
+			// here to correct. A backup short of those is worse than no backup, because
+			// nothing about it looks wrong until it is restored, so a checkpoint that could
+			// not finish stops the export rather than writing a plausible stale file.
+			if (!MainDatabase.checkpoint(context)) {
+				return Result.failed(Failure.IO,
+						"The database was busy and the most recent changes could not be "
+								+ "written out. Please try again in a moment.");
+			}
 
 			File dbFile = MainDatabase.databaseFile(context);
 

@@ -16,9 +16,11 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.MainDatabase;
@@ -42,7 +44,7 @@ import in.basulabs.siesattendance.backend.MainDatabase;
  * academic_years     academicYear
  * students           roll number in any session, then email
  * student_year       rollNo + academicYear
- * professors         email
+ * professors         email, then name + department
  * courses            courseCode
  * batch_desc         batchName + academicYear
  * lectures           course + batch + start + end
@@ -206,8 +208,9 @@ public final class DatabaseMerger {
 
 	/**
 	 * In dependency order: a table is merged only once every table it points at has been, so
-	 * its rewritten foreign keys always refer to rows that already exist. {@code students} is
-	 * absent because it is matched by hand; see {@link #mergeStudents}.
+	 * its rewritten foreign keys always refer to rows that already exist. {@code students} and
+	 * {@code professors} are absent because they are matched by hand; see {@link #mergeStudents}
+	 * and {@link #mergeProfessors}.
 	 */
 	@NonNull
 	private static List<Spec> specs() {
@@ -219,8 +222,6 @@ public final class DatabaseMerger {
 
 		specs.add(new Spec("student_year", new String[]{"rollNo", "academicYear"}, null,
 				fks("studentID", "students")));
-
-		specs.add(new Spec("professors", new String[]{"email"}, "profID", new HashMap<>()));
 
 		specs.add(new Spec("courses", new String[]{"courseCode"}, "courseID",
 				fks("profID", "professors")));
@@ -283,6 +284,7 @@ public final class DatabaseMerger {
 					Map<String, Map<Long, Long>> maps = new HashMap<>();
 
 					mergeStudents(db, maps, report);
+					mergeProfessors(db, maps, report);
 
 					for (Spec spec : specs()) {
 						mergeTable(db, spec, maps, report);
@@ -338,7 +340,11 @@ public final class DatabaseMerger {
 			// wanted. The checkpoint then folds it back into the single file that gets
 			// attached, because ATTACH reads the file and not its sidecars.
 			SupportSQLiteDatabase staged = migrated.getOpenHelper().getWritableDatabase();
-			staged.query("PRAGMA wal_checkpoint(TRUNCATE)").close();
+
+			if (!MainDatabase.checkpoint(staged)) {
+				throw new IOException("The backup could not be prepared for merging: its "
+						+ "write-ahead log could not be folded back in.");
+			}
 		} finally {
 			migrated.close();
 		}
@@ -500,6 +506,167 @@ public final class DatabaseMerger {
 				new Object[]{email});
 
 		return holder == null || holder == exceptStudentID;
+	}
+
+	// ── Professors, matched by hand ──────────────────────────────────────
+
+	/**
+	 * Resolves every professor in the backup to a local professor, inserting the ones that are
+	 * new.
+	 * <p>
+	 * Email is tried first, since it is uniquely indexed and is what tells apart two professors
+	 * who share a name and a department. On its own it is not enough, though, and that was the
+	 * bug this replaced: a professor whose address had been corrected since the other device
+	 * took its backup matched nothing, so the merge inserted them a second time and left the
+	 * stale row sitting in the list with the old designation still on it. The correction looked
+	 * as though it had never travelled. Name and department are therefore tried next, which is
+	 * what lets a changed address land on the professor it belongs to and carry the rest of the
+	 * edited details with it.
+	 *
+	 * @see #mergeStudents for the same problem on the table where it is worse
+	 */
+	private static void mergeProfessors(@NonNull SupportSQLiteDatabase db,
+	                                    @NonNull Map<String, Map<Long, Long>> maps,
+	                                    @NonNull MergeReport report) {
+
+		Map<Long, Long> professorMap = new HashMap<>();
+		maps.put("professors", professorMap);
+
+		List<String> columns = columnsOf(db, "professors");
+
+		// Local professors already spoken for by an earlier backup row. Only the name and
+		// department fallback consults it: a match on email cannot collide, since the column is
+		// unique on both sides.
+		Set<Long> claimed = new HashSet<>();
+
+		try (Cursor cursor = db.query("SELECT * FROM " + BAK + ".professors")) {
+
+			while (cursor.moveToNext()) {
+
+				long backupID = cursor.getLong(cursor.getColumnIndexOrThrow("profID"));
+				String email = stringOrNull(cursor, "email");
+				String name = stringOrNull(cursor, "name");
+				String department = stringOrNull(cursor, "department");
+
+				Long localID = findLocalProfessor(db, backupID, email, name, department,
+						claimed);
+
+				ContentValues values = rowValues(cursor, columns, "profID",
+						new HashMap<>(), maps);
+
+				if (localID != null) {
+					// The email column is unique. A professor matched on name and department
+					// may be asked to take an address another local professor already holds,
+					// and the update would abort the whole merge, so the local address is kept
+					// and the clash reported rather than guessed at.
+					if (email != null && !email.isEmpty()
+							&& !professorEmailIsFree(db, email, localID)) {
+
+						values.remove("email");
+						report.skipped.add("Kept the existing email for "
+								+ (name == null ? "a professor" : name)
+								+ ": the backup's address is already in use.");
+					}
+
+					db.update("professors",
+							android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT, values,
+							"profID = ?", new Object[]{localID});
+					report.updated("professors");
+
+				} else {
+					localID = db.insert("professors",
+							android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT, values);
+					report.inserted("professors");
+				}
+
+				professorMap.put(backupID, localID);
+				claimed.add(localID);
+			}
+		}
+	}
+
+	/**
+	 * The local professor this backup row describes, or null if there is none.
+	 * <p>
+	 * Email is decisive where it matches. Everything below it guards the fallback, because
+	 * recognising the wrong professor is worse than failing to recognise the right one: a
+	 * duplicate is visible in the list and can be corrected, whereas fusing two people merges
+	 * one's courses into the other's name and there is nothing on screen to say it happened.
+	 * <p>
+	 * So the fallback is refused unless exactly one local professor carries that name and
+	 * department, that professor has not already been claimed by an earlier backup row, and
+	 * their current address is not one the backup gives to somebody else. The last of those is
+	 * what separates the two readings of a name that appears twice: an address the backup knows
+	 * as another professor's means this local row is that other person, not this one.
+	 */
+	@Nullable
+	private static Long findLocalProfessor(@NonNull SupportSQLiteDatabase db, long backupID,
+	                                       @Nullable String email, @Nullable String name,
+	                                       @Nullable String department,
+	                                       @NonNull Set<Long> claimed) {
+
+		if (email != null && !email.isEmpty()) {
+
+			Long byEmail = queryLong(db,
+					"SELECT profID FROM main.professors WHERE email = ? LIMIT 1",
+					new Object[]{email});
+
+			if (byEmail != null) {
+				return byEmail;
+			}
+		}
+
+		if (name == null || department == null) {
+			return null;
+		}
+
+		Long candidates = queryLong(db,
+				"SELECT COUNT(*) FROM main.professors WHERE name = ? AND department = ?",
+				new Object[]{name, department});
+
+		if (candidates == null || candidates != 1L) {
+			return null;
+		}
+
+		Long localID = queryLong(db,
+				"SELECT profID FROM main.professors WHERE name = ? AND department = ? LIMIT 1",
+				new Object[]{name, department});
+
+		if (localID == null || claimed.contains(localID)) {
+			return null;
+		}
+
+		String localEmail = queryString(db,
+				"SELECT email FROM main.professors WHERE profID = ?", new Object[]{localID});
+
+		if (localEmail != null && !localEmail.isEmpty()) {
+
+			Long owner = queryLong(db,
+					"SELECT profID FROM " + BAK + ".professors WHERE email = ? LIMIT 1",
+					new Object[]{localEmail});
+
+			if (owner != null && owner != backupID) {
+				return null;
+			}
+		}
+
+		return localID;
+	}
+
+	/**
+	 * Whether an address can be given to a professor without colliding with the unique index.
+	 *
+	 * @param exceptProfID the professor about to receive it, whose own claim on the address does
+	 *                     not count as a clash
+	 */
+	private static boolean professorEmailIsFree(@NonNull SupportSQLiteDatabase db,
+	                                            @NonNull String email, long exceptProfID) {
+
+		Long holder = queryLong(db,
+				"SELECT profID FROM main.professors WHERE email = ? LIMIT 1",
+				new Object[]{email});
+
+		return holder == null || holder == exceptProfID;
 	}
 
 	// ── The generic engine ───────────────────────────────────────────────
@@ -737,6 +904,16 @@ public final class DatabaseMerger {
 
 		try (Cursor cursor = db.query(sql, args)) {
 			return cursor.moveToFirst() && !cursor.isNull(0) ? cursor.getLong(0) : null;
+		}
+	}
+
+	/** First column of the first row as a String, or null when there is no row or it is null. */
+	@Nullable
+	private static String queryString(@NonNull SupportSQLiteDatabase db, @NonNull String sql,
+	                                  @NonNull Object[] args) {
+
+		try (Cursor cursor = db.query(sql, args)) {
+			return cursor.moveToFirst() && !cursor.isNull(0) ? cursor.getString(0) : null;
 		}
 	}
 

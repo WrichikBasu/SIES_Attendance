@@ -13,7 +13,9 @@ import java.util.List;
 import in.basulabs.siesattendance.backend.pojo.ClassKey;
 import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
+import in.basulabs.siesattendance.backend.pojo.StudentLectureMark;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
+import in.basulabs.siesattendance.backend.stats.SqlBits;
 
 /**
  * Students, and the per-session enrolments that sit alongside them.
@@ -415,4 +417,26 @@ public abstract class DaoStudent {
 			"GROUP BY c.courseID, c.courseCode, c.courseTopic " +
 			"ORDER BY c.courseCode ASC")
 	public abstract LiveData<List<StudentCourseStat>> getCourseBreakdown(long studentID);
+
+	/**
+	 * The lectures behind one row of {@link #getCourseBreakdown}: every lecture of one course
+	 * this student was marked on, and whether they were present at it.
+	 * <p>
+	 * Restricted to the student's own attendance rows for the same reason the breakdown is. A
+	 * lecture nobody put them on the sheet for is not an absence, and listing it as a date they
+	 * missed would put a record on screen that was never taken.
+	 * <p>
+	 * Newest first, because a run of recent absences is what anyone opening this screen is
+	 * looking for. Ordered on the epoch prefix rather than the stored string, which would sort
+	 * lexicographically; see {@link in.basulabs.siesattendance.backend.stats.SqlBits}.
+	 */
+	@Query("SELECT l.lectureID, l.startDateTime, l.endDateTime, " +
+			"b.batchName AS batchName, a.present " +
+			"FROM attendance a " +
+			"INNER JOIN lectures l ON l.lectureID = a.lectureID " +
+			"LEFT JOIN batch_desc b ON b.batchID = l.batchID " +
+			"WHERE a.studentID = :studentID AND l.courseID = :courseID " +
+			"ORDER BY " + SqlBits.EPOCH_START + " DESC")
+	public abstract LiveData<List<StudentLectureMark>> getLectureMarks(long studentID,
+	                                                                   long courseID);
 }

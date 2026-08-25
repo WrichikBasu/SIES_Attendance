@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- Who and what this list is about. The screen is reached from two levels down, and
+         without it the dates belong to nobody in particular. -->
+    <com.google.android.material.card.MaterialCardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:cardBackgroundColor="?attr/colorSurfaceVariant"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="0dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvCourseName"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textAppearance="?attr/textAppearanceTitleMedium"
+                        tools:text="PHY301 · Accelerator physics" />
+
+                    <TextView
+                        android:id="@+id/tvStudentLine"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        tools:text="Aarav Patil · 2024CS032" />
+
+                    <TextView
+                        android:id="@+id/tvMarkSummary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        tools:text="Present at 34 of 40 · absent 6" />
+
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvCoursePercentage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:layout_marginStart="12dp"
+                    android:textAppearance="?attr/textAppearanceHeadlineSmall"
+                    tools:text="85%" />
+
+            </LinearLayout>
+
+            <ProgressBar
+                android:id="@+id/progressCourse"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="4dp"
+                android:layout_marginTop="10dp"
+                android:max="100"
+                tools:progress="85" />
+
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:layout_marginBottom="4dp"
+        android:text="@string/section_lecture_by_lecture"
+        android:textAppearance="?attr/textAppearanceLabelMedium"
+        android:textColor="?attr/colorOnSurfaceVariant" />
+
+    <TextView
+        android:id="@+id/tvEmptyMarks"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:padding="24dp"
+        android:text="@string/empty_lecture_marks"
+        android:textAppearance="?attr/textAppearanceBodySmall"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:visibility="gone"
+        tools:visibility="visible" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvLectureMarks"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        tools:itemCount="6"
+        tools:listitem="@layout/item_lecture_mark" />
+
+</LinearLayout>

@@ -59,6 +59,43 @@
         <action
             android:id="@+id/action_studentDetail_to_editStudent"
             app:destination="@id/fragmentAddStudent" />
+        <action
+            android:id="@+id/action_studentDetail_to_studentCourseDates"
+            app:destination="@id/fragmentStudentCourseDates" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fragmentStudentCourseDates"
+        android:name="in.basulabs.siesattendance.frontend.FragmentStudentCourseDates"
+        android:label="@string/title_attendance_dates"
+        tools:layout="@layout/fragment_student_course_dates">
+
+        <argument
+            android:name="studentID"
+            android:defaultValue="-1L"
+            app:argType="long" />
+
+        <argument
+            android:name="courseID"
+            android:defaultValue="-1L"
+            app:argType="long" />
+
+        <argument
+            android:name="academicYear"
+            android:defaultValue="0"
+            app:argType="integer" />
+
+        <argument
+            android:name="courseCode"
+            android:defaultValue="@null"
+            app:argType="string"
+            app:nullable="true" />
+
+        <argument
+            android:name="courseTopic"
+            android:defaultValue="@null"
+            app:argType="string"
+            app:nullable="true" />
     </fragment>
 
     <fragment
