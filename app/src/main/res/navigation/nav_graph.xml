@@ -198,7 +198,16 @@
         <action
             android:id="@+id/action_attendancePicker_to_takeAttendance"
             app:destination="@id/fragmentTakeAttendance" />
+        <action
+            android:id="@+id/action_attendancePicker_to_importAttendance"
+            app:destination="@id/fragmentImportAttendance" />
     </fragment>
+
+    <fragment
+        android:id="@+id/fragmentImportAttendance"
+        android:name="in.basulabs.siesattendance.frontend.FragmentImportAttendance"
+        android:label="@string/title_import_attendance"
+        tools:layout="@layout/fragment_import_attendance" />
 
     <fragment
         android:id="@+id/fragmentAttendance"

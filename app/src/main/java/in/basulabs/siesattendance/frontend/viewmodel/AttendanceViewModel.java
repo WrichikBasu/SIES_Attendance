@@ -51,6 +51,7 @@ import in.basulabs.siesattendance.backend.stats.StatsFilter;
 import in.basulabs.siesattendance.backend.stats.StatsQueryBuilder;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.backend.util.AttendanceExporter;
+import in.basulabs.siesattendance.backend.util.AttendanceRecordImporter;
 import in.basulabs.siesattendance.backend.util.CourseGroup;
 import in.basulabs.siesattendance.backend.util.ExportFilter;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
@@ -710,6 +711,96 @@ public class AttendanceViewModel extends AndroidViewModel {
 			importResult.postValue(result);
 			busy.postValue(false);
 			refreshStudents();
+		});
+	}
+
+	// ── Attendance record import ─────────────────────────────────────────
+
+	/**
+	 * The plan built from the chosen file, held between reading it and writing it.
+	 * <p>
+	 * It lives here rather than in the fragment because it is the thing the user is being asked
+	 * to approve: a rotation between the review screen and the confirmation must not quietly
+	 * substitute a different plan, and the work that produced it takes long enough that redoing
+	 * it on every configuration change would be visible.
+	 */
+	private final MutableLiveData<AttendanceRecordImporter.Plan> attendancePlan =
+			new MutableLiveData<>();
+
+	private final MutableLiveData<AttendanceRecordImporter.Result> attendanceImportResult =
+			new MutableLiveData<>();
+
+	public LiveData<AttendanceRecordImporter.Plan> getAttendancePlan() {
+		return attendancePlan;
+	}
+
+	public void clearAttendancePlan() {
+		attendancePlan.setValue(null);
+	}
+
+	public LiveData<AttendanceRecordImporter.Result> getAttendanceImportResult() {
+		return attendanceImportResult;
+	}
+
+	public void clearAttendanceImportResult() {
+		attendanceImportResult.setValue(null);
+	}
+
+	/**
+	 * Reads an attendance sheet and works out what it would create, without writing anything.
+	 * <p>
+	 * Split from the write so the user sees the sessions, the batch chosen for each and what
+	 * would be overwritten before any of it happens; {@link #commitAttendanceImport} is the
+	 * other half.
+	 */
+	public void planAttendanceImport(@NonNull Uri uri) {
+
+		busy.setValue(true);
+		attendanceImportResult.setValue(null);
+
+		// Off the query pool for the same reason the export is: resolving a term's worth of
+		// columns walks the roll of every course and the membership of every batch.
+		FILE_TASK_EXECUTOR.execute(() -> {
+			try {
+				attendancePlan.postValue(
+						AttendanceRecordImporter.plan(getApplication(), uri));
+			} catch (Exception e) {
+				toastMessage.postValue("Could not read the file: " + e.getMessage());
+			} finally {
+				busy.postValue(false);
+			}
+		});
+	}
+
+	/**
+	 * Writes the plan the user has approved.
+	 * <p>
+	 * The plan is taken from the LiveData rather than passed in, so what is written is
+	 * necessarily what was reviewed. It is cleared once the write returns, since the counts it
+	 * carries describe a file that has now been imported and the review screen has nothing left
+	 * to offer about it.
+	 */
+	public void commitAttendanceImport() {
+
+		AttendanceRecordImporter.Plan plan = attendancePlan.getValue();
+
+		if (plan == null || !plan.canImport()) {
+			toastMessage.setValue("There is nothing to import");
+			return;
+		}
+
+		busy.setValue(true);
+
+		FILE_TASK_EXECUTOR.execute(() -> {
+			try {
+				attendanceImportResult.postValue(
+						AttendanceRecordImporter.commit(getApplication(), plan));
+				attendancePlan.postValue(null);
+			} catch (Exception e) {
+				toastMessage.postValue("Could not import: " + e.getMessage());
+			} finally {
+				busy.postValue(false);
+			}
 		});
 	}
 

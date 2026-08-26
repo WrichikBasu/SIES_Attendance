@@ -576,4 +576,73 @@
     <string name="label_merge_lectures">Lectures</string>
     <string name="label_merge_attendance">Attendance records</string>
 
+    <!-- Importing an attendance register -->
+    <string name="title_import_attendance">Import attendance</string>
+    <string name="action_import_attendance">Import a register…</string>
+
+    <string name="hint_import_attendance_intro">Reads a register kept in a spreadsheet: one
+        column for each class, one row for each student. Choosing a file only reads it — you
+        see every session it would create, and which batch it worked out for each, before
+        anything is saved.</string>
+
+    <string name="dialog_attendance_format_title">Attendance file format</string>
+    <string name="dialog_attendance_format_message">The first column holds the roll numbers.
+        Every column after it is one class, named by four heading lines: course code, date,
+        start time and end time.\n\nIn a student\'s cell, P means present and AB means absent.
+        Leave it empty if the student was not in that class at all — that is how the app works
+        out which batch the class was held for, and it is not the same as an absence.\n\nEvery
+        imported class is saved against a batch, so the batch that was in the room has to exist
+        in the app before you import. A class taught to everybody needs a batch holding
+        everybody.\n\nExample:\n\n%1$s</string>
+
+    <string name="label_import_batch">%1$s · %2$d marked, %3$d not in this class</string>
+    <string name="label_import_batch_all">%1$s · %2$d marked</string>
+    <string name="label_import_counts">%1$d present · %2$d absent</string>
+    <string name="label_import_session_years">Session: %1$s</string>
+    <string name="note_import_replaces_sheet">Replaces the sheet already recorded for this
+        class.</string>
+
+    <plurals name="action_import_sessions">
+        <item quantity="one">Import %d class</item>
+        <item quantity="other">Import %d classes</item>
+    </plurals>
+
+    <plurals name="label_import_sessions_found">
+        <item quantity="one">%1$d class ready to import, with %2$d marks</item>
+        <item quantity="other">%1$d classes ready to import, with %2$d marks</item>
+    </plurals>
+
+    <plurals name="label_import_replaces">
+        <item quantity="one">%d replaces a sheet already recorded</item>
+        <item quantity="other">%d replace sheets already recorded</item>
+    </plurals>
+
+    <plurals name="label_import_skipped">
+        <item quantity="one">%d column will be skipped</item>
+        <item quantity="other">%d columns will be skipped</item>
+    </plurals>
+
+    <string name="dialog_import_attendance_title">Save these records?</string>
+    <string name="dialog_import_attendance_message">Each class is saved with the batch shown
+        against it. A class saved against the wrong batch changes the attendance percentage of
+        everyone in that batch, so check them before saving.\n\nA class already on record has
+        its marks replaced.</string>
+
+    <string name="message_import_attendance_failed">Nothing was saved: %1$s</string>
+
+    <plurals name="message_import_created">
+        <item quantity="one">%d class recorded</item>
+        <item quantity="other">%d classes recorded</item>
+    </plurals>
+
+    <plurals name="message_import_replaced">
+        <item quantity="one">%d existing sheet replaced</item>
+        <item quantity="other">%d existing sheets replaced</item>
+    </plurals>
+
+    <plurals name="message_import_marks">
+        <item quantity="one">%d attendance mark saved</item>
+        <item quantity="other">%d attendance marks saved</item>
+    </plurals>
+
 </resources>

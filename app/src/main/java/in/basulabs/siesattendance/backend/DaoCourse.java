@@ -1,5 +1,6 @@
 package in.basulabs.siesattendance.backend;
 
+import androidx.annotation.Nullable;
 import androidx.lifecycle.LiveData;
 import androidx.room.Dao;
 import androidx.room.Insert;
@@ -67,6 +68,26 @@ public abstract class DaoCourse {
 	@Query("SELECT * FROM courses WHERE year = :year AND stream = :stream " +
 			"AND offeringDepartment = :dept ORDER BY semester, courseCode")
 	public abstract List<EntityCourse> getForClassSync(Year year, Stream stream, Department dept);
+
+	/**
+	 * The course a code names, for an import that arrives keyed by code rather than by ID.
+	 * <p>
+	 * Compared without regard to case, unlike the unique index on the column, because the code
+	 * in an imported file was typed by a person and "phys101" is not a different course from
+	 * "PHYS101". The index cannot serve the comparison as a result, which costs nothing over a
+	 * table holding one row per paper on the syllabus.
+	 */
+	@Query("SELECT * FROM courses WHERE courseCode = :courseCode COLLATE NOCASE LIMIT 1")
+	@Nullable
+	public abstract EntityCourse findByCodeSync(String courseCode);
+
+	/**
+	 * The batches this course has been linked to. Used only as a tie-breaker when an import has
+	 * to work out which batch a session was held for; see {@code BatchMatcher}. It is not a
+	 * restriction, for the reason set out at the foot of this class.
+	 */
+	@Query("SELECT batchID FROM course_batch_map WHERE courseID = :courseID")
+	public abstract List<Long> getLinkedBatchIdsSync(long courseID);
 
 	@Insert(onConflict = OnConflictStrategy.IGNORE)
 	public abstract void linkBatch(EntityCourseBatchMap map);

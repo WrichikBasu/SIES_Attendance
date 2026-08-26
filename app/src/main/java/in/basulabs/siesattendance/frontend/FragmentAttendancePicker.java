@@ -2,13 +2,18 @@ package in.basulabs.siesattendance.frontend;
 
 import android.os.Bundle;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.view.MenuProvider;
 import androidx.fragment.app.Fragment;
+import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
@@ -91,7 +96,35 @@ public class FragmentAttendancePicker extends Fragment {
 		prev.setOnClickListener(v -> shiftDate(-1));
 		next.setOnClickListener(v -> shiftDate(1));
 
+		setupImportMenu();
 		observeForDate();
+	}
+
+	/**
+	 * The register import lives in the overflow rather than on the screen.
+	 * <p>
+	 * This is the screen it belongs to, since what it produces is lectures with their sheets
+	 * already filled in, but it is a once-a-term operation sitting beside the thing a professor
+	 * opens the app to do every day. It should not compete with it for space.
+	 */
+	private void setupImportMenu() {
+		requireActivity().addMenuProvider(new MenuProvider() {
+
+			@Override
+			public void onCreateMenu(@NonNull Menu menu, @NonNull MenuInflater inflater) {
+				inflater.inflate(R.menu.menu_attendance_picker, menu);
+			}
+
+			@Override
+			public boolean onMenuItemSelected(@NonNull MenuItem item) {
+				if (item.getItemId() == R.id.action_import_attendance) {
+					Navigation.findNavController(requireView())
+							.navigate(R.id.action_attendancePicker_to_importAttendance);
+					return true;
+				}
+				return false;
+			}
+		}, getViewLifecycleOwner(), Lifecycle.State.RESUMED);
 	}
 
 	private void shiftDate(int days) {
