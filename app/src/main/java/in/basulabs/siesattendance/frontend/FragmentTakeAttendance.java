@@ -44,10 +44,17 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 /**
  * Take attendance for a lecture that just happened.
  * <p>
- * There is no separate scheduling step. Selection is two stages: pick a course, then pick which
- * group of its students the session was for. Only once a group is chosen does the roll load.
- * Showing the whole class immediately would be wrong for a practical, and the user would have no
- * way to tell that the list in front of them was the wrong one.
+ * There is no separate scheduling step. Selection is two stages: pick a course, then pick the
+ * batch the session was for. Only once a batch is chosen does the roll load. Showing a roll
+ * immediately would be wrong for a practical, and the user would have no way to tell that the
+ * list in front of them was the wrong one.
+ * <p>
+ * A batch is required; there is no whole-class option. The database still allows a lecture with
+ * no batch and older records use it, but nothing recorded from here produces one. The reason is
+ * what a null batch costs in the reports: the export counts a lecture towards a student when it
+ * was whole-class or one of their batches, so a session filed against no batch lands in the
+ * denominator of everybody in the year, including the students who were never in the room. If
+ * the class genuinely is everybody, it needs a batch holding everybody.
  * <p>
  * The lecture row is created when the sheet is saved, so a lecture in the database always
  * represents a session that actually took place.
@@ -94,14 +101,12 @@ public class FragmentTakeAttendance extends Fragment {
 
 	private EntityCourse selectedCourse;
 
-	/** Null means the whole class rather than one batch. */
-	private Long selectedBatchID;
-
 	/**
-	 * Distinguishes "whole class was chosen" from "nothing chosen yet", since both leave
-	 * {@link #selectedBatchID} null.
+	 * The batch the session is being recorded for. Null means nothing has been chosen yet, which
+	 * is the only thing null means now that there is no whole-class option: the roll stays empty
+	 * and the sheet cannot be saved until it is set.
 	 */
-	private boolean batchChosen;
+	private Long selectedBatchID;
 
 	private LocalDate date = LocalDate.now();
 
@@ -125,12 +130,8 @@ public class FragmentTakeAttendance extends Fragment {
 
 	private Long pendingBatchID;
 
-	private boolean pendingBatchChosen;
-
 	private static final String KEY_COURSE = "courseID";
 	private static final String KEY_BATCH = "batchID";
-	private static final String KEY_HAS_BATCH = "hasBatch";
-	private static final String KEY_BATCH_CHOSEN = "batchChosen";
 	private static final String KEY_DATE = "date";
 	private static final String KEY_START = "start";
 	private static final String KEY_END = "end";
@@ -215,7 +216,9 @@ public class FragmentTakeAttendance extends Fragment {
 
 	// ── Course and batch selection ───────────────────────────────────────
 
-	/** Fills the course dropdown from the active courses, then applies any restored selection. */
+	/**
+	 * Fills the course dropdown from the active courses, then applies any restored selection.
+	 */
 	private void loadCourses() {
 		viewModel.loadActiveCoursesSync(list -> {
 			if (!isAdded()) {
@@ -261,35 +264,45 @@ public class FragmentTakeAttendance extends Fragment {
 	 * Asks before a change that would throw away marks already entered. Only reached when
 	 * {@link #rollTouched} is set, so an untouched sheet switches without interruption.
 	 */
-	private void confirmGroupChange(@Nullable Long newBatchID,
-	                                @NonNull List<String> labels) {
+	private void confirmGroupChange(long newBatchID, @NonNull List<String> labels) {
 
 		new MaterialAlertDialogBuilder(requireContext())
 				.setTitle(R.string.dialog_discard_roll_title)
 				.setMessage(R.string.dialog_discard_roll_message)
 				.setNegativeButton(R.string.action_keep_marking, (d, w) -> {
-					// The dropdown already shows the group that was tapped, so putting the
-					// old one back is part of cancelling.
-					int previous = 0;
-					if (selectedBatchID != null) {
-						for (int i = 0; i < batches.size(); i++) {
-							if (batches.get(i).batchID == selectedBatchID) {
-								previous = i + 1;
-								break;
-							}
-						}
-					}
-					actvBatch.setText(labels.get(previous), false);
+					// The dropdown already shows the batch that was tapped, so putting the
+					// old one back is part of cancelling. Only reachable with a batch already
+					// chosen, since there is nothing to discard before that.
+					int previous = indexOfBatch(selectedBatchID);
+					actvBatch.setText(previous < 0 ? "" : labels.get(previous), false);
 				})
 				.setPositiveButton(R.string.action_discard_and_switch, (d, w) ->
 						applyGroupChange(newBatchID))
 				.show();
 	}
 
-	/** Commits a group change and reloads the roll for it, discarding whatever was marked. */
-	private void applyGroupChange(@Nullable Long newBatchID) {
+	/**
+	 * The batch's position in {@link #batches}, or -1 when it is not among them.
+	 */
+	private int indexOfBatch(@Nullable Long batchID) {
+
+		if (batchID == null) {
+			return -1;
+		}
+
+		for (int i = 0; i < batches.size(); i++) {
+			if (batches.get(i).batchID == batchID) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	/**
+	 * Commits a batch change and reloads the roll for it, discarding whatever was marked.
+	 */
+	private void applyGroupChange(long newBatchID) {
 		selectedBatchID = newBatchID;
-		batchChosen = true;
 		rollTouched = false;
 		tilBatch.setError(null);
 		onGroupChosen();
@@ -302,13 +315,13 @@ public class FragmentTakeAttendance extends Fragment {
 	 */
 	private void onCourseChosen(@NonNull EntityCourse course) {
 
-		boolean hadGroup = batchChosen;
+		boolean hadGroup = selectedBatchID != null;
 
 		selectedCourse = course;
 		tilCourse.setError(null);
 		tilBatch.setError(null);
 
-		// The group survives the course change. Batches are listed per session rather than
+		// The batch survives the course change. Batches are listed per session rather than
 		// per course, so the one already chosen is still a valid choice for the new course.
 		loadBatchOptions(course);
 
@@ -319,12 +332,16 @@ public class FragmentTakeAttendance extends Fragment {
 	}
 
 	/**
-	 * Loads the groups attendance can be taken for: the course's whole class, plus every batch
-	 * in the current academic year.
+	 * Loads the batches attendance can be taken for: every batch in the current academic year,
+	 * and nothing else.
 	 * <p>
-	 * The batch list is not narrowed by the course. A batch is a named group of students for a
+	 * The list is not narrowed by the course. A batch is a named group of students for a
 	 * session, not a property of a course, and whoever is taking attendance knows which batch
 	 * is sitting in front of them.
+	 * <p>
+	 * An empty list is a dead end rather than a detail: with no whole-class option there is
+	 * nothing to record a session against, so the helper text says what to do about it instead
+	 * of merely noting the absence.
 	 */
 	private void loadBatchOptions(@NonNull EntityCourse course) {
 		viewModel.loadBatchesForSession(list -> {
@@ -335,7 +352,6 @@ public class FragmentTakeAttendance extends Fragment {
 				batches = list;
 
 				List<String> labels = new ArrayList<>();
-				labels.add(getString(R.string.label_whole_class));
 				for (EntityBatchDesc batch : list) {
 					labels.add(batch.batchName);
 				}
@@ -345,22 +361,16 @@ public class FragmentTakeAttendance extends Fragment {
 
 				actvBatch.setOnItemClickListener((parent, v, position, id) -> {
 
-					Long newBatchID = position == 0
-							? null
-							: batches.get(position - 1).batchID;
+					long newBatchID = batches.get(position).batchID;
 
-					boolean sameGroup = batchChosen && (newBatchID == null
-							? selectedBatchID == null
-							: newBatchID.equals(selectedBatchID));
-
-					if (sameGroup) {
+					if (selectedBatchID != null && selectedBatchID == newBatchID) {
 						return;
 					}
 
-					// A different group means different people, so the marks cannot follow.
+					// A different batch means different people, so the marks cannot follow.
 					// This is the only place on the screen that throws work away, and it asks
 					// first once there is work to lose.
-					if (batchChosen && rollTouched) {
+					if (selectedBatchID != null && rollTouched) {
 						confirmGroupChange(newBatchID, labels);
 					} else {
 						applyGroupChange(newBatchID);
@@ -368,7 +378,7 @@ public class FragmentTakeAttendance extends Fragment {
 				});
 
 				tilBatch.setHelperText(list.isEmpty()
-						? getString(R.string.helper_no_batches_for_course)
+						? getString(R.string.helper_no_batches_for_session)
 						: null);
 
 				// Restores the group after a rotation. Deliberately not onGroupChosen(),
@@ -384,16 +394,12 @@ public class FragmentTakeAttendance extends Fragment {
 	 * screen before anyone starts tapping.
 	 */
 	private void onGroupChosen() {
-		if (selectedCourse == null) {
+		if (selectedCourse == null || selectedBatchID == null) {
 			return;
 		}
 
-		String groupLabel = selectedBatchID == null
-				? selectedCourse.year + " " + selectedCourse.stream + " "
-				+ selectedCourse.offeringDepartment
-				: actvBatch.getText().toString();
-
-		rollHeader.setText(getString(R.string.roll_header_for, groupLabel));
+		rollHeader.setText(getString(R.string.roll_header_for,
+				actvBatch.getText().toString()));
 		viewModel.loadRoll(selectedCourse.courseID, selectedBatchID);
 	}
 
@@ -425,8 +431,8 @@ public class FragmentTakeAttendance extends Fragment {
 		LocalTime initial = isStart
 				? (startTime == null ? LocalTime.of(10, 0) : startTime)
 				: (endTime == null
-				? (startTime == null ? LocalTime.of(11, 0) : startTime.plusHours(1))
-				: endTime);
+				   ? (startTime == null ? LocalTime.of(11, 0) : startTime.plusHours(1))
+				   : endTime);
 
 		MaterialTimePicker picker = new MaterialTimePicker.Builder()
 				.setTimeFormat(TimeFormat.CLOCK_24H)
@@ -460,7 +466,9 @@ public class FragmentTakeAttendance extends Fragment {
 
 	// ── Roll state ───────────────────────────────────────────────────────
 
-	/** Follows the roll held by the ViewModel, which survives rotation and navigation away. */
+	/**
+	 * Follows the roll held by the ViewModel, which survives rotation and navigation away.
+	 */
 	private void observe() {
 		viewModel.getAttendanceRows().observe(getViewLifecycleOwner(), rows -> {
 			adapter.submitRows(rows);
@@ -469,7 +477,9 @@ public class FragmentTakeAttendance extends Fragment {
 		});
 	}
 
-	/** Keeps the present and absent tallies above the list in step with the marks. */
+	/**
+	 * Keeps the present and absent tallies above the list in step with the marks.
+	 */
 	private void updateCounts(@Nullable List<AttendanceRow> rows) {
 		if (rows == null) {
 			return;
@@ -496,6 +506,7 @@ public class FragmentTakeAttendance extends Fragment {
 	private void updateRollVisibility() {
 		List<AttendanceRow> rows = viewModel.getAttendanceRows().getValue();
 		boolean hasRows = rows != null && !rows.isEmpty();
+		boolean batchChosen = selectedBatchID != null;
 
 		tilBatch.setVisibility(selectedCourse == null ? View.GONE : View.VISIBLE);
 
@@ -510,7 +521,7 @@ public class FragmentTakeAttendance extends Fragment {
 
 	/**
 	 * @param thenDuplicate keep the marks and roll the clock forward for the next period
-	 *                      instead of leaving the screen
+	 * instead of leaving the screen
 	 */
 	private void onSave(@NonNull View button, boolean thenDuplicate) {
 
@@ -525,7 +536,7 @@ public class FragmentTakeAttendance extends Fragment {
 			tilCourse.setError(getString(R.string.error_required));
 			return;
 		}
-		if (!batchChosen) {
+		if (selectedBatchID == null) {
 			tilBatch.setError(getString(R.string.error_required));
 			return;
 		}
@@ -559,7 +570,6 @@ public class FragmentTakeAttendance extends Fragment {
 					}
 				}));
 	}
-
 
 
 	/**
@@ -615,12 +625,10 @@ public class FragmentTakeAttendance extends Fragment {
 			outState.putLong(KEY_COURSE, selectedCourse.courseID);
 		}
 
-		outState.putBoolean(KEY_HAS_BATCH, selectedBatchID != null);
 		if (selectedBatchID != null) {
 			outState.putLong(KEY_BATCH, selectedBatchID);
 		}
 
-		outState.putBoolean(KEY_BATCH_CHOSEN, batchChosen);
 		outState.putBoolean(KEY_TOUCHED, rollTouched);
 		outState.putLong(KEY_DATE, date.toEpochDay());
 
@@ -639,8 +647,7 @@ public class FragmentTakeAttendance extends Fragment {
 	private void restoreFrom(@NonNull Bundle state) {
 
 		pendingCourseID = state.getLong(KEY_COURSE, -1L);
-		pendingBatchID = state.getBoolean(KEY_HAS_BATCH) ? state.getLong(KEY_BATCH) : null;
-		pendingBatchChosen = state.getBoolean(KEY_BATCH_CHOSEN);
+		pendingBatchID = state.containsKey(KEY_BATCH) ? state.getLong(KEY_BATCH) : null;
 		rollTouched = state.getBoolean(KEY_TOUCHED);
 
 		date = LocalDate.ofEpochDay(state.getLong(KEY_DATE, date.toEpochDay()));
@@ -688,28 +695,26 @@ public class FragmentTakeAttendance extends Fragment {
 		updateRollVisibility();
 	}
 
-	/** The batch half of the same restore, once the batch list is in hand. */
+	/**
+	 * The batch half of the same restore, once the batch list is in hand.
+	 * <p>
+	 * A batch that is no longer in the list leaves the selection empty rather than falling back
+	 * to the first one, which would hand the marks being restored to a different set of people.
+	 */
 	private void applyPendingBatch(@NonNull List<String> labels) {
 
-		if (!pendingBatchChosen) {
+		if (pendingBatchID == null) {
 			return;
 		}
 
-		pendingBatchChosen = false;
+		int index = indexOfBatch(pendingBatchID);
+		pendingBatchID = null;
 
-		int index = 0;
-		if (pendingBatchID != null) {
-			for (int i = 0; i < batches.size(); i++) {
-				if (batches.get(i).batchID == pendingBatchID) {
-					index = i + 1;
-					break;
-				}
-			}
+		if (index < 0) {
+			return;
 		}
 
-		selectedBatchID = pendingBatchID;
-		pendingBatchID = null;
-		batchChosen = true;
+		selectedBatchID = batches.get(index).batchID;
 		actvBatch.setText(labels.get(index), false);
 		updateRollVisibility();
 	}

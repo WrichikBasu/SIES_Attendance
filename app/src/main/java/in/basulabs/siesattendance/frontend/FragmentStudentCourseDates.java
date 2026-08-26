@@ -53,11 +53,18 @@ public class FragmentStudentCourseDates extends Fragment {
 	 * The session the student is being shown in, carried down from the detail screen so the roll
 	 * number in the header is the one that screen displayed.
 	 * <p>
-	 * The marks themselves are not filtered by it. The breakdown this drills into spans every
-	 * session, and narrowing only the child list would leave a header saying 8 of 11 above a list
-	 * of four.
+	 * The marks are not filtered by it. A session is not what bounds this list; the window below
+	 * is, and it expresses a session as the dates it spans when that is what was asked for.
 	 */
 	private int academicYear;
+
+	/**
+	 * The window the breakdown was filtered by, inherited so this list adds up to the fraction
+	 * the previous screen showed against this course. {@link FragmentStudentDetail#NO_BOUND}
+	 * for an open end, since a navigation argument cannot hold a nullable long.
+	 */
+	@Nullable
+	private Long fromEpoch, toEpoch;
 
 	@Nullable
 	@Override
@@ -76,6 +83,8 @@ public class FragmentStudentCourseDates extends Fragment {
 		studentID = args == null ? -1L : args.getLong("studentID", -1L);
 		courseID = args == null ? -1L : args.getLong("courseID", -1L);
 		academicYear = args == null ? 0 : args.getInt("academicYear", 0);
+		fromEpoch = bound(args, "fromEpoch");
+		toEpoch = bound(args, "toEpoch");
 
 		courseName = view.findViewById(R.id.tvCourseName);
 		studentLine = view.findViewById(R.id.tvStudentLine);
@@ -90,6 +99,14 @@ public class FragmentStudentCourseDates extends Fragment {
 				? (code == null ? "" : code)
 				: code + " · " + topic);
 
+		// A filtered list has to say so on its face. Without it the figures here look like the
+		// student's whole record for this course, and a run of absences outside the window
+		// would simply appear not to exist.
+		TextView window = view.findViewById(R.id.tvMarkWindow);
+		String label = args == null ? null : args.getString("windowLabel");
+		window.setText(label);
+		window.setVisibility(label == null || label.isEmpty() ? View.GONE : View.VISIBLE);
+
 		RecyclerView recyclerView = view.findViewById(R.id.rvLectureMarks);
 		adapter = new AdapterStudentLectureMark();
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
@@ -98,12 +115,24 @@ public class FragmentStudentCourseDates extends Fragment {
 		observe();
 	}
 
+	/** Reads one end of the window, turning the sentinel back into an absent bound. */
+	@Nullable
+	private static Long bound(@Nullable Bundle args, @NonNull String key) {
+
+		if (args == null) {
+			return null;
+		}
+
+		long value = args.getLong(key, FragmentStudentDetail.NO_BOUND);
+		return value == FragmentStudentDetail.NO_BOUND ? null : value;
+	}
+
 	private void observe() {
 
 		viewModel.getStudent(studentID, academicYear)
 				.observe(getViewLifecycleOwner(), this::bindStudent);
 
-		viewModel.getStudentLectureMarks(studentID, courseID)
+		viewModel.getStudentLectureMarks(studentID, courseID, fromEpoch, toEpoch)
 				.observe(getViewLifecycleOwner(), this::bindMarks);
 	}
 

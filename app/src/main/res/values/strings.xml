@@ -196,8 +196,7 @@
     <string name="label_whole_class">Whole class</string>
 
 
-    <string name="hint_group">Class or batch</string>
-    <string name="helper_no_batches_for_course">No batches exist for this class yet</string>
+    <string name="helper_no_batches_for_session">No batches in this session yet. Attendance is always recorded against a batch, so create the one that sits this class first.</string>
 
 
     <string name="title_edit_batch">Edit batch</string>

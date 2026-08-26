@@ -398,14 +398,34 @@ public abstract class DaoStudent {
 
 	// ── Per-course breakdown for one student ─────────────────────────────
 
+	/*
+	 * The date window shared by the two queries below.
+	 *
+	 * Both are narrowed by the same bounds on purpose. The breakdown says a student attended 8
+	 * of 11 lectures and the drill-down lists those 11, so a window applied to one and not the
+	 * other would put a fraction above a list that does not add up to it. Passing null for
+	 * either bound leaves that end open.
+	 */
+	private static final String LECTURE_IN_WINDOW =
+			"AND (:fromEpoch IS NULL OR " + SqlBits.EPOCH_START + " >= :fromEpoch) " +
+					"AND (:toEpoch IS NULL OR " + SqlBits.EPOCH_START + " <= :toEpoch) ";
+
 	/**
-	 * One row per course this student has any attendance recorded against, across every
-	 * session.
+	 * One row per course this student has any attendance recorded against.
 	 * <p>
 	 * The denominator counts the student's own attendance rows, not lectures held, so a lecture
 	 * they were left off entirely does not appear here at all. That is the opposite of what the
 	 * export does, and it is the right way round for this screen: this is a breakdown of what
 	 * was recorded for one student, whereas the export is a report on how much they attended.
+	 * <p>
+	 * Unfiltered this spans every session the student has been enrolled in, which is the honest
+	 * default for a record of a person rather than of a year. The window narrows it; see
+	 * {@code BreakdownFilter} for why the session is expressed as dates rather than as a
+	 * session column.
+	 *
+	 * @param fromEpoch  inclusive lower bound on the lecture's start, or null for none
+	 * @param toEpoch    inclusive upper bound on the lecture's start, or null for none
+	 * @param courseType restrict to courses of one type, or null for every type
 	 */
 	@Query("SELECT c.courseID, c.courseCode, c.courseTopic, " +
 			"COUNT(a.lectureID) AS totalLectures, " +
@@ -414,9 +434,14 @@ public abstract class DaoStudent {
 			"INNER JOIN lectures l ON l.lectureID = a.lectureID " +
 			"INNER JOIN courses c ON c.courseID = l.courseID " +
 			"WHERE a.studentID = :studentID " +
+			LECTURE_IN_WINDOW +
+			"AND (:courseType IS NULL OR c.courseType = :courseType) " +
 			"GROUP BY c.courseID, c.courseCode, c.courseTopic " +
 			"ORDER BY c.courseCode ASC")
-	public abstract LiveData<List<StudentCourseStat>> getCourseBreakdown(long studentID);
+	public abstract LiveData<List<StudentCourseStat>> getCourseBreakdown(long studentID,
+	                                                                     Long fromEpoch,
+	                                                                     Long toEpoch,
+	                                                                     CourseType courseType);
 
 	/**
 	 * The lectures behind one row of {@link #getCourseBreakdown}: every lecture of one course
@@ -429,6 +454,9 @@ public abstract class DaoStudent {
 	 * Newest first, because a run of recent absences is what anyone opening this screen is
 	 * looking for. Ordered on the epoch prefix rather than the stored string, which would sort
 	 * lexicographically; see {@link in.basulabs.siesattendance.backend.stats.SqlBits}.
+	 * <p>
+	 * The window is the one the breakdown was filtered by, carried down so the fraction on the
+	 * previous screen is the fraction this list adds up to.
 	 */
 	@Query("SELECT l.lectureID, l.startDateTime, l.endDateTime, " +
 			"b.batchName AS batchName, a.present " +
@@ -436,7 +464,10 @@ public abstract class DaoStudent {
 			"INNER JOIN lectures l ON l.lectureID = a.lectureID " +
 			"LEFT JOIN batch_desc b ON b.batchID = l.batchID " +
 			"WHERE a.studentID = :studentID AND l.courseID = :courseID " +
+			LECTURE_IN_WINDOW +
 			"ORDER BY " + SqlBits.EPOCH_START + " DESC")
 	public abstract LiveData<List<StudentLectureMark>> getLectureMarks(long studentID,
-	                                                                   long courseID);
+	                                                                   long courseID,
+	                                                                   Long fromEpoch,
+	                                                                   Long toEpoch);
 }

@@ -96,6 +96,27 @@
             android:defaultValue="@null"
             app:argType="string"
             app:nullable="true" />
+
+        <!--
+          The window inherited from the breakdown. Long.MIN_VALUE stands for an open end,
+          because a navigation argument cannot hold a nullable long; see
+          FragmentStudentDetail.NO_BOUND.
+        -->
+        <argument
+            android:name="fromEpoch"
+            android:defaultValue="-9223372036854775808L"
+            app:argType="long" />
+
+        <argument
+            android:name="toEpoch"
+            android:defaultValue="-9223372036854775808L"
+            app:argType="long" />
+
+        <argument
+            android:name="windowLabel"
+            android:defaultValue="@null"
+            app:argType="string"
+            app:nullable="true" />
     </fragment>
 
     <fragment

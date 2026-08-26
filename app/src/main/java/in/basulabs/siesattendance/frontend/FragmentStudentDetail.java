@@ -17,19 +17,36 @@ import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
+import androidx.lifecycle.LiveData;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
 import in.basulabs.siesattendance.R;
-import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.chip.Chip;
+import com.google.android.material.chip.ChipGroup;
+import com.google.android.material.datepicker.MaterialDatePicker;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.textfield.TextInputEditText;
+import com.google.android.material.textfield.TextInputLayout;
+
+import in.basulabs.siesattendance.backend.CourseType;
+import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
+import in.basulabs.siesattendance.backend.util.BreakdownFilter;
 import in.basulabs.siesattendance.frontend.adapter.AdapterStudentCourseStat;
+import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -39,6 +56,14 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * <p>
  * Each course in the breakdown opens onto the dates behind its fraction; see
  * {@link FragmentStudentCourseDates}.
+ * <p>
+ * The breakdown covers the student's whole record by default, which is the honest default for a
+ * record of a person rather than of a year, and the wrong answer to most of what gets asked of
+ * it: whether attendance fell off after the mid-terms, what last session looked like, whether
+ * the shortfall is in the practicals. The filter above the list narrows it, and the overall
+ * figure in the card above is recomputed from the same rows, so the headline always describes
+ * whatever is on screen. The window travels down into the per-course dates as well —
+ * see {@link #openCourseDates} for why it has to.
  */
 public class FragmentStudentDetail extends Fragment {
 
@@ -51,7 +76,45 @@ public class FragmentStudentDetail extends Fragment {
 
 	private ProgressBar overallBar;
 
+	private TextView breakdownScope;
+
+	private TextInputEditText fromField, toField;
+
+	private ChipGroup windowChips;
+
+	private View filterPanel;
+
+	private MaterialButton clearFilter;
+
 	private long studentID;
+
+	/**
+	 * The session's own row, needed by the "This session" preset to resolve to real dates.
+	 * Null until it has been read, and the preset leaves the window open rather than guessing
+	 * if it is asked for before then.
+	 */
+	@Nullable
+	private EntityAcademicYear session;
+
+	/**
+	 * The LiveData currently feeding the breakdown, detached when the window changes.
+	 */
+	@Nullable
+	private LiveData<List<StudentCourseStat>> breakdownSource;
+
+	/**
+	 * Suppresses re-queries while the controls are filled in from the filter.
+	 */
+	private boolean binding;
+
+	private static final DateTimeFormatter DATE_LABEL =
+			DateTimeFormatter.ofPattern("d MMM yyyy");
+
+	/**
+	 * Stands for an open end of the window in a navigation argument, which cannot hold a
+	 * nullable long. No real lecture predates 1970, so a negative epoch is unambiguous.
+	 */
+	public static final long NO_BOUND = Long.MIN_VALUE;
 
 	/**
 	 * The session this screen is showing the student in.
@@ -99,8 +162,229 @@ public class FragmentStudentDetail extends Fragment {
 		recyclerView.setNestedScrollingEnabled(false);
 		recyclerView.setAdapter(adapter);
 
+		setupFilter(view);
 		setupMenu();
 		observe();
+		loadSession();
+	}
+
+	// ── The breakdown's filter ───────────────────────────────────────────
+
+	@NonNull
+	private BreakdownFilter filter() {
+		return viewModel.breakdownFilter(studentID);
+	}
+
+	/**
+	 * Wires the window presets, the two date fields and the course type.
+	 * <p>
+	 * The chips and the date fields are two views of one window rather than two filters: a chip
+	 * fills the dates in so the range it stands for is visible and can then be adjusted, and
+	 * setting a date by hand moves the selection to Custom, because the dates no longer match
+	 * what the chip claims.
+	 */
+	private void setupFilter(@NonNull View view) {
+
+		breakdownScope = view.findViewById(R.id.tvBreakdownScope);
+		filterPanel = view.findViewById(R.id.panelBreakdownFilter);
+		windowChips = view.findViewById(R.id.cgBreakdownWindow);
+		fromField = view.findViewById(R.id.etBreakdownFrom);
+		toField = view.findViewById(R.id.etBreakdownTo);
+		clearFilter = view.findViewById(R.id.btnBreakdownClear);
+
+		view.findViewById(R.id.btnBreakdownFilter).setOnClickListener(v -> {
+			boolean showing = filterPanel.getVisibility() == View.VISIBLE;
+			filterPanel.setVisibility(showing ? View.GONE : View.VISIBLE);
+		});
+
+		clearFilter.setOnClickListener(v -> {
+			filter().clear();
+			bindFilterControls();
+			refreshBreakdown();
+		});
+
+		for (BreakdownFilter.Window preset : BreakdownFilter.Window.values()) {
+
+			// Custom is not offered as a chip. It is not something to choose, it is what the
+			// selection becomes once a date is set by hand, and a chip for it would be one the
+			// user could tap with nothing happening.
+			if (preset == BreakdownFilter.Window.CUSTOM) {
+				continue;
+			}
+
+			Chip chip = new Chip(requireContext());
+			chip.setText(preset.label);
+			chip.setCheckable(true);
+			chip.setId(View.generateViewId());
+			chip.setTag(preset);
+			windowChips.addView(chip);
+		}
+
+		windowChips.setOnCheckedStateChangeListener((group, checkedIds) -> {
+
+			if (binding || checkedIds.isEmpty()) {
+				return;
+			}
+
+			Chip chip = group.findViewById(checkedIds.get(0));
+			filter().apply((BreakdownFilter.Window) chip.getTag(), session);
+			bindFilterControls();
+			refreshBreakdown();
+		});
+
+		fromField.setOnClickListener(v -> pickDate(true));
+		toField.setOnClickListener(v -> pickDate(false));
+
+		bindClearIcon(view.findViewById(R.id.tilBreakdownFrom), true);
+		bindClearIcon(view.findViewById(R.id.tilBreakdownTo), false);
+
+		DropdownBinder.bind(view.findViewById(R.id.actvBreakdownCourseType),
+				Arrays.asList(CourseType.values()), getString(R.string.filter_any),
+				filter().courseType, value -> {
+					filter().courseType = value;
+					bindFilterControls();
+					refreshBreakdown();
+				});
+
+		bindFilterControls();
+	}
+
+	/**
+	 * The cross on a date field clears that bound. An explicit clear, because a bound set by
+	 * accident should be as easy to undo as it was to set.
+	 */
+	private void bindClearIcon(@NonNull TextInputLayout layout, boolean isFrom) {
+
+		layout.setEndIconOnClickListener(v -> {
+			BreakdownFilter filter = filter();
+
+			if (isFrom) {
+				filter.from = null;
+			} else {
+				filter.to = null;
+			}
+
+			// Clearing one end still leaves a window if the other is set, and either way the
+			// range is no longer the one any preset stands for.
+			filter.window = filter.hasDateWindow()
+					? BreakdownFilter.Window.CUSTOM
+					: BreakdownFilter.Window.ALL_TIME;
+
+			bindFilterControls();
+			refreshBreakdown();
+		});
+	}
+
+	/**
+	 * Opens the calendar. The selection comes back as UTC midnight, which is what the Material
+	 * picker documents, so it is converted at UTC rather than at the device zone: the local zone
+	 * shifts the date back a day for anyone east of Greenwich, which is everyone using this.
+	 */
+	private void pickDate(boolean isFrom) {
+
+		LocalDate current = isFrom ? filter().from : filter().to;
+
+		MaterialDatePicker<Long> picker = MaterialDatePicker.Builder.datePicker()
+				.setTitleText(isFrom ? R.string.hint_from_date : R.string.hint_to_date)
+				.setSelection(current == null
+						? MaterialDatePicker.todayInUtcMilliseconds()
+						: current.atStartOfDay(ZoneId.of("UTC")).toInstant().toEpochMilli())
+				.build();
+
+		picker.addOnPositiveButtonClickListener(selection -> {
+
+			LocalDate chosen = Instant.ofEpochMilli(selection)
+					.atZone(ZoneId.of("UTC")).toLocalDate();
+
+			BreakdownFilter filter = filter();
+
+			if (isFrom) {
+				filter.from = chosen;
+			} else {
+				filter.to = chosen;
+			}
+			filter.window = BreakdownFilter.Window.CUSTOM;
+
+			bindFilterControls();
+			refreshBreakdown();
+		});
+
+		picker.show(getParentFragmentManager(), isFrom ? "breakdownFrom" : "breakdownTo");
+	}
+
+	/**
+	 * Puts the filter's current state onto the controls and the scope line.
+	 */
+	private void bindFilterControls() {
+
+		BreakdownFilter filter = filter();
+
+		binding = true;
+
+		fromField.setText(filter.from == null ? "" : filter.from.format(DATE_LABEL));
+		toField.setText(filter.to == null ? "" : filter.to.format(DATE_LABEL));
+
+		windowChips.clearCheck();
+
+		for (int i = 0; i < windowChips.getChildCount(); i++) {
+			Chip chip = (Chip) windowChips.getChildAt(i);
+			chip.setChecked(chip.getTag() == filter.window);
+		}
+
+		binding = false;
+
+		breakdownScope.setText(filter.describe());
+		clearFilter.setVisibility(filter.isUnrestricted() ? View.GONE : View.VISIBLE);
+	}
+
+	/**
+	 * Reads the session row behind the "This session" preset.
+	 * <p>
+	 * Loaded once and kept, rather than being read when the preset is tapped, so tapping it does
+	 * not have to wait on a round trip before the list changes.
+	 */
+	private void loadSession() {
+
+		viewModel.loadAcademicYearsSync(sessions -> {
+
+			if (sessions == null || !isAdded()) {
+				return;
+			}
+
+			Ui.onMain(this, () -> {
+				for (EntityAcademicYear year : sessions) {
+					if (year.academicYear == academicYear) {
+						session = year;
+						break;
+					}
+				}
+
+				// A window already set to this session was resolved before the row arrived, so
+				// it is open rather than bounded. Resolve it now the dates are known.
+				if (session != null && filter().window == BreakdownFilter.Window.SESSION
+						&& !filter().hasDateWindow()) {
+					filter().apply(BreakdownFilter.Window.SESSION, session);
+					bindFilterControls();
+					refreshBreakdown();
+				}
+			});
+		});
+	}
+
+	/**
+	 * Re-runs the breakdown against the current window.
+	 * <p>
+	 * Each window makes a fresh LiveData from the DAO, so the previous one is detached first;
+	 * two observers writing into the same adapter would otherwise fight over it.
+	 */
+	private void refreshBreakdown() {
+
+		if (breakdownSource != null) {
+			breakdownSource.removeObservers(getViewLifecycleOwner());
+		}
+
+		breakdownSource = viewModel.getStudentCourseBreakdown(studentID, filter());
+		breakdownSource.observe(getViewLifecycleOwner(), this::bindBreakdown);
 	}
 
 	/**
@@ -109,8 +393,15 @@ public class FragmentStudentDetail extends Fragment {
 	 * The course code and topic travel as arguments rather than being looked up again on the
 	 * next screen: they are already on this row, and re-querying them would leave the heading
 	 * blank for as long as the round trip took.
+	 * <p>
+	 * The window travels with them, and has to: the row says 8 of 11, and a list that ignored
+	 * the window would show every lecture of the course under a fraction that counted only some
+	 * of them. The bounds go as epoch seconds because navigation arguments have no nullable
+	 * long, with {@link #NO_BOUND} standing in for an open end.
 	 */
 	private void openCourseDates(@NonNull StudentCourseStat stat) {
+
+		BreakdownFilter filter = filter();
 
 		Bundle args = new Bundle();
 		args.putLong("studentID", studentID);
@@ -118,6 +409,12 @@ public class FragmentStudentDetail extends Fragment {
 		args.putInt("academicYear", academicYear);
 		args.putString("courseCode", stat.courseCode);
 		args.putString("courseTopic", stat.courseTopic);
+		args.putLong("fromEpoch", filter.fromEpoch() == null
+				? NO_BOUND : filter.fromEpoch());
+		args.putLong("toEpoch", filter.toEpoch() == null
+				? NO_BOUND : filter.toEpoch());
+		args.putString("windowLabel",
+				filter.hasDateWindow() ? filter.describe() : null);
 
 		Navigation.findNavController(requireView())
 				.navigate(R.id.action_studentDetail_to_studentCourseDates, args);
@@ -221,7 +518,7 @@ public class FragmentStudentDetail extends Fragment {
 				.setNegativeButton(R.string.action_cancel, null)
 				.setPositiveButton(R.string.action_withdraw, (d, w) ->
 						viewModel.withdrawStudentFromSession(studentID, academicYear,
-							this::leaveScreen))
+								this::leaveScreen))
 				.show();
 	}
 
@@ -254,7 +551,9 @@ public class FragmentStudentDetail extends Fragment {
 				.show();
 	}
 
-	/** The second confirmation, shown only when there is history to lose. */
+	/**
+	 * The second confirmation, shown only when there is history to lose.
+	 */
 	private void confirmDeleteAgain(@NonNull DeletionImpact impact) {
 
 		new MaterialAlertDialogBuilder(requireContext())
@@ -267,7 +566,9 @@ public class FragmentStudentDetail extends Fragment {
 				.show();
 	}
 
-	/** The student this screen is showing is gone, so there is nothing left to display. */
+	/**
+	 * The student this screen is showing is gone, so there is nothing left to display.
+	 */
 	private void leaveScreen() {
 		Ui.onMain(this, () -> {
 			Navigation.findNavController(requireView()).navigateUp();
@@ -283,8 +584,7 @@ public class FragmentStudentDetail extends Fragment {
 		viewModel.getStudent(studentID, academicYear)
 				.observe(getViewLifecycleOwner(), this::bindStudent);
 
-		viewModel.getStudentCourseBreakdown(studentID)
-				.observe(getViewLifecycleOwner(), this::bindBreakdown);
+		refreshBreakdown();
 	}
 
 	/**

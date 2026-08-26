@@ -52,6 +52,7 @@ import in.basulabs.siesattendance.backend.stats.StatsQueryBuilder;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.backend.util.AttendanceExporter;
 import in.basulabs.siesattendance.backend.util.AttendanceRecordImporter;
+import in.basulabs.siesattendance.backend.util.BreakdownFilter;
 import in.basulabs.siesattendance.backend.util.CourseGroup;
 import in.basulabs.siesattendance.backend.util.ExportFilter;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
@@ -1305,8 +1306,36 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return db.daoStudent().getOne(studentID, academicYear);
 	}
 
-	public LiveData<List<StudentCourseStat>> getStudentCourseBreakdown(long studentID) {
-		return db.daoStudent().getCourseBreakdown(studentID);
+	public LiveData<List<StudentCourseStat>> getStudentCourseBreakdown(
+			long studentID, @NonNull BreakdownFilter filter) {
+
+		return db.daoStudent().getCourseBreakdown(studentID, filter.fromEpoch(),
+				filter.toEpoch(), filter.courseType);
+	}
+
+	/**
+	 * The filter narrowing the breakdown on the student detail screen.
+	 * <p>
+	 * Held here so it survives a rotation and the round trip into the per-course dates and back,
+	 * which is the whole point of setting one: a window chosen to look at a run of absences
+	 * should still be in force when you come back from looking at them.
+	 * <p>
+	 * Reset when the screen opens on a different student. The alternative, carrying it across,
+	 * would mean opening a second student's record and being shown a partial one for reasons
+	 * belonging to the student before them.
+	 */
+	private BreakdownFilter breakdownFilter;
+
+	private long breakdownStudentID = -1L;
+
+	@NonNull
+	public BreakdownFilter breakdownFilter(long studentID) {
+
+		if (breakdownFilter == null || breakdownStudentID != studentID) {
+			breakdownFilter = new BreakdownFilter();
+			breakdownStudentID = studentID;
+		}
+		return breakdownFilter;
 	}
 
 	/**
@@ -1314,8 +1343,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * for it. Backs the drill-down that says which dates they were present and absent on.
 	 */
 	public LiveData<List<StudentLectureMark>> getStudentLectureMarks(long studentID,
-	                                                                 long courseID) {
-		return db.daoStudent().getLectureMarks(studentID, courseID);
+	                                                                 long courseID,
+	                                                                 @Nullable Long fromEpoch,
+	                                                                 @Nullable Long toEpoch) {
+		return db.daoStudent().getLectureMarks(studentID, courseID, fromEpoch, toEpoch);
 	}
 
 	public void loadStudentSync(long studentID, int academicYear,
