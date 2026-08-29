@@ -30,7 +30,11 @@ public class EntityBatchDesc {
 	@Ignore
 	public static final String TABLE_NAME = "batch_desc";
 
-	@PrimaryKey(autoGenerate = true)
+	/**
+	 * Stamped by {@link IdGenerator} on insert, and unique across every device that syncs into
+	 * the central database.
+	 */
+	@PrimaryKey
 	public long batchID;
 
 	/** Short label shown wherever a batch has to be picked, for instance "Batch A". */

@@ -27,8 +27,20 @@ import in.basulabs.siesattendance.backend.pojo.LectureDetails;
 @Dao
 public abstract class DaoLecture {
 
+	/** The raw insert. Callers want {@link #insert}, which issues the ID. */
 	@Insert(onConflict = OnConflictStrategy.ABORT)
-	public abstract long insert(EntityLecture lecture);
+	protected abstract long insertRow(EntityLecture lecture);
+
+	/**
+	 * Inserts a lecture, stamping it with an ID first. Nothing in the database generates one:
+	 * see {@link IdGenerator}.
+	 *
+	 * @return the ID the lecture was written under
+	 */
+	public long insert(EntityLecture lecture) {
+		lecture.lectureID = IdGenerator.idFor(lecture.lectureID);
+		return insertRow(lecture);
+	}
 
 	@Delete
 	public abstract void delete(EntityLecture lecture);

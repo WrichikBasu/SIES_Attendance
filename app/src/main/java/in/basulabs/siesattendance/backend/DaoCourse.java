@@ -21,8 +21,20 @@ import java.util.List;
 @Dao
 public abstract class DaoCourse {
 
+	/** The raw insert. Callers want {@link #insert}, which issues the ID. */
 	@Insert(onConflict = OnConflictStrategy.ABORT)
-	public abstract long insert(EntityCourse course);
+	protected abstract long insertRow(EntityCourse course);
+
+	/**
+	 * Inserts a course, stamping it with an ID first. Nothing in the database generates one:
+	 * see {@link IdGenerator}.
+	 *
+	 * @return the ID the course was written under
+	 */
+	public long insert(EntityCourse course) {
+		course.courseID = IdGenerator.idFor(course.courseID);
+		return insertRow(course);
+	}
 
 	@Update
 	public abstract void update(EntityCourse course);

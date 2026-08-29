@@ -28,10 +28,15 @@ public class EntityStudent {
 	public static final String TABLE_NAME = "students";
 
 	/**
-	 * Auto-generated ID that is used in this database. Has NO relation with the roll number, and
-	 * does NOT exist in the college database.
+	 * The ID used in this database. Has NO relation with the roll number, and does NOT exist in
+	 * the college database.
+	 * <p>
+	 * Stamped by {@link IdGenerator} when the student is first inserted, not by SQLite, and
+	 * unique across every device that syncs into the central database rather than only within
+	 * this one. Left at zero on a student who has not been saved yet, which is how
+	 * {@code DaoStudent.insertStudent} tells the two apart.
 	 */
-	@PrimaryKey(autoGenerate = true)
+	@PrimaryKey
 	public long studentID;
 
 	/**

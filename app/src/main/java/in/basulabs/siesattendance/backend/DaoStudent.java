@@ -32,12 +32,27 @@ import in.basulabs.siesattendance.backend.stats.SqlBits;
 public abstract class DaoStudent {
 
 	/**
+	 * The raw insert. Everything goes through {@link #insertStudent} instead, which is what
+	 * gives the student their ID; this one would write whatever the entity happens to carry,
+	 * zero included.
+	 * <p>
 	 * Aborts on conflict rather than replacing, because the unique index is on the email
 	 * address: a clash means this is somebody already on file, and overwriting them would
 	 * quietly merge two people. {@link #upsertStudentWithYear} handles that case properly.
 	 */
 	@Insert(onConflict = OnConflictStrategy.ABORT)
-	public abstract long insertStudent(EntityStudent student);
+	protected abstract long insertStudentRow(EntityStudent student);
+
+	/**
+	 * Inserts a student, stamping them with an ID first. Nothing in the database generates one:
+	 * see {@link IdGenerator}.
+	 *
+	 * @return the ID the student was written under
+	 */
+	public long insertStudent(EntityStudent student) {
+		student.studentID = IdGenerator.idFor(student.studentID);
+		return insertStudentRow(student);
+	}
 
 	/**
 	 * Replaces on conflict, unlike the student insert above. The key here is the student and

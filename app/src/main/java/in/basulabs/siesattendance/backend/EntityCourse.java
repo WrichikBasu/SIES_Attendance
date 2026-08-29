@@ -49,8 +49,11 @@ public class EntityCourse {
 	 * Local identifier, unrelated to the course code. The code is what the college uses and is
 	 * uniquely indexed, but codes get reissued and reworded between syllabus revisions, so
 	 * lectures and batch links are hung off this instead.
+	 * <p>
+	 * Stamped by {@link IdGenerator} on insert, and unique across every device that syncs into
+	 * the central database.
 	 */
-	@PrimaryKey(autoGenerate = true)
+	@PrimaryKey
 	public long courseID;
 
 	/** The professor who takes the course. Mandatory, which is why professors cannot be deleted. */

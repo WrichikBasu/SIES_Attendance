@@ -85,6 +85,11 @@ public abstract class MainDatabase extends RoomDatabase {
 	private static RoomDatabase.Builder<MainDatabase> builderFor(@NonNull Context context,
 	                                                             @NonNull String fileName) {
 
+		// Before the builder, not after: every route to a row runs through here, and a key
+		// issued before the node number is known would be a key that does not say which
+		// device made it.
+		IdGenerator.init(context);
+
 		return Room.databaseBuilder(
 						context.createDeviceProtectedStorageContext(),
 						MainDatabase.class, fileName)
@@ -94,8 +99,28 @@ public abstract class MainDatabase extends RoomDatabase {
 				// the behaviour you want once real attendance is in there.
 				.addMigrations(Migrations.MIGRATION_1_2, Migrations.MIGRATION_2_3,
 						Migrations.MIGRATION_3_4,
-						Migrations.MIGRATION_4_5, Migrations.MIGRATION_5_6);
+						Migrations.MIGRATION_4_5, Migrations.MIGRATION_5_6,
+						Migrations.MIGRATION_6_7)
+				.addCallback(PRIME_IDS);
 	}
+
+	/**
+	 * Tells {@link IdGenerator} what keys of its own the file already contains, on every open.
+	 * <p>
+	 * Keys are issued from the clock rather than by SQLite, and the running sequence that keeps
+	 * them apart lives in memory only. A restored backup, or a device whose clock has been wound
+	 * back, could otherwise hand out an ID a row is already using. Reading the highest one at
+	 * open costs a single query and removes that whole class of failure.
+	 * <p>
+	 * Runs after any migration, so the tables are always the current shape by the time it looks
+	 * at them.
+	 */
+	private static final RoomDatabase.Callback PRIME_IDS = new RoomDatabase.Callback() {
+		@Override
+		public void onOpen(@NonNull SupportSQLiteDatabase db) {
+			IdGenerator.prime(db);
+		}
+	};
 
 	/**
 	 * The context the database actually lives under.

@@ -51,7 +51,14 @@ public class EntityLecture {
 	@Ignore
 	public static final String TABLE_NAME = "lectures";
 
-	@PrimaryKey(autoGenerate = true)
+	/**
+	 * Stamped by {@link IdGenerator} on insert, and unique across every device that syncs into
+	 * the central database. It encodes roughly when the row was recorded, which is close to but
+	 * not the same as when the lecture was held: a session entered after the fact carries the
+	 * time it was typed in, and {@link #startDateTime} remains the only statement of when it
+	 * actually took place.
+	 */
+	@PrimaryKey
 	public long lectureID;
 
 	public long courseID;

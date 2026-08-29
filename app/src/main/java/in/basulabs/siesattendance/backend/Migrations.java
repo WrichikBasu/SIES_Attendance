@@ -183,6 +183,152 @@ public final class Migrations {
 		}
 	};
 
+	/**
+	 * Version 6 to 7: takes the five auto-generated primary keys away from SQLite.
+	 * <p>
+	 * Students, professors, courses, batches and lectures were declared
+	 * {@code INTEGER PRIMARY KEY AUTOINCREMENT}, so their IDs were whatever the next number in
+	 * the file happened to be. They are now issued by {@link IdGenerator} before the row is
+	 * written, from a layout that keeps keys from different devices apart, and the column is a
+	 * plain {@code INTEGER PRIMARY KEY}.
+	 * <p>
+	 * SQLite cannot drop AUTOINCREMENT in place, so each of the five tables is rebuilt and
+	 * copied, exactly as {@link #MIGRATION_1_2} rebuilt the lectures table. Existing rows keep
+	 * the IDs they already have: renumbering them would rewrite every foreign key in the
+	 * database to no purpose, and the two kinds of ID coexist perfectly well. New rows simply
+	 * get much larger numbers, which is also what stops them colliding with the old ones.
+	 * <p>
+	 * Dropping a parent table with children pointing at it is safe here because Room enables
+	 * foreign keys in {@code onOpen}, which runs after every migration: nothing is enforcing
+	 * the constraints while this executes. The child tables refer to their parents by name, and
+	 * the name is restored by the rename before anything can look again.
+	 */
+	public static final Migration MIGRATION_6_7 = new Migration(6, 7) {
+		@Override
+		public void migrate(@NonNull SupportSQLiteDatabase db) {
+
+			rebuild(db, "students",
+					"CREATE TABLE IF NOT EXISTS `students_new` ("
+							+ "`studentID` INTEGER NOT NULL, "
+							+ "`name` TEXT NOT NULL, "
+							+ "`pronouns` TEXT NOT NULL, "
+							+ "`email` TEXT, "
+							+ "PRIMARY KEY(`studentID`))",
+					"`studentID`, `name`, `pronouns`, `email`",
+					"CREATE UNIQUE INDEX IF NOT EXISTS `index_students_email` "
+							+ "ON `students` (`email`)");
+
+			rebuild(db, "professors",
+					"CREATE TABLE IF NOT EXISTS `professors_new` ("
+							+ "`profID` INTEGER NOT NULL, "
+							+ "`name` TEXT NOT NULL, "
+							+ "`email` TEXT NOT NULL, "
+							+ "`department` TEXT NOT NULL, "
+							+ "`designation` TEXT NOT NULL, "
+							+ "PRIMARY KEY(`profID`))",
+					"`profID`, `name`, `email`, `department`, `designation`",
+					"CREATE INDEX IF NOT EXISTS `index_professors_name_department` "
+							+ "ON `professors` (`name`, `department`)",
+					"CREATE UNIQUE INDEX IF NOT EXISTS `index_professors_profID` "
+							+ "ON `professors` (`profID`)",
+					"CREATE UNIQUE INDEX IF NOT EXISTS `index_professors_email` "
+							+ "ON `professors` (`email`)",
+					"CREATE UNIQUE INDEX IF NOT EXISTS "
+							+ "`index_professors_name_department_email` "
+							+ "ON `professors` (`name`, `department`, `email`)",
+					"CREATE INDEX IF NOT EXISTS `index_professors_department` "
+							+ "ON `professors` (`department`)");
+
+			rebuild(db, "courses",
+					"CREATE TABLE IF NOT EXISTS `courses_new` ("
+							+ "`courseID` INTEGER NOT NULL, "
+							+ "`profID` INTEGER NOT NULL, "
+							+ "`courseCode` TEXT NOT NULL, "
+							+ "`courseTopic` TEXT NOT NULL, "
+							+ "`stream` TEXT NOT NULL, "
+							+ "`offeringDepartment` TEXT NOT NULL, "
+							+ "`year` TEXT NOT NULL, "
+							+ "`semester` INTEGER NOT NULL, "
+							+ "`courseType` TEXT NOT NULL, "
+							+ "`remarks` TEXT, "
+							+ "`dateIntroduced` TEXT, "
+							+ "`dateDiscontinued` TEXT, "
+							+ "PRIMARY KEY(`courseID`), "
+							+ "FOREIGN KEY(`profID`) REFERENCES `professors`(`profID`) "
+							+ "  ON UPDATE CASCADE ON DELETE RESTRICT)",
+					"`courseID`, `profID`, `courseCode`, `courseTopic`, `stream`, "
+							+ "`offeringDepartment`, `year`, `semester`, `courseType`, "
+							+ "`remarks`, `dateIntroduced`, `dateDiscontinued`",
+					"CREATE UNIQUE INDEX IF NOT EXISTS `index_courses_courseCode` "
+							+ "ON `courses` (`courseCode`)",
+					"CREATE INDEX IF NOT EXISTS `index_courses_profID` "
+							+ "ON `courses` (`profID`)");
+
+			rebuild(db, "batch_desc",
+					"CREATE TABLE IF NOT EXISTS `batch_desc_new` ("
+							+ "`batchID` INTEGER NOT NULL, "
+							+ "`batchName` TEXT NOT NULL, "
+							+ "`batchDesc` TEXT, "
+							+ "`academicYear` INTEGER NOT NULL, "
+							+ "PRIMARY KEY(`batchID`))",
+					"`batchID`, `batchName`, `batchDesc`, `academicYear`",
+					"CREATE UNIQUE INDEX IF NOT EXISTS "
+							+ "`index_batch_desc_batchID_academicYear` "
+							+ "ON `batch_desc` (`batchID`, `academicYear`)");
+
+			rebuild(db, "lectures",
+					"CREATE TABLE IF NOT EXISTS `lectures_new` ("
+							+ "`lectureID` INTEGER NOT NULL, "
+							+ "`courseID` INTEGER NOT NULL, "
+							+ "`batchID` INTEGER, "
+							+ "`startDateTime` TEXT NOT NULL, "
+							+ "`endDateTime` TEXT NOT NULL, "
+							+ "`notes` TEXT, "
+							+ "PRIMARY KEY(`lectureID`), "
+							+ "FOREIGN KEY(`batchID`) REFERENCES `batch_desc`(`batchID`) "
+							+ "  ON UPDATE CASCADE ON DELETE RESTRICT, "
+							+ "FOREIGN KEY(`courseID`) REFERENCES `courses`(`courseID`) "
+							+ "  ON UPDATE CASCADE ON DELETE RESTRICT)",
+					"`lectureID`, `courseID`, `batchID`, `startDateTime`, `endDateTime`, "
+							+ "`notes`",
+					"CREATE UNIQUE INDEX IF NOT EXISTS "
+							+ "`index_lectures_courseID_batchID_startDateTime_endDateTime` "
+							+ "ON `lectures` (`courseID`, `batchID`, `startDateTime`, "
+							+ "`endDateTime`)",
+					"CREATE INDEX IF NOT EXISTS `index_lectures_batchID` "
+							+ "ON `lectures` (`batchID`)",
+					"CREATE INDEX IF NOT EXISTS `index_lectures_courseID` "
+							+ "ON `lectures` (`courseID`)");
+		}
+	};
+
+	/**
+	 * The recreate-and-copy dance, for a table that has to change in a way SQLite cannot do in
+	 * place. The new table is built beside the old one under a {@code _new} suffix, every row is
+	 * copied across, the old table is dropped and the new one takes its name. Indices belong to
+	 * the table they are on, so they go down with it and are recreated afterwards.
+	 *
+	 * @param columns the column list, identical on both sides, written out rather than left to
+	 *                {@code SELECT *} so a mismatch in column order cannot silently shuffle the
+	 *                data
+	 */
+	private static void rebuild(@NonNull SupportSQLiteDatabase db, @NonNull String table,
+	                            @NonNull String createSql, @NonNull String columns,
+	                            @NonNull String... indices) {
+
+		db.execSQL(createSql);
+
+		db.execSQL("INSERT INTO `" + table + "_new` (" + columns + ") "
+				+ "SELECT " + columns + " FROM `" + table + "`");
+
+		db.execSQL("DROP TABLE `" + table + "`");
+		db.execSQL("ALTER TABLE `" + table + "_new` RENAME TO `" + table + "`");
+
+		for (String index : indices) {
+			db.execSQL(index);
+		}
+	}
+
 	private static void collectYears(@NonNull SupportSQLiteDatabase db, @NonNull String sql,
 	                                 @NonNull Set<Integer> into) {
 		try (Cursor cursor = db.query(sql)) {

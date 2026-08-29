@@ -8,8 +8,8 @@ import androidx.room.PrimaryKey;
 
 /**
  * Represents a professor. The professor is identified by their name, email, department,
- * and designation. The ID is auto-generated because professors do not have a unique ID other
- * than fingerprint.
+ * and designation. The ID is issued by the app on insert because professors do not have a
+ * unique ID other than fingerprint.
  * <p>
  * Professors are never deleted. Every course names one, and every lecture and attendance row
  * hangs off a course, so removing a professor would orphan a chain of records that are the
@@ -27,7 +27,13 @@ public class EntityProfessor {
 	@Ignore
 	public static final String TABLE_NAME = "professors";
 
-	@PrimaryKey(autoGenerate = true)
+	/**
+	 * Stamped by {@link IdGenerator} on insert, and unique across every device that syncs into
+	 * the central database. Professors have no unique identifier of their own beyond the
+	 * fingerprint of name, department and address, which is why the row needs one of these at
+	 * all.
+	 */
+	@PrimaryKey
 	public long profID;
 
 	@NonNull

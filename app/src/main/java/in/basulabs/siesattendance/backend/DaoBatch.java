@@ -21,8 +21,20 @@ import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 @Dao
 public abstract class DaoBatch {
 
+	/** The raw insert. Callers want {@link #insertBatch}, which issues the ID. */
 	@Insert(onConflict = OnConflictStrategy.ABORT)
-	public abstract long insertBatch(EntityBatchDesc batch);
+	protected abstract long insertBatchRow(EntityBatchDesc batch);
+
+	/**
+	 * Inserts a batch, stamping it with an ID first. Nothing in the database generates one:
+	 * see {@link IdGenerator}.
+	 *
+	 * @return the ID the batch was written under
+	 */
+	public long insertBatch(EntityBatchDesc batch) {
+		batch.batchID = IdGenerator.idFor(batch.batchID);
+		return insertBatchRow(batch);
+	}
 
 	@Insert(onConflict = OnConflictStrategy.IGNORE)
 	public abstract void addStudent(EntityBatchStudentMap map);
