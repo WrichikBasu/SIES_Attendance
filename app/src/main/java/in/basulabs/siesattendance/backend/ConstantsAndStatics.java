@@ -19,7 +19,7 @@ public final class ConstantsAndStatics {
 	 * <p>
 	 * Raise this in step with the Room annotation whenever a migration is added.
 	 */
-	public static final int DATABASE_VERSION = 7;
+	public static final int DATABASE_VERSION = 8;
 
 	/**
 	 * Extension for exported backups. Distinctive rather than descriptive, so a backup is

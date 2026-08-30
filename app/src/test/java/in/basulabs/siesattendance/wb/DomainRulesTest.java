@@ -14,6 +14,7 @@ import java.util.List;
 import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EnumLookup;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
@@ -351,5 +352,127 @@ public class DomainRulesTest {
 				}
 			}
 		}
+	}
+
+	// ── Divisions ────────────────────────────────────────────────────────
+
+	@Test
+	public void onlyTheAidedBScAndBAAreSplitIntoDivisions() {
+		assertTrue(Stream.BSc.hasDivisions());
+		assertTrue(Stream.BA.hasDivisions());
+
+		// The one place the aided and unaided split means something beyond a label.
+		assertFalse(Stream.BSc_unaided.hasDivisions());
+
+		for (Stream s : Arrays.asList(Stream.BCom, Stream.BMS, Stream.BAMMC,
+				Stream.MA, Stream.MSc, Stream.MSc_unaided)) {
+			assertFalse(s + " must not offer divisions", s.hasDivisions());
+		}
+	}
+
+	@Test
+	public void divisionsForFollowsTheStreamAndRunsFromAToD() {
+		assertEquals(Arrays.asList(Division.A, Division.B, Division.C, Division.D),
+				AcademicRules.divisionsFor(Stream.BSc));
+		assertEquals(Arrays.asList(Division.A, Division.B, Division.C, Division.D),
+				AcademicRules.divisionsFor(Stream.BA));
+
+		assertTrue(AcademicRules.divisionsFor(Stream.BSc_unaided).isEmpty());
+		assertTrue(AcademicRules.divisionsFor(Stream.BCom).isEmpty());
+		assertTrue(AcademicRules.divisionsFor(Stream.MSc).isEmpty());
+	}
+
+	@Test
+	public void divisionsForOffersEverythingWhenTheStreamIsNotYetKnown() {
+		// A filter with no stream chosen is not the same as a stream with no divisions: a
+		// student of any divided stream could still be in Div C.
+		assertEquals(Arrays.asList(Division.values()), AcademicRules.divisionsFor(null));
+	}
+
+	@Test
+	public void divisionsForAgreesWithTheStreamItWasAskedAbout() {
+		for (Stream s : Stream.values()) {
+			assertEquals(s + " must offer divisions exactly when it has them",
+					s.hasDivisions(), !AcademicRules.divisionsFor(s).isEmpty());
+		}
+	}
+
+	@Test
+	public void validateRejectsADivisionOnAStreamThatHasNone() {
+		assertNotNull(AcademicRules.validate(Department.COMPUTER_SCIENCE, Stream.BSc_unaided,
+				Year.SY, 3, Division.A));
+		assertNotNull(AcademicRules.validate(Department.COMMERCE, Stream.BCom, Year.FY, 1,
+				Division.B));
+		assertNotNull(AcademicRules.validate(Department.PHYSICS, Stream.MSc,
+				Year.Masters_P1, 1, Division.A));
+	}
+
+	@Test
+	public void validateAcceptsADivisionOnADividedStreamAndABlankOneAnywhere() {
+		assertNull(AcademicRules.validate(Department.PHYSICS, Stream.BSc, Year.SY, 3,
+				Division.D));
+		assertNull(AcademicRules.validate(Department.ENGLISH, Stream.BA, Year.FY, 1,
+				Division.A));
+
+		// Blank is always allowed: most classes have no division, and a row predating the
+		// column has none either.
+		for (Stream s : Stream.values()) {
+			assertNull(s + " must accept a blank division",
+					AcademicRules.validate(null, s, null, null, null));
+		}
+	}
+
+	@Test
+	public void validateStillReportsTheEarlierProblemFirst() {
+		// A division on a stream that has none is the last thing checked, so a row that is
+		// wrong in two ways is reported by the fault the user should fix first.
+		String problem = AcademicRules.validate(Department.COMMERCE, Stream.BSc, Year.FY, 1,
+				Division.A);
+		assertNotNull(problem);
+		assertTrue("the department mismatch should be reported before the division: " + problem,
+				problem.contains("not offered"));
+	}
+
+	@Test
+	public void reconcileDivisionDropsWhatTheNewStreamCannotHold() {
+		assertEquals(Division.B, AcademicRules.reconcileDivision(Stream.BSc, Division.B));
+		assertEquals(Division.B, AcademicRules.reconcileDivision(null, Division.B));
+
+		assertNull(AcademicRules.reconcileDivision(Stream.BSc_unaided, Division.B));
+		assertNull(AcademicRules.reconcileDivision(Stream.BCom, Division.A));
+		assertNull(AcademicRules.reconcileDivision(Stream.BSc, null));
+	}
+
+	@Test
+	public void everyDivisionOfferedForAStreamActuallyValidates() {
+		for (Department d : Department.values()) {
+			for (Stream s : AcademicRules.streamsFor(d)) {
+				for (Division division : AcademicRules.divisionsFor(s)) {
+					assertNull(d + "/" + s + "/" + division
+									+ " is offered but does not validate",
+							AcademicRules.validate(d, s, null, null, division));
+				}
+			}
+		}
+	}
+
+	@Test
+	public void divisionsResolveFromWhateverARosterWritesThem() {
+		assertEquals(Division.B, Division.fromAny("B"));
+		assertEquals(Division.B, Division.fromAny("b"));
+		assertEquals(Division.B, Division.fromAny(" B "));
+
+		// A roster writes the prefix as often as not.
+		assertEquals(Division.C, Division.fromAny("Div C"));
+		assertEquals(Division.C, Division.fromAny("div. C"));
+		assertEquals(Division.C, Division.fromAny("Division C"));
+
+		assertNull(Division.fromAny(null));
+		assertNull(Division.fromAny(""));
+		assertNull(Division.fromAny("   "));
+
+		// E does not exist, and a bare prefix names no division at all.
+		assertNull(Division.fromAny("E"));
+		assertNull(Division.fromAny("Div"));
 	}
 }

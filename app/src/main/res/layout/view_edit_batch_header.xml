@@ -120,6 +120,25 @@
 
             </com.google.android.material.textfield.TextInputLayout>
 
+            <!--
+              A practical batch is usually drawn from one division, so the roll being ticked
+              through can be narrowed to it. Disabled on the streams that have no divisions.
+            -->
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:hint="@string/hint_division">
+
+                <AutoCompleteTextView
+                    android:id="@+id/actvFilterDivision"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
             <com.google.android.material.textfield.TextInputLayout
                 style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
                 android:layout_width="match_parent"

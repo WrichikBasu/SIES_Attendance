@@ -4,6 +4,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.util.NameFormat;
@@ -14,7 +15,7 @@ import in.basulabs.siesattendance.backend.util.NameFormat;
  * <p>
  * Because it carries an academic year, an instance describes a student as they were in one
  * particular session. The same person in two sessions is two of these, with different roll
- * numbers and possibly a different year and class.
+ * numbers and possibly a different year, division and class.
  */
 public class StudentWithYear {
 
@@ -53,11 +54,19 @@ public class StudentWithYear {
 	@Nullable
 	public Integer semester;
 
+	/**
+	 * Null on the streams that are not split into divisions, which is most of them, and on a
+	 * divided class whose division has not been recorded.
+	 */
+	@Nullable
+	public Division division;
+
 	public StudentWithYear(long studentID, @NonNull String name, @NonNull String pronouns,
 	                       @Nullable String email, @NonNull String rollNo, int academicYear,
 	                       @NonNull Year year, @NonNull Stream stream,
 	                       @NonNull Department majorDept, @Nullable Department minorDept,
-	                       @Nullable Department oeDept, @Nullable Integer semester) {
+	                       @Nullable Department oeDept, @Nullable Integer semester,
+	                       @Nullable Division division) {
 		this.studentID = studentID;
 		this.name = name;
 		this.pronouns = pronouns;
@@ -70,19 +79,19 @@ public class StudentWithYear {
 		this.minorDept = minorDept;
 		this.oeDept = oeDept;
 		this.semester = semester;
+		this.division = division;
 	}
 
 	/**
-	 * The student's class as it is normally written. The unaided qualifier is dropped, matching
-	 * {@code ClassKey.label} so the two agree wherever both appear.
+	 * The student's class as it is normally written. Rendered by {@link ClassKey#label}, so a
+	 * student and the chip for their class cannot describe it differently.
 	 *
-	 * @return A label such as "SY BSc COMPUTER_SCIENCE".
+	 * @return A label such as "SY BSc COMPUTER_SCIENCE", with the division appended when the
+	 *         student has one.
 	 */
 	@NonNull
 	public String classLabel() {
-		return year + " " +
-				(stream.isUnaided() ? stream.toString().replace(" (unaided)", "") : stream)
-				+ " " + majorDept;
+		return ClassKey.label(year, stream, majorDept, division);
 	}
 
 	/**

@@ -138,23 +138,51 @@
 
         <!--
           Semester sits under year because it is narrowed by it: the year fixes the pair, so
-          this list is only ever two entries once a year is chosen.
+          this list is only ever two entries once a year is chosen. Division sits beside it,
+          narrowed by the stream instead: it is empty and disabled on the streams that are not
+          split into divisions, which is most of them.
         -->
-        <com.google.android.material.textfield.TextInputLayout
-            android:id="@+id/tilSemester"
-            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:hint="@string/hint_semester">
+            android:orientation="horizontal"
+            android:layout_marginBottom="12dp">
 
-            <AutoCompleteTextView
-                android:id="@+id/actvSemester"
-                android:layout_width="match_parent"
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilSemester"
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:inputType="none" />
+                android:layout_weight="1"
+                android:layout_marginEnd="6dp"
+                android:hint="@string/hint_semester">
 
-        </com.google.android.material.textfield.TextInputLayout>
+                <AutoCompleteTextView
+                    android:id="@+id/actvSemester"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilDivision"
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="6dp"
+                android:hint="@string/hint_division">
+
+                <AutoCompleteTextView
+                    android:id="@+id/actvDivision"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
+        </LinearLayout>
 
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/tilMajorDept"

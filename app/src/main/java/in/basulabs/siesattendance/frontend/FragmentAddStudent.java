@@ -24,6 +24,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EntityStudent;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
@@ -41,6 +42,10 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * A student carries three departments, of which only the major is required. Which of them
  * matters depends on the course being looked at, so all three are offered here rather than being
  * inferred; the two optional ones take a "none" entry that stores null.
+ * <p>
+ * The division field follows the stream rather than the department: most streams are not split
+ * into divisions, and on those the field is empty and disabled rather than absent, so the form
+ * keeps the same shape whichever class is being entered.
  * <p>
  * Cross-field problems are reported as they arise through {@link #showCombinationProblem()},
  * rather than only at save time, so an impossible pairing is visible while the user is still
@@ -64,8 +69,8 @@ public class FragmentAddStudent extends Fragment {
 
 	private TextInputLayout tilName, tilRollNo;
 
-	private AutoCompleteTextView actvYear, actvStream, actvSemester, actvMajor, actvMinor,
-			actvOe;
+	private AutoCompleteTextView actvYear, actvStream, actvSemester, actvDivision, actvMajor,
+			actvMinor, actvOe;
 
 	/** Shows the first cross-check failure as soon as one exists, rather than at save time. */
 	private TextView combinationWarning;
@@ -87,6 +92,9 @@ public class FragmentAddStudent extends Fragment {
 
 	@Nullable
 	private Integer chosenSemester;
+
+	@Nullable
+	private Division chosenDivision;
 
 	@Nullable
 	@Override
@@ -121,6 +129,7 @@ public class FragmentAddStudent extends Fragment {
 		actvYear = view.findViewById(R.id.actvYear);
 		actvStream = view.findViewById(R.id.actvStream);
 		actvSemester = view.findViewById(R.id.actvSemester);
+		actvDivision = view.findViewById(R.id.actvDivision);
 		combinationWarning = view.findViewById(R.id.tvCombinationWarning);
 		actvMajor = view.findViewById(R.id.actvMajorDept);
 		actvMinor = view.findViewById(R.id.actvMinorDept);
@@ -165,6 +174,7 @@ public class FragmentAddStudent extends Fragment {
 				chosenStream = student.stream;
 				chosenYear = student.year;
 				chosenSemester = student.semester;
+				chosenDivision = student.division;
 				chosenMinor = student.minorDept;
 				chosenOe = student.oeDept;
 
@@ -194,8 +204,17 @@ public class FragmentAddStudent extends Fragment {
 					chosenStream = stream;
 					chosenYear = year;
 					chosenSemester = semester;
+
+					// The division belongs to the stream, so a change of stream can leave the
+					// chosen one on a class that has no divisions at all. Dropped rather than
+					// kept, then the field is rebuilt for whatever the stream now is.
+					chosenDivision = AcademicRules.reconcileDivision(stream, chosenDivision);
+					bindDivisionField();
+
 					showCombinationProblem();
 				});
+
+		bindDivisionField();
 
 		DropdownBinder.bind(actvMinor, Arrays.asList(Department.values()), NONE,
 				chosenMinor, value -> {
@@ -213,11 +232,24 @@ public class FragmentAddStudent extends Fragment {
 	}
 
 	/**
+	 * Fills the division field for the stream currently chosen, which is what decides whether
+	 * there is anything in it: only the aided BSc and BA are split into divisions, and on every
+	 * other stream the field is shown empty and disabled.
+	 */
+	private void bindDivisionField() {
+		DropdownBinder.bindDivisions(actvDivision, chosenStream, NONE, chosenDivision,
+				value -> {
+					chosenDivision = value;
+					showCombinationProblem();
+				});
+	}
+
+	/**
 	 * Describes the first cross-check failure in the current selection, or null when it is
 	 * sound.
 	 * <p>
-	 * {@link AcademicRules#validate} covers department against stream, year against both, and
-	 * semester against year. The minor and open-elective checks are here rather than in
+	 * {@link AcademicRules#validate} covers department against stream, year against both,
+	 * semester against year, and division against stream. The minor and open-elective checks are here rather than in
 	 * AcademicRules because they are about this form specifically: a student cannot take their
 	 * own major department as a minor or an open elective, which is a rule about one student
 	 * rather than about what the college offers.
@@ -226,7 +258,7 @@ public class FragmentAddStudent extends Fragment {
 	private String combinationProblem() {
 
 		String problem = AcademicRules.validate(chosenMajor, chosenStream, chosenYear,
-				chosenSemester);
+				chosenSemester, chosenDivision);
 
 		if (problem != null) {
 			return problem;
@@ -339,10 +371,10 @@ public class FragmentAddStudent extends Fragment {
 			student.studentID = editingStudentID;
 			viewModel.updateStudent(student, academicYear, rollNo, year, stream, major,
 					minor, oe,
-					chosenSemester, navigateBack);
+					chosenSemester, chosenDivision, navigateBack);
 		} else {
 			viewModel.addStudent(student, rollNo, year, stream, major, minor, oe,
-					chosenSemester, navigateBack);
+					chosenSemester, chosenDivision, navigateBack);
 		}
 	}
 

@@ -87,7 +87,10 @@ def build_fixture():
         1 Aarav   2025CS01  SY BSc_unaided CS,  minor MATHEMATICS, OE ENGLISH   batch A
         2 Sneha   2025CS02  SY BSc_unaided CS,  no minor,          OE ENGLISH   batch B
         3 Rahul   2025CS03  SY BSc_unaided CS,  no minor,          no OE        batch A
-        4 Meera   2025PH01  SY BSc         PHY, minor CS,          OE HINDI     - (also 2024)
+        4 Meera   2025PH01  SY BSc Div B   PHY, minor CS,          OE HINDI     - (also 2024)
+
+      Only Meera is on a stream that has divisions at all: the aided BSc. The three CS
+      students are BSc_unaided, which is not divided, so their division is null.
 
       Courses:
         1 CS201  MAJOR            CS  SY BSc_unaided   sem 3
@@ -132,13 +135,14 @@ def build_fixture():
 
     enrolments = [
         (1, 2025, "2025CS01", "SY", "BSc_unaided", "COMPUTER_SCIENCE", "MATHEMATICS",
-         "ENGLISH", 3),
-        (2, 2025, "2025CS02", "SY", "BSc_unaided", "COMPUTER_SCIENCE", None, "ENGLISH", 3),
-        (3, 2025, "2025CS03", "SY", "BSc_unaided", "COMPUTER_SCIENCE", None, None, 3),
-        (4, 2025, "2025PH01", "SY", "BSc", "PHYSICS", "COMPUTER_SCIENCE", "HINDI", 3),
-        (4, 2024, "2024PH07", "FY", "BSc", "PHYSICS", None, None, 1),
+         "ENGLISH", 3, None),
+        (2, 2025, "2025CS02", "SY", "BSc_unaided", "COMPUTER_SCIENCE", None, "ENGLISH", 3,
+         None),
+        (3, 2025, "2025CS03", "SY", "BSc_unaided", "COMPUTER_SCIENCE", None, None, 3, None),
+        (4, 2025, "2025PH01", "SY", "BSc", "PHYSICS", "COMPUTER_SCIENCE", "HINDI", 3, "B"),
+        (4, 2024, "2024PH07", "FY", "BSc", "PHYSICS", None, None, 1, "A"),
     ]
-    c.executemany("INSERT INTO student_year VALUES (?,?,?,?,?,?,?,?,?)", enrolments)
+    c.executemany("INSERT INTO student_year VALUES (?,?,?,?,?,?,?,?,?,?)", enrolments)
 
     courses = [
         (1, 1, "CS201", "Data Structures", "BSc_unaided", "COMPUTER_SCIENCE", "SY", 3,
@@ -238,6 +242,31 @@ def test_every_generated_statement_parses_and_runs(conn):
             check(f"statement runs: {name}", True)
         except Exception as e:  # noqa: BLE001
             check(f"statement runs: {name}", False, f"{type(e).__name__}: {e}")
+
+
+def test_a_null_argument_round_trips(conn):
+    """
+    The dump format's one sentinel. A null argument is written as " NULL" and has to come back
+    as None, not as the text: the Java side used to write a control character in place of that
+    leading space, so the two halves of this format had quietly stopped agreeing.
+
+    SqlBuilderTest dumps probe_null_argument for exactly this, since none of the real query
+    builders binds a null.
+    """
+    sql, args = read_statement("probe_null_argument")
+
+    check("dump format: a null argument parses back as None", args == [None], f"{args!r}")
+
+    # And it survives being bound, which is the whole point of parsing it back.
+    value = conn.execute(sql, args).fetchone()[0]
+    check("dump format: the parsed null binds as a null", value is None, f"{value!r}")
+
+    # A bound string that happens to read NULL must not be mistaken for the sentinel. The
+    # leading space is the only thing keeping the two apart, which is why it matters that it
+    # is a space on both sides.
+    _, text_args = read_statement("probe_null_like_string")
+    check("dump format: a bound string reading NULL stays a string",
+          text_args == ["NULL"], f"{text_args!r}")
 
 
 def test_export_denominator_counts_lectures_held(conn):
@@ -370,6 +399,94 @@ def test_stats_grouped_by_student(conn):
     check("stats: a student left off a sheet has a smaller denominator here than in export",
           rahul["total"] == 3 and rahul["attended"] == 2,
           f"total={rahul['total']} attended={rahul['attended']}")
+
+
+def fixture_with_two_divisions():
+    """
+    The shared fixture plus a real divided class: a Physics course, and Meera in Div B beside a
+    second Physics student in Div C, both marked on the same lecture.
+
+    Its own copy rather than an addition to the shared one. Meera is the only student on a
+    divided stream and deliberately has no attendance in the shared fixture, so adding marks
+    there would shift the numbers every other test asserts.
+    """
+    conn = build_fixture()
+    c = conn.cursor()
+
+    # A second Physics student, in another division of the same class.
+    c.execute("INSERT INTO students VALUES (5,'PRIYA NAIR','she/her','priya@sies.edu.in')")
+    c.execute("INSERT INTO student_year VALUES "
+              "(5,2025,'2025PH02','SY','BSc','PHYSICS',NULL,NULL,3,'C')")
+
+    c.execute("INSERT INTO courses VALUES "
+              "(7,2,'PH201','Mechanics','BSc','PHYSICS','SY',3,'MAJOR',NULL,NULL,NULL)")
+    c.execute("INSERT INTO lectures VALUES (7,7,NULL,?,?,NULL)",
+              (ts(2025, 7, 10, 12, 0), ts(2025, 7, 10, 13, 0)))
+    c.executemany("INSERT INTO attendance VALUES (?,?,?)", [(7, 4, 1), (7, 5, 0)])
+    conn.commit()
+    return conn
+
+
+def test_export_narrows_to_one_division():
+    """
+    The one narrowing the course list cannot express: both divisions of a class sit the same
+    courses, so only the division filter can put one of them on a sheet by itself.
+    """
+    conn = fixture_with_two_divisions()
+
+    everyone = {r["rollNo"] for r in run(conn, "export_unrestricted")}
+    check("export: both divisions are on an unfiltered sheet",
+          {"2025PH01", "2025PH02"} <= everyone, f"{sorted(everyone)}")
+
+    div_b = {r["rollNo"] for r in run(conn, "export_division_only")}
+    check("export: asking for Div B leaves out the other division",
+          div_b == {"2025PH01"}, f"{sorted(div_b)}")
+    check("export: asking for a division leaves out the students who have none",
+          not any(roll.startswith("2025CS") for roll in div_b), f"{sorted(div_b)}")
+
+    # The figures have to survive the narrowing intact: this is a filter on which students
+    # appear, not on which lectures are counted.
+    rows = {(r["rollNo"], r["courseCode"]): r for r in run(conn, "export_division_only")}
+    meera = rows[("2025PH01", "PH201")]
+    check("export: a narrowed sheet keeps the same held and attended figures",
+          meera["held"] == 1 and meera["attended"] == 1,
+          f"held={meera['held']} attended={meera['attended']}")
+
+    conn.close()
+
+
+def test_stats_class_grouping_splits_by_division():
+    """
+    A division is a class, so the class breakdown has to keep two of them apart, and a class
+    with no division has to read exactly as it did before the column existed.
+    """
+    conn = fixture_with_two_divisions()
+
+    rows = {r["primaryLabel"]: r for r in run(conn, "stats_grouped_CLASS")}
+
+    check("stats: an undivided class reads exactly as it did before",
+          "SY BSc_unaided COMPUTER_SCIENCE" in rows, f"{sorted(rows)}")
+    check("stats: two divisions of one class are two rows",
+          "SY BSc PHYSICS Div B" in rows and "SY BSc PHYSICS Div C" in rows,
+          f"{sorted(rows)}")
+    check("stats: concatenating a null division must not null the whole label",
+          all(label is not None for label in rows), f"{sorted(rows, key=str)}")
+
+    check("stats: each division carries only its own student",
+          rows["SY BSc PHYSICS Div B"]["students"] == 1
+          and rows["SY BSc PHYSICS Div C"]["students"] == 1)
+    check("stats: the divisions are not merged into one figure",
+          rows["SY BSc PHYSICS Div B"]["attended"] == 1
+          and rows["SY BSc PHYSICS Div C"]["attended"] == 0,
+          f"{rows['SY BSc PHYSICS Div B']} {rows['SY BSc PHYSICS Div C']}")
+
+    # The whole CS class still lands in a single row, so nulls group together rather than
+    # falling out of the report.
+    check("stats: null divisions group together rather than one row each",
+          rows["SY BSc_unaided COMPUTER_SCIENCE"]["students"] == 3,
+          f"{rows['SY BSc_unaided COMPUTER_SCIENCE']}")
+
+    conn.close()
 
 
 def test_stats_lecture_counts_are_distinct(conn):
@@ -713,9 +830,9 @@ def test_overlapping_sessions_double_count(conn):
     # it: exactly what merging a backup from a second device would fold in.
     probe.execute("INSERT INTO academic_years VALUES (?,?,?,?,?)",
                   (2026, 0, 0, start_of_day(2025, 7, 1), end_of_day(2025, 7, 31)))
-    probe.execute("INSERT INTO student_year VALUES (?,?,?,?,?,?,?,?,?)",
+    probe.execute("INSERT INTO student_year VALUES (?,?,?,?,?,?,?,?,?,?)",
                   (1, 2026, "2026CS01", "TY", "BSc_unaided", "COMPUTER_SCIENCE",
-                   None, None, 5))
+                   None, None, 5, None))
     probe.commit()
 
     after_all = run(probe, "stats_all_sessions")
@@ -789,6 +906,7 @@ def main():
     conn = build_fixture()
 
     test_every_generated_statement_parses_and_runs(conn)
+    test_a_null_argument_round_trips(conn)
     test_export_denominator_counts_lectures_held(conn)
     test_export_roster_matches_course_type(conn)
     test_export_excludes_other_sessions_and_orphans(conn)
@@ -796,6 +914,8 @@ def main():
     test_export_course_filter_selects_columns(conn)
     test_export_includes_discontinued_courses(conn)
     test_stats_grouped_by_student(conn)
+    test_export_narrows_to_one_division()
+    test_stats_class_grouping_splits_by_division()
     test_stats_lecture_counts_are_distinct(conn)
     test_stats_excludes_orphan_lectures(conn)
     test_stats_batch_grouping_keeps_whole_class_lectures(conn)

@@ -11,6 +11,7 @@ import in.basulabs.siesattendance.backend.EntityAcademicYear;
 
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 
@@ -85,6 +86,14 @@ public class StatsFilter {
 
 	@Nullable
 	public Department department;
+
+	/**
+	 * Narrows to one division of a class. Only the divided streams have any, so on every other
+	 * stream setting this returns nothing, which is the honest answer rather than an error:
+	 * see the note above about combinations that match nothing.
+	 */
+	@Nullable
+	public Division division;
 
 	/** Attendance threshold used for the "below" count. Most universities use 75. */
 	public double threshold = 75d;
@@ -213,7 +222,7 @@ public class StatsFilter {
 	public boolean hasActiveFilters() {
 		return from != null || to != null || courseID != null || batchID != null
 				|| professorID != null || studentID != null || courseType != null
-				|| year != null || stream != null || department != null;
+				|| year != null || stream != null || department != null || division != null;
 	}
 
 	/**
@@ -243,6 +252,7 @@ public class StatsFilter {
 		c.year = year;
 		c.stream = stream;
 		c.department = department;
+		c.division = division;
 		c.threshold = threshold;
 		return c;
 	}
@@ -264,5 +274,6 @@ public class StatsFilter {
 		year = null;
 		stream = null;
 		department = null;
+		division = null;
 	}
 }

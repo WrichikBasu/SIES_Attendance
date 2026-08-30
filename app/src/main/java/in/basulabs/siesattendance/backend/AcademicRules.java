@@ -19,7 +19,8 @@ import java.util.Map;
  * single unambiguous choice for most departments.
  * <p>
  * The narrowing runs one way only: department, then stream, then year, then semester. Each
- * choice restricts the ones after it and leaves the ones before it alone. Making it
+ * choice restricts the ones after it and leaves the ones before it alone. A student's division
+ * hangs off the stream in the same way, since only the divided streams offer one at all. Making it
  * bidirectional meant a later field could rewrite an earlier one under the user, which is
  * disorienting when you are simply correcting a typo further down the form.
  * <p>
@@ -124,6 +125,42 @@ public final class AcademicRules {
 	@Nullable
 	public static String validate(@Nullable Department department, @Nullable Stream stream,
 	                              @Nullable Year year, @Nullable Integer semester) {
+		return validate(department, stream, year, semester, null);
+	}
+
+	/**
+	 * The same check, extended to a division.
+	 * <p>
+	 * Only a student carries one, so the four-argument form above remains what the course and
+	 * batch screens call. A division is legitimate only on a stream that is actually split into
+	 * them; a blank one is always allowed, since most classes have none and an older record may
+	 * predate the column.
+	 *
+	 * @param division may be null, and must be on a stream that has divisions when it is not
+	 */
+	@Nullable
+	public static String validate(@Nullable Department department, @Nullable Stream stream,
+	                              @Nullable Year year, @Nullable Integer semester,
+	                              @Nullable Division division) {
+
+		String problem = validateWithoutDivision(department, stream, year, semester);
+
+		if (problem != null) {
+			return problem;
+		}
+
+		if (division != null && stream != null && !stream.hasDivisions()) {
+			return stream + " is not split into divisions";
+		}
+
+		return null;
+	}
+
+	@Nullable
+	private static String validateWithoutDivision(@Nullable Department department,
+	                                              @Nullable Stream stream,
+	                                              @Nullable Year year,
+	                                              @Nullable Integer semester) {
 
 		if (department != null && stream != null && !isValid(department, stream)) {
 			return department + " is not offered as " + stream;
@@ -377,6 +414,43 @@ public final class AcademicRules {
 			return null;
 		}
 		return semestersFor(year, stream).contains(current) ? current : null;
+	}
+
+	// ── Divisions ────────────────────────────────────────────────────────
+
+	/**
+	 * The divisions a stream is split into: A to D for the streams that are divided, and none
+	 * at all for the ones that are not.
+	 * <p>
+	 * An empty list is the answer for most streams and is what a dropdown should show as no
+	 * choice rather than as a choice between nothing. With no stream chosen every division is
+	 * offered, which is what a filter wants: not knowing the stream yet is not the same as
+	 * knowing it has no divisions.
+	 */
+	@NonNull
+	public static List<Division> divisionsFor(@Nullable Stream stream) {
+
+		if (stream == null) {
+			return Arrays.asList(Division.values());
+		}
+
+		return stream.hasDivisions()
+				? Arrays.asList(Division.values())
+				: Collections.emptyList();
+	}
+
+	/**
+	 * Drops a division the stream cannot hold, so moving a student from BSc to BCom does not
+	 * leave "Div B" showing on a stream that has no divisions.
+	 */
+	@Nullable
+	public static Division reconcileDivision(@Nullable Stream stream,
+	                                         @Nullable Division current) {
+
+		if (current == null) {
+			return null;
+		}
+		return divisionsFor(stream).contains(current) ? current : null;
 	}
 
 	@NonNull

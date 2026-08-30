@@ -12,6 +12,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.TypeConvertors;
@@ -174,6 +175,14 @@ public class FormattingAndConversionTest {
 		for (Year y : Year.values()) {
 			assertEquals(y, TypeConvertors.toYear(TypeConvertors.fromYear(y)));
 		}
+		for (Division d : Division.values()) {
+			assertEquals(d, TypeConvertors.toDivision(TypeConvertors.fromDivision(d)));
+		}
+
+		// A division is the one nullable enum column on a student's enrolment, so both
+		// directions have to carry the absence rather than inventing a value for it.
+		assertNull(TypeConvertors.fromDivision(null));
+		assertNull(TypeConvertors.toDivision(null));
 	}
 
 	// ── EntityAcademicYear ───────────────────────────────────────────────
@@ -281,11 +290,11 @@ public class FormattingAndConversionTest {
 	@Test
 	public void classLabelsDropTheUnaidedQualifierAndAgreeWithEachOther() {
 		ClassKey key = new ClassKey(Year.SY, Stream.BSc_unaided,
-				Department.COMPUTER_SCIENCE, 42);
+				Department.COMPUTER_SCIENCE, null, 42);
 
 		StudentWithYear student = new StudentWithYear(1L, "AARAV PATIL", "he/him",
 				"a@sies.edu.in", "2024CS032", 2025, Year.SY, Stream.BSc_unaided,
-				Department.COMPUTER_SCIENCE, null, null, 3);
+				Department.COMPUTER_SCIENCE, null, null, 3, null);
 
 		assertEquals("SY BSc CS", key.label());
 		assertEquals("the two labels must agree wherever both appear",
@@ -296,16 +305,40 @@ public class FormattingAndConversionTest {
 	@Test
 	public void aidedClassLabelsAreLeftAlone() {
 		assertEquals("SY BSc Physics",
-				new ClassKey(Year.SY, Stream.BSc, Department.PHYSICS, 1).label());
+				new ClassKey(Year.SY, Stream.BSc, Department.PHYSICS, null, 1).label());
 		assertEquals("Masters Part 1 MSc Physics",
-				new ClassKey(Year.Masters_P1, Stream.MSc, Department.PHYSICS, 1).label());
+				new ClassKey(Year.Masters_P1, Stream.MSc, Department.PHYSICS, null, 1).label());
+	}
+
+	@Test
+	public void aDivisionIsAppendedToTheClassLabelAndOnlyWhenThereIsOne() {
+		assertEquals("SY BSc Physics Div B",
+				new ClassKey(Year.SY, Stream.BSc, Department.PHYSICS, Division.B, 1).label());
+		assertEquals("FY BA English Div A",
+				new ClassKey(Year.FY, Stream.BA, Department.ENGLISH, Division.A, 1).label());
+
+		assertEquals("a class with no division reads exactly as it did before",
+				"SY BSc Physics",
+				new ClassKey(Year.SY, Stream.BSc, Department.PHYSICS, null, 1).label());
+	}
+
+	@Test
+	public void aStudentAndTheirClassChipAgreeOnTheDivision() {
+		ClassKey key = new ClassKey(Year.FY, Stream.BA, Department.ENGLISH, Division.C, 30);
+
+		StudentWithYear student = new StudentWithYear(2L, "MEERA IYER", "she/her", null,
+				"2025EN014", 2025, Year.FY, Stream.BA, Department.ENGLISH, null, null, 1,
+				Division.C);
+
+		assertEquals("the two labels must agree wherever both appear",
+				key.label(), student.classLabel());
 	}
 
 	@Test
 	public void studentDisplayHelpersTidyTheRawRosterName() {
 		StudentWithYear student = new StudentWithYear(1L, "AARAV  PATIL", "he/him", null,
 				"2024CS032", 2025, Year.SY, Stream.BSc_unaided,
-				Department.COMPUTER_SCIENCE, null, null, null);
+				Department.COMPUTER_SCIENCE, null, null, null, null);
 
 		assertEquals("Aarav Patil", student.displayName());
 		assertEquals("AP", student.initials());

@@ -12,12 +12,13 @@ import java.util.List;
 
 import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 
 /**
- * Fills exposed dropdowns from enums and keeps the department, stream and year fields
- * consistent with each other.
+ * Fills exposed dropdowns from enums and keeps the department, stream, year and division
+ * fields consistent with each other.
  * <p>
  * Every dropdown in the app goes through here so the rules in {@link AcademicRules} cannot be
  * enforced on one screen and forgotten on another, and so that every label comes from
@@ -71,6 +72,33 @@ public final class DropdownBinder {
 
 		field.setOnItemClickListener((parent, view, position, id) ->
 				callback.onSelected(position < offset ? null : values.get(position - offset)));
+	}
+
+	/**
+	 * Fills a division field for the stream currently chosen, and disables it when that stream
+	 * is not split into divisions.
+	 * <p>
+	 * Divisions hang off the stream rather than off the department, so this is bound separately
+	 * from the linked academic fields and rebound whenever the stream changes. A stream with no
+	 * divisions leaves nothing to choose, and the field is shown empty and disabled rather than
+	 * offering a choice that would be refused on saving.
+	 * <p>
+	 * The selection is displayed as given. Reconciling it against the new stream is the caller's
+	 * job, through {@link AcademicRules#reconcileDivision}, because dropping a value is a change
+	 * to the record that the caller has to know about and this only draws the field.
+	 *
+	 * @param anyLabel when non-null, prepended as an entry that selects null
+	 */
+	public static void bindDivisions(@NonNull AutoCompleteTextView field,
+	                                 @Nullable Stream stream,
+	                                 @Nullable String anyLabel,
+	                                 @Nullable Division selected,
+	                                 @NonNull OnSelected<Division> callback) {
+
+		List<Division> divisions = AcademicRules.divisionsFor(stream);
+
+		bind(field, divisions, anyLabel, selected, callback);
+		field.setEnabled(!divisions.isEmpty());
 	}
 
 	/**

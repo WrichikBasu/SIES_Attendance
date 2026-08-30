@@ -94,7 +94,7 @@ public abstract class DaoStudent {
 	public long upsertStudentWithYear(EntityStudent student, int academicYear, String rollNo,
 	                                  Year year, Stream stream, Department majorDept,
 	                                  Department minorDept, Department oeDept,
-	                                  Integer semester) {
+	                                  Integer semester, Division division) {
 
 		Long existing = findStudentIdByRollNo(rollNo, academicYear);
 
@@ -113,13 +113,13 @@ public abstract class DaoStudent {
 		}
 
 		insertStudentYear(new EntityStudentYear(studentID, academicYear, rollNo, year, stream,
-				majorDept, minorDept, oeDept, semester));
+				majorDept, minorDept, oeDept, semester, division));
 
 		return studentID;
 	}
 
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE y.academicYear = :academicYear " +
 			"ORDER BY y.rollNo ASC")
@@ -130,7 +130,7 @@ public abstract class DaoStudent {
 	 * dimension unfiltered, so the same query backs both "SY BSc CS" and broader searches.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE y.academicYear = :academicYear " +
 			"AND (:year IS NULL OR y.year = :year) " +
@@ -148,7 +148,7 @@ public abstract class DaoStudent {
 	 * from a class in one shot.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE y.academicYear = :academicYear " +
 			"AND (:year IS NULL OR y.year = :year) " +
@@ -162,15 +162,15 @@ public abstract class DaoStudent {
 	 * The students screen's full filter, in one query.
 	 * <p>
 	 * Every dimension is optional: a null argument leaves that dimension open, so the same
-	 * statement serves "everyone in this session" and "SY BSc Physics majors taking Statistics
-	 * as a minor who are in Batch A". Batch membership is tested with EXISTS rather than a join,
-	 * so a student in a batch cannot be returned twice.
+	 * statement serves "everyone in this session" and "SY BSc Physics majors in Div C taking
+	 * Statistics as a minor who are in Batch A". Batch membership is tested with EXISTS rather
+	 * than a join, so a student in a batch cannot be returned twice.
 	 * <p>
 	 * The search term matches name or roll number and is passed as an empty string, not null,
 	 * when unused.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE y.academicYear = :academicYear " +
 			"AND (:year IS NULL OR y.year = :year) " +
@@ -178,6 +178,7 @@ public abstract class DaoStudent {
 			"AND (:majorDept IS NULL OR y.majorDept = :majorDept) " +
 			"AND (:minorDept IS NULL OR y.minorDept = :minorDept) " +
 			"AND (:oeDept IS NULL OR y.oeDept = :oeDept) " +
+			"AND (:division IS NULL OR y.division = :division) " +
 			"AND (:batchID IS NULL OR EXISTS (" +
 			"   SELECT 1 FROM batch_student_map m WHERE m.studentID = s.studentID " +
 			"   AND m.batchID = :batchID AND m.academicYear = :academicYear)) " +
@@ -187,18 +188,18 @@ public abstract class DaoStudent {
 	public abstract List<StudentWithYear> filterStudentsSync(int academicYear, Year year,
 	                                                         Stream stream, Department majorDept,
 	                                                         Department minorDept,
-	                                                         Department oeDept, Long batchID,
-	                                                         String query);
+	                                                         Department oeDept, Division division,
+	                                                         Long batchID, String query);
 
 	/**
 	 * Every distinct class present in the database for the given academic year, with a head
 	 * count. This drives the class picker chips.
 	 */
 	@Query("SELECT y.year AS year, y.stream AS stream, y.majorDept AS majorDept, " +
-			"COUNT(*) AS studentCount " +
+			"y.division AS division, COUNT(*) AS studentCount " +
 			"FROM student_year y WHERE y.academicYear = :academicYear " +
-			"GROUP BY y.year, y.stream, y.majorDept " +
-			"ORDER BY y.year, y.stream, y.majorDept")
+			"GROUP BY y.year, y.stream, y.majorDept, y.division " +
+			"ORDER BY y.year, y.stream, y.majorDept, y.division")
 	public abstract LiveData<List<ClassKey>> getClassesForYear(int academicYear);
 
 	@Query("SELECT COUNT(*) FROM student_year WHERE academicYear = :academicYear")
@@ -215,13 +216,13 @@ public abstract class DaoStudent {
 	// ── Single student, edit and delete ──────────────────────────────────
 
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE s.studentID = :studentID AND y.academicYear = :academicYear")
 	public abstract LiveData<StudentWithYear> getOne(long studentID, int academicYear);
 
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE s.studentID = :studentID AND y.academicYear = :academicYear")
 	public abstract StudentWithYear getOneSync(long studentID, int academicYear);
@@ -233,12 +234,12 @@ public abstract class DaoStudent {
 	 */
 	@Query("UPDATE student_year SET rollNo = :rollNo, year = :year, stream = :stream, " +
 			"majorDept = :majorDept, minorDept = :minorDept, oeDept = :oeDept, " +
-			"semester = :semester " +
+			"semester = :semester, division = :division " +
 			"WHERE studentID = :studentID AND academicYear = :academicYear")
 	public abstract void updateStudentYear(long studentID, int academicYear, String rollNo,
 	                                       Year year, Stream stream, Department majorDept,
 	                                       Department minorDept, Department oeDept,
-	                                       Integer semester);
+	                                       Integer semester, Division division);
 
 	/**
 	 * Applies an edit to both halves of a student record at once, so a failure in either leaves
@@ -248,10 +249,10 @@ public abstract class DaoStudent {
 	public void updateStudentWithYear(EntityStudent student, int academicYear, String rollNo,
 	                                  Year year, Stream stream, Department majorDept,
 	                                  Department minorDept, Department oeDept,
-	                                  Integer semester) {
+	                                  Integer semester, Division division) {
 		updateStudent(student);
 		updateStudentYear(student.studentID, academicYear, rollNo, year, stream, majorDept,
-				minorDept, oeDept, semester);
+				minorDept, oeDept, semester, division);
 	}
 
 	/*
@@ -381,7 +382,7 @@ public abstract class DaoStudent {
 	 * against string literals here.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
 			"FROM courses c " +
 			"INNER JOIN student_year y ON y.year = c.year AND y.stream = c.stream " +
 			"   AND y.academicYear = :academicYear " +
@@ -402,7 +403,7 @@ public abstract class DaoStudent {
 	 * The roll narrowed to one batch of the course, for practicals and other split sessions.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
 			"FROM students s " +
 			"INNER JOIN batch_student_map m ON m.studentID = s.studentID " +
 			"INNER JOIN student_year y ON y.studentID = s.studentID " +

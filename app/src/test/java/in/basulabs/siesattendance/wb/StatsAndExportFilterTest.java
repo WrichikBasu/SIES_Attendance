@@ -14,6 +14,7 @@ import java.time.temporal.ChronoUnit;
 
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
@@ -173,7 +174,7 @@ public class StatsAndExportFilterTest {
 		StatsFilter base = new StatsFilter(2025);
 		assertFalse(base.hasActiveFilters());
 
-		StatsFilter[] each = new StatsFilter[10];
+		StatsFilter[] each = new StatsFilter[11];
 		for (int i = 0; i < each.length; i++) {
 			each[i] = new StatsFilter(2025);
 		}
@@ -188,6 +189,7 @@ public class StatsAndExportFilterTest {
 		each[7].year = Year.SY;
 		each[8].stream = Stream.BSc;
 		each[9].department = Department.PHYSICS;
+		each[10].division = Division.B;
 
 		for (int i = 0; i < each.length; i++) {
 			assertTrue("field " + i + " does not register as an active filter",
@@ -209,6 +211,7 @@ public class StatsAndExportFilterTest {
 		filter.year = Year.TY;
 		filter.stream = Stream.BSc;
 		filter.department = Department.PHYSICS;
+		filter.division = Division.C;
 		filter.applyDateRange(StatsFilter.DateRange.THIS_MONTH, SESSION_2025);
 
 		filter.clearFilters();
@@ -258,9 +261,11 @@ public class StatsAndExportFilterTest {
 		filter.professorID = 3L;
 		filter.studentID = 4L;
 		filter.courseType = CourseType.IKS;
-		filter.year = Year.Masters_P1;
-		filter.stream = Stream.MSc;
+		// A consistent combination, since a division only exists on an undergraduate BSc.
+		filter.year = Year.TY;
+		filter.stream = Stream.BSc;
 		filter.department = Department.CHEMISTRY;
+		filter.division = Division.D;
 		filter.threshold = 80d;
 
 		StatsFilter copy = filter.copy();
@@ -279,6 +284,7 @@ public class StatsAndExportFilterTest {
 		assertEquals(filter.year, copy.year);
 		assertEquals(filter.stream, copy.stream);
 		assertEquals(filter.department, copy.department);
+		assertEquals(filter.division, copy.division);
 		assertEquals(filter.threshold, copy.threshold, 0d);
 	}
 
@@ -302,6 +308,8 @@ public class StatsAndExportFilterTest {
 		filter.departments.add(Department.PHYSICS);
 		filter.years.add(Year.SY);
 		filter.streams.add(Stream.BSc_unaided);
+		filter.divisions.add(Division.A);
+		filter.divisions.add(Division.C);
 
 		String description = filter.describe();
 
@@ -313,6 +321,8 @@ public class StatsAndExportFilterTest {
 		assertTrue(description.contains("SY"));
 		assertTrue("the description is read by a person, so it uses labels",
 				description.contains("BSc (unaided)"));
+		assertTrue("a sheet narrowed to a division has to say so on its face",
+				description.contains("Divisions: A, C"));
 	}
 
 	@Test
@@ -347,6 +357,10 @@ public class StatsAndExportFilterTest {
 		ExportFilter streams = new ExportFilter();
 		streams.streams.add(Stream.BSc);
 		assertFalse(streams.isUnrestricted());
+
+		ExportFilter divisions = new ExportFilter();
+		divisions.divisions.add(Division.B);
+		assertFalse(divisions.isUnrestricted());
 	}
 
 	// ── CourseGroup ──────────────────────────────────────────────────────

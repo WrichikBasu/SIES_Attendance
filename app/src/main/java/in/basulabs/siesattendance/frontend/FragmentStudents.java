@@ -33,6 +33,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
@@ -75,8 +76,8 @@ public class FragmentStudents extends Fragment {
 
 	private TextView resultCount, pastSessionNotice;
 
-	private AutoCompleteTextView actvSession, actvYear, actvStream, actvMajor, actvMinor,
-			actvOe, actvBatch;
+	private AutoCompleteTextView actvSession, actvYear, actvStream, actvDivision, actvMajor,
+			actvMinor, actvOe, actvBatch;
 
 	private View filterPanel;
 
@@ -181,6 +182,7 @@ public class FragmentStudents extends Fragment {
 		actvSession = header.findViewById(R.id.actvSession);
 		actvYear = header.findViewById(R.id.actvYear);
 		actvStream = header.findViewById(R.id.actvStream);
+		actvDivision = header.findViewById(R.id.actvDivision);
 		actvMajor = header.findViewById(R.id.actvMajorDept);
 		actvMinor = header.findViewById(R.id.actvMinorDept);
 		actvOe = header.findViewById(R.id.actvOeDept);
@@ -241,9 +243,18 @@ public class FragmentStudents extends Fragment {
 					filter.majorDept = department;
 					filter.stream = stream;
 					filter.year = year;
+
+					// A division belongs to one stream, so narrowing to a stream that has none
+					// drops it rather than leaving a filter no student can match.
+					filter.division =
+							AcademicRules.reconcileDivision(stream, filter.division);
+					bindDivisionFilter();
+
 					classChips.clearCheck();
 					rerun();
 				});
+
+		bindDivisionFilter();
 
 		DropdownBinder.bind(actvMinor, Arrays.asList(Department.values()), anyLabel,
 				f.minorDept, value -> {
@@ -258,6 +269,20 @@ public class FragmentStudents extends Fragment {
 				});
 
 		binding = false;
+	}
+
+	/**
+	 * Fills the division filter for the stream currently filtered on. With no stream chosen
+	 * every division is offered, since a student of any divided stream could be in one; a
+	 * stream that has no divisions leaves the field empty and disabled.
+	 */
+	private void bindDivisionFilter() {
+		DropdownBinder.bindDivisions(actvDivision, viewModel.studentFilter().stream, anyLabel,
+				viewModel.studentFilter().division, value -> {
+					viewModel.studentFilter().division = value;
+					classChips.clearCheck();
+					rerun();
+				});
 	}
 
 	/**
@@ -356,9 +381,14 @@ public class FragmentStudents extends Fragment {
 	private void resetFilterControls() {
 		binding = true;
 		for (AutoCompleteTextView field : new AutoCompleteTextView[]{
-				actvYear, actvStream, actvMajor, actvMinor, actvOe, actvBatch}) {
+				actvYear, actvStream, actvDivision, actvMajor, actvMinor, actvOe, actvBatch}) {
 			field.setText(anyLabel, false);
 		}
+
+		// The division list depends on the stream, which has just been cleared, so the field
+		// goes back to offering every division rather than the last stream's.
+		bindDivisionFilter();
+
 		binding = false;
 	}
 
@@ -472,7 +502,8 @@ public class FragmentStudents extends Fragment {
 	private boolean hasActiveFilter() {
 		return viewModel.getFilterYear() != null
 				|| viewModel.getFilterStream() != null
-				|| viewModel.getFilterDept() != null;
+				|| viewModel.getFilterDept() != null
+				|| viewModel.getFilterDivision() != null;
 	}
 
 	/**
@@ -489,11 +520,12 @@ public class FragmentStudents extends Fragment {
 		allChip.setCheckable(true);
 		allChip.setChecked(!hasActiveFilter());
 		allChip.setOnClickListener(v -> {
-			viewModel.setClassFilter(null, null, null);
+			viewModel.setClassFilter(null, null, null, null);
 			binding = true;
 			DropdownBinder.setSelection(actvYear, null, anyLabel);
 			DropdownBinder.setSelection(actvStream, null, anyLabel);
 			DropdownBinder.setSelection(actvMajor, null, anyLabel);
+			bindDivisionFilter();
 			binding = false;
 			buildClassChips(classes);
 		});
@@ -509,14 +541,18 @@ public class FragmentStudents extends Fragment {
 			chip.setCheckable(true);
 			chip.setChecked(key.year.equals(viewModel.getFilterYear())
 					&& key.stream.equals(viewModel.getFilterStream())
-					&& key.majorDept.equals(viewModel.getFilterDept()));
+					&& key.majorDept.equals(viewModel.getFilterDept())
+					// Compared by identity so that a chip for an undivided class, which carries
+					// no division, reads as checked when the filter carries none either.
+					&& key.division == viewModel.getFilterDivision());
 
 			chip.setOnClickListener(v -> {
-				viewModel.setClassFilter(key.year, key.stream, key.majorDept);
+				viewModel.setClassFilter(key.year, key.stream, key.majorDept, key.division);
 				binding = true;
 				DropdownBinder.setSelection(actvYear, key.year, anyLabel);
 				DropdownBinder.setSelection(actvStream, key.stream, anyLabel);
 				DropdownBinder.setSelection(actvMajor, key.majorDept, anyLabel);
+				bindDivisionFilter();
 				binding = false;
 				buildClassChips(classes);
 			});

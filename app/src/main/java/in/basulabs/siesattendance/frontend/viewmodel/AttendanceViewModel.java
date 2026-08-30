@@ -26,6 +26,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.EntityAttendance;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
@@ -527,6 +528,13 @@ public class AttendanceViewModel extends AndroidViewModel {
 		@Nullable
 		public Department oeDept;
 
+		/**
+		 * Narrows to one division of a class. Only ever set on the streams that have divisions,
+		 * since no student on any other stream carries one to match.
+		 */
+		@Nullable
+		public Division division;
+
 		@Nullable
 		public Long batchID;
 
@@ -540,7 +548,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		/** True when anything beyond the session is narrowing the list. */
 		public boolean hasActiveFilters() {
 			return year != null || stream != null || majorDept != null || minorDept != null
-					|| oeDept != null || batchID != null;
+					|| oeDept != null || division != null || batchID != null;
 		}
 
 		/**
@@ -553,6 +561,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			majorDept = null;
 			minorDept = null;
 			oeDept = null;
+			division = null;
 			batchID = null;
 			query = "";
 		}
@@ -624,15 +633,21 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return studentFilter().majorDept;
 	}
 
+	public Division getFilterDivision() {
+		return studentFilter().division;
+	}
+
 	/**
-	 * Applies a full class filter such as SY / BSc / COMPUTER_SCIENCE. Any argument may be null
-	 * to leave that dimension open.
+	 * Applies a full class filter such as SY / BSc / COMPUTER_SCIENCE / Div B. Any argument may
+	 * be null to leave that dimension open, which for the division is also what every stream
+	 * that has none is filtered by.
 	 */
 	public void setClassFilter(@Nullable Year year, @Nullable Stream stream,
-	                           @Nullable Department dept) {
+	                           @Nullable Department dept, @Nullable Division division) {
 		studentFilter().year = year;
 		studentFilter().stream = stream;
 		studentFilter().majorDept = dept;
+		studentFilter().division = division;
 		refreshStudents();
 	}
 
@@ -659,11 +674,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 		final Department major = f.majorDept;
 		final Department minor = f.minorDept;
 		final Department oe = f.oeDept;
+		final Division div = f.division;
 		final Long batch = f.batchID;
 		final String q = f.query;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> filteredStudents.postValue(
-				db.daoStudent().filterStudentsSync(acadYear, y, st, major, minor, oe,
+				db.daoStudent().filterStudentsSync(acadYear, y, st, major, minor, oe, div,
 						batch, q)));
 	}
 
@@ -681,7 +697,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                       @NonNull Year year, @NonNull Stream stream,
 	                       @NonNull Department majorDept, @Nullable Department minorDept,
 	                       @Nullable Department oeDept, @Nullable Integer semester,
-	                       @NonNull Runnable onDone) {
+	                       @Nullable Division division, @NonNull Runnable onDone) {
 
 		// New students land in the session the screen is showing, which is what someone
 		// entering last year's late admission expects.
@@ -690,7 +706,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				db.daoStudent().upsertStudentWithYear(student, acadYear, rollNo, year, stream,
-						majorDept, minorDept, oeDept, semester);
+						majorDept, minorDept, oeDept, semester, division);
 				toastMessage.postValue("Student saved");
 				refreshStudents();
 				onDone.run();
@@ -1409,12 +1425,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                          @NonNull Year year, @NonNull Stream stream,
 	                          @NonNull Department majorDept, @Nullable Department minorDept,
 	                          @Nullable Department oeDept, @Nullable Integer semester,
-	                          @NonNull Runnable onDone) {
+	                          @Nullable Division division, @NonNull Runnable onDone) {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				db.daoStudent().updateStudentWithYear(student, academicYear, rollNo, year,
-						stream, majorDept, minorDept, oeDept, semester);
+						stream, majorDept, minorDept, oeDept, semester, division);
 				toastMessage.postValue("Student updated");
 				refreshStudents();
 				onDone.run();
@@ -1785,7 +1801,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			List<Long> ids = new ArrayList<>();
 			for (StudentWithYear student : db.daoStudent().filterStudentsSync(
 					f.academicYear, f.year, f.stream, f.majorDept, f.minorDept, f.oeDept,
-					f.batchID, f.query)) {
+					f.division, f.batchID, f.query)) {
 				ids.add(student.studentID);
 			}
 			cb.accept(ids);

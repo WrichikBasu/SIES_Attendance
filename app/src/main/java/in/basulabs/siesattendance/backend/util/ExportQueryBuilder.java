@@ -99,6 +99,7 @@ public final class ExportQueryBuilder {
 		appendEnumIn(sql, args, "y.majorDept", filter.departments);
 		appendEnumIn(sql, args, "y.year", filter.years);
 		appendEnumIn(sql, args, "y.stream", filter.streams);
+		appendEnumIn(sql, args, "y.division", filter.divisions);
 
 		sql.append("ORDER BY y.rollNo ASC, c.courseCode ASC");
 

@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Locale;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
@@ -91,7 +92,7 @@ public class FragmentStats extends Fragment {
 	private TextView tvPercent, tvLectures, tvRecords, tvBelow, tvEmpty, tvActiveFilters;
 
 	private AutoCompleteTextView actvSession, actvRange, actvSort, actvCourse, actvBatch,
-			actvProfessor, actvCourseType, actvYear, actvStream, actvDept;
+			actvProfessor, actvCourseType, actvYear, actvStream, actvDept, actvDivision;
 
 	private TextView tvOrphanWarning;
 
@@ -236,6 +237,7 @@ public class FragmentStats extends Fragment {
 		actvYear = view.findViewById(R.id.actvYear);
 		actvStream = view.findViewById(R.id.actvStream);
 		actvDept = view.findViewById(R.id.actvDept);
+		actvDivision = view.findViewById(R.id.actvDivision);
 
 		btnFrom = view.findViewById(R.id.btnFromDate);
 		btnTo = view.findViewById(R.id.btnToDate);
@@ -320,10 +322,33 @@ public class FragmentStats extends Fragment {
 					current.department = department;
 					current.stream = stream;
 					current.year = year;
+
+					// A stream with no divisions cannot be narrowed to one, so a division
+					// left over from the previous stream is dropped rather than left to
+					// return an empty report.
+					current.division =
+							AcademicRules.reconcileDivision(stream, current.division);
+					bindDivisionFilter();
+
 					rerun();
 				});
 
+		bindDivisionFilter();
+
 		binding = false;
+	}
+
+	/**
+	 * Fills the division filter for the stream currently being reported on. Divisions belong to
+	 * the stream, so this is rebound whenever it changes; a stream with no divisions leaves the
+	 * field empty and disabled.
+	 */
+	private void bindDivisionFilter() {
+		DropdownBinder.bindDivisions(actvDivision, viewModel.statsFilter().stream, anyLabel,
+				viewModel.statsFilter().division, value -> {
+					viewModel.statsFilter().division = value;
+					rerun();
+				});
 	}
 
 	/**
@@ -555,9 +580,13 @@ public class FragmentStats extends Fragment {
 		actvRange.setText(StatsFilter.DateRange.ALL_TIME.label, false);
 		for (AutoCompleteTextView field : new AutoCompleteTextView[]{
 				actvCourse, actvBatch, actvProfessor, actvCourseType,
-				actvYear, actvStream, actvDept}) {
+				actvYear, actvStream, actvDept, actvDivision}) {
 			field.setText(anyLabel, false);
 		}
+
+		// The division list depends on the stream, which has just been cleared, so the field
+		// goes back to offering every division rather than the last stream's.
+		bindDivisionFilter();
 
 		updateDateButtons();
 		binding = false;

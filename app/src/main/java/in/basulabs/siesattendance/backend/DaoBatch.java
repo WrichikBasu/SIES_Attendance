@@ -70,9 +70,13 @@ public abstract class DaoBatch {
 	 * what is stored. Room warns about this at build time. Nothing that displays a batch's
 	 * membership shows the semester, so it is left out rather than selected and ignored; anything
 	 * that comes to need it should add the column here rather than work around the null.
+	 * <p>
+	 * {@code division} is selected for exactly that reason: it is part of the class label these
+	 * rows are shown with, so leaving it out would print a student's class without the division
+	 * on the one screen that omitted the column.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.division " +
 			"FROM students s " +
 			"INNER JOIN batch_student_map m ON s.studentID = m.studentID " +
 			"INNER JOIN student_year y ON y.studentID = s.studentID " +
@@ -82,7 +86,7 @@ public abstract class DaoBatch {
 
 	/** Blocking form of {@link #getStudentsInBatch}, with the same missing semester column. */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.division " +
 			"FROM students s " +
 			"INNER JOIN batch_student_map m ON s.studentID = m.studentID " +
 			"INNER JOIN student_year y ON y.studentID = s.studentID " +

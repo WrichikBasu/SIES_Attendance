@@ -19,6 +19,7 @@ import java.util.Map;
 
 import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EnumLookup;
 import in.basulabs.siesattendance.backend.EntityStudent;
 import in.basulabs.siesattendance.backend.MainDatabase;
@@ -35,12 +36,12 @@ import in.basulabs.siesattendance.backend.Year;
  * because their attendance history depends on them continuing to exist.
  * <p>
  * The expected header row is:
- * <pre>rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept,semester</pre>
+ * <pre>rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept,semester,division</pre>
  * Column order does not matter, since the header is read to build a name-to-index map. The
- * {@code pronouns}, {@code email}, {@code minorDept}, {@code oeDept} and {@code semester}
- * columns may be blank, and a file may leave them out altogether. The rest are listed in
- * {@link #REQUIRED_COLUMNS}, and a row missing any of them is reported as an error rather than
- * silently skipped.
+ * {@code pronouns}, {@code email}, {@code minorDept}, {@code oeDept}, {@code semester} and
+ * {@code division} columns may be blank, and a file may leave them out altogether. The rest are
+ * listed in {@link #REQUIRED_COLUMNS}, and a row missing any of them is reported as an error
+ * rather than silently skipped.
  * <p>
  * Enum columns accept the constant name case-insensitively, and also tolerate spaces and
  * hyphens in place of underscores, so "Computer Science" resolves to
@@ -219,12 +220,14 @@ public final class CsvImporter {
 		}
 
 		Integer semester = parseOptionalInt(optional(cells, columns, "semester"), "semester");
+		Division division = parseDivision(optional(cells, columns, "division"));
 
 		// The same backstop the forms use, so a file cannot introduce a combination the UI
-		// would refuse: a BSc student in Masters Part 1, or a first-year in semester 5.
-		// Every value the check covers has to be parsed before it runs, which is why the
-		// semester is read here rather than alongside the other optional columns below.
-		String problem = AcademicRules.validate(majorDept, stream, year, semester);
+		// would refuse: a BSc student in Masters Part 1, a first-year in semester 5, or a
+		// division on a stream that has none. Every value the check covers has to be parsed
+		// before it runs, which is why the semester and division are read here rather than
+		// alongside the other optional columns below.
+		String problem = AcademicRules.validate(majorDept, stream, year, semester, division);
 		if (problem != null) {
 			throw new IllegalArgumentException(problem);
 		}
@@ -241,7 +244,7 @@ public final class CsvImporter {
 		boolean existed = db.daoStudent().findStudentIdByRollNo(rollNo, academicYear) != null;
 
 		db.daoStudent().upsertStudentWithYear(student, academicYear, rollNo, year, stream,
-				majorDept, minorDept, oeDept, semester);
+				majorDept, minorDept, oeDept, semester, division);
 
 		return existed;
 	}
@@ -378,6 +381,27 @@ public final class CsvImporter {
 	}
 
 	/**
+	 * Parses an optional division, accepting a bare letter or one written out as "Div B".
+	 * <p>
+	 * Not {@link #parseOptionalEnum} because a roster writes the prefix as often as not, and
+	 * {@link Division#fromAny} is what knows to strip it. A blank cell is absence, which is the
+	 * usual answer: most streams have no divisions at all.
+	 */
+	@Nullable
+	private static Division parseDivision(@Nullable String raw) {
+
+		if (raw == null || raw.trim().isEmpty()) {
+			return null;
+		}
+
+		Division division = Division.fromAny(raw);
+		if (division == null) {
+			throw new IllegalArgumentException("Unrecognised division: " + raw);
+		}
+		return division;
+	}
+
+	/**
 	 * Accepts either the constant name or the display label, loosely matched. A roster typed by
 	 * hand is as likely to say "Computer Science" as "COMPUTER_SCIENCE", and both should work.
 	 * <p>
@@ -402,13 +426,17 @@ public final class CsvImporter {
 	/**
 	 * A ready-to-share template so the user knows exactly what the file should look like. The
 	 * second example row leaves the optional department columns empty, which is the part people
-	 * most often ask about.
+	 * most often ask about, and the third carries a division, which only the aided BSc and BA
+	 * rows ever should.
 	 */
 	@NonNull
 	public static String templateCsv() {
-		return "rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept,semester\n"
+		return "rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept,semester,"
+				+ "division\n"
 				+ "2024CS032,Aarav Patil,he/him,aarav@sies.edu.in,SY,BSc,COMPUTER_SCIENCE,"
-				+ "MATHEMATICS,ENGLISH,3\n"
-				+ "2024CS033,Sneha Mehta,she/her,sneha@sies.edu.in,SY,BSc,COMPUTER_SCIENCE,,,3\n";
+				+ "MATHEMATICS,ENGLISH,3,\n"
+				+ "2024CS033,Sneha Mehta,she/her,sneha@sies.edu.in,SY,BSc,COMPUTER_SCIENCE,,,3,"
+				+ "\n"
+				+ "2024PH017,Ishaan Rao,he/him,ishaan@sies.edu.in,SY,BSc,PHYSICS,,,3,B\n";
 	}
 }

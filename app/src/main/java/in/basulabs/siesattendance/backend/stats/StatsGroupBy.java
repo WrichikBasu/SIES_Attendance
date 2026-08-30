@@ -81,12 +81,23 @@ public enum StatsGroupBy {
 			"''",
 			"c.semester"),
 
-	/** One row per class, e.g. SY BSc COMPUTER_SCIENCE. */
+	/**
+	 * One row per class, e.g. SY BSc COMPUTER_SCIENCE, or SY BSc PHYSICS Div B where the class
+	 * is split into divisions.
+	 * <p>
+	 * The division is part of the grouping because it is part of the class: two divisions of
+	 * the same year and stream are taught apart, and merging them hides exactly the comparison
+	 * this breakdown is for. Concatenating a null division would make the whole label null, so
+	 * the suffix is built first and coalesced away when there is none; every undivided class
+	 * therefore reads exactly as it did before. SQLite groups nulls together, so the students
+	 * of an undivided stream still land in one row.
+	 */
 	CLASS("Class",
 			"0",
-			"y.year || ' ' || y.stream || ' ' || y.majorDept",
+			"y.year || ' ' || y.stream || ' ' || y.majorDept"
+					+ " || COALESCE(' Div ' || y.division, '')",
 			"''",
-			"y.year, y.stream, y.majorDept"),
+			"y.year, y.stream, y.majorDept, y.division"),
 
 	/** One row per department offering the course. */
 	DEPARTMENT("Department",

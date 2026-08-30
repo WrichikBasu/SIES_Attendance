@@ -14,7 +14,8 @@ import androidx.room.Index;
  * student's personal details to their current details that will change after this academic year.
  * <p>
  * The {@code stream} and {@code year} fields are what make a class-wise lookup such as
- * "SY BSc COMPUTER_SCIENCE" possible.
+ * "SY BSc COMPUTER_SCIENCE" possible, with {@code division} narrowing it further on the streams
+ * that are divided.
  */
 @Entity(tableName = EntityStudentYear.TABLE_NAME,
 		primaryKeys = {"studentID", "academicYear"},
@@ -90,10 +91,25 @@ public class EntityStudentYear {
 	@Nullable
 	public Integer semester;
 
+	/**
+	 * The division of the class the student sits in, or null when their class is not divided
+	 * into any.
+	 * <p>
+	 * Only the aided BSc and BA split a class into divisions, so on every other stream this is
+	 * not a value that has been left blank but one that does not exist; see
+	 * {@link Stream#hasDivisions()}. It is also null on rows predating the column, and on a
+	 * divided class whose division simply has not been recorded yet, which is why nothing
+	 * treats a blank division as an error. {@code AcademicRules.validate} enforces the one rule
+	 * that matters: a division may not be set on a stream that has none.
+	 */
+	@Nullable
+	public Division division;
+
 	public EntityStudentYear(long studentID, int academicYear, @NonNull String rollNo,
 	                         @NonNull Year year, @NonNull Stream stream,
 	                         @NonNull Department majorDept, @Nullable Department minorDept,
-	                         @Nullable Department oeDept, @Nullable Integer semester) {
+	                         @Nullable Department oeDept, @Nullable Integer semester,
+	                         @Nullable Division division) {
 		this.studentID = studentID;
 		this.academicYear = academicYear;
 		this.rollNo = rollNo;
@@ -103,5 +119,6 @@ public class EntityStudentYear {
 		this.minorDept = minorDept;
 		this.oeDept = oeDept;
 		this.semester = semester;
+		this.division = division;
 	}
 }

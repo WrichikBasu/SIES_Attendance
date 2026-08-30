@@ -213,6 +213,25 @@
 
                 </LinearLayout>
 
+                <!--
+                  Division narrows to one class of a divided stream. Disabled when the chosen
+                  stream has no divisions, which is every stream but the aided BSc and BA.
+                -->
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="@string/hint_division">
+
+                    <AutoCompleteTextView
+                        android:id="@+id/actvDivision"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="none" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
                 <com.google.android.material.textfield.TextInputLayout
                     style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
                     android:layout_width="match_parent"

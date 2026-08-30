@@ -453,6 +453,25 @@
 
             </com.google.android.material.textfield.TextInputLayout>
 
+            <!--
+              Narrows a report to one division, which is what the class breakdown now splits
+              rows by. Disabled on the streams that have no divisions.
+            -->
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="@string/hint_division">
+
+                <AutoCompleteTextView
+                    android:id="@+id/actvDivision"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
         </LinearLayout>
 
     </FrameLayout>

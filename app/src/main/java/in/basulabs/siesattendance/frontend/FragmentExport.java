@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.Set;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.util.AttendanceExporter;
@@ -59,8 +60,10 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * <h3>What each section does</h3>
  * The two kinds of narrowing are deliberately separated, because they are easy to confuse:
  * dates decide which lectures count and so change the numbers, while the course list decides
- * which columns appear. Students are not filtered directly; whoever is on the roll of a
- * selected course appears. Nothing chosen anywhere means the whole session.
+ * which columns appear. Students are otherwise not filtered directly; whoever is on the roll of
+ * a selected course appears. The one exception is the division, which no course selection can
+ * express, since the divisions of a class sit the same courses. Nothing chosen anywhere means
+ * the whole session.
  */
 public class FragmentExport extends Fragment {
 
@@ -133,6 +136,7 @@ public class FragmentExport extends Fragment {
 
 		bindDates(view);
 		bindCourses(view);
+		bindDivisions(view);
 		bindThreshold(view);
 		bindGroups(view);
 
@@ -295,6 +299,45 @@ public class FragmentExport extends Fragment {
 			}
 		}
 		return scope;
+	}
+
+	// ── Divisions ────────────────────────────────────────────────────────
+
+	/**
+	 * The division picker: the one student-level narrowing this screen offers.
+	 * <p>
+	 * The course list already pins the year, stream and department of everyone it puts on the
+	 * sheet, since a course states all three. What it cannot separate is two divisions of the
+	 * same class, because they sit the same courses, so that is what these chips are for.
+	 * <p>
+	 * Multi-select, and ticking none means every student, including the great majority who have
+	 * no division because their stream is not divided. Chips are offered for all four letters
+	 * rather than only the ones in use: the courses in scope are not known until they are
+	 * picked, and a division that matches nobody exports an empty sheet, which is a legible
+	 * answer.
+	 */
+	private void bindDivisions(@NonNull View view) {
+
+		ChipGroup group = view.findViewById(R.id.cgDivisions);
+
+		for (Division division : Division.values()) {
+
+			Chip chip = new Chip(requireContext());
+			chip.setText(division.longLabel());
+			chip.setCheckable(true);
+			chip.setChecked(filter.divisions.contains(division));
+
+			chip.setOnCheckedChangeListener((v, checked) -> {
+				if (checked) {
+					filter.divisions.add(division);
+				} else {
+					filter.divisions.remove(division);
+				}
+				refreshSummary();
+			});
+
+			group.addView(chip);
+		}
 	}
 
 	// ── Threshold ────────────────────────────────────────────────────────

@@ -191,6 +191,11 @@ public final class StatsQueryBuilder {
 			args.add(filter.department.name());
 		}
 
+		if (filter.division != null) {
+			where.append(" AND y.division = ?");
+			args.add(filter.division.name());
+		}
+
 		return where.toString();
 	}
 

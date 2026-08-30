@@ -30,7 +30,9 @@ import java.util.List;
 import java.util.Set;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
@@ -64,7 +66,7 @@ public class FragmentEditBatch extends Fragment {
 
 	private TextInputLayout tilName;
 
-	private AutoCompleteTextView actvYear, actvStream, actvDept;
+	private AutoCompleteTextView actvYear, actvStream, actvDept, actvDivision;
 
 	private TextView selectedCount, emptyMessage;
 
@@ -91,6 +93,8 @@ public class FragmentEditBatch extends Fragment {
 	private Stream filterStream;
 
 	private Department filterDept;
+
+	private Division filterDivision;
 
 	/** Shown as the first entry of each filter dropdown. */
 	private String anyLabel;
@@ -152,6 +156,7 @@ public class FragmentEditBatch extends Fragment {
 		actvYear = header.findViewById(R.id.actvFilterYear);
 		actvStream = header.findViewById(R.id.actvFilterStream);
 		actvDept = header.findViewById(R.id.actvFilterDept);
+		actvDivision = header.findViewById(R.id.actvFilterDivision);
 
 		selectedCount = header.findViewById(R.id.tvSelectedCount);
 		emptyMessage = header.findViewById(R.id.tvNoMatches);
@@ -182,9 +187,10 @@ public class FragmentEditBatch extends Fragment {
 	// ── Filters ──────────────────────────────────────────────────────────
 
 	/**
-	 * The three filters are linked the same way as everywhere else: a department narrows the
-	 * stream list to what it offers. Each has an "Any" entry so a dimension can be relaxed
-	 * without disturbing the others.
+	 * The four filters are linked the same way as everywhere else: a department narrows the
+	 * stream list to what it offers, and the stream decides whether there are any divisions to
+	 * choose from. Each has an "Any" entry so a dimension can be relaxed without disturbing the
+	 * others.
 	 */
 	private void setupFilters() {
 
@@ -195,6 +201,24 @@ public class FragmentEditBatch extends Fragment {
 					filterDept = department;
 					filterStream = stream;
 					filterYear = year;
+
+					// A stream with no divisions cannot be narrowed to one, so a division
+					// left over from the previous stream is dropped rather than hiding the
+					// whole roll behind a filter nobody matches.
+					filterDivision = AcademicRules.reconcileDivision(stream, filterDivision);
+					bindDivisionFilter();
+
+					applyFilter();
+				});
+
+		bindDivisionFilter();
+	}
+
+	/** Fills the division filter for whichever stream is currently being filtered on. */
+	private void bindDivisionFilter() {
+		DropdownBinder.bindDivisions(actvDivision, filterStream, anyLabel, filterDivision,
+				value -> {
+					filterDivision = value;
 					applyFilter();
 				});
 	}
@@ -312,6 +336,9 @@ public class FragmentEditBatch extends Fragment {
 				continue;
 			}
 			if (filterDept != null && student.majorDept != filterDept) {
+				continue;
+			}
+			if (filterDivision != null && student.division != filterDivision) {
 				continue;
 			}
 			if (selectedOnly && !selected.contains(student.studentID)) {

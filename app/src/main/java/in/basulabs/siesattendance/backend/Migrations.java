@@ -303,6 +303,26 @@ public final class Migrations {
 	};
 
 	/**
+	 * Version 7 to 8: adds the division a student's class is split into.
+	 * <p>
+	 * Nullable, and left null for every existing row, which is the honest value in both of the
+	 * cases that exist. Most streams are not divided at all, so there is nothing to record; the
+	 * ones that are were never asked for a division before, and nothing in the database implies
+	 * which one a student sat in. Rows fill in as students are edited or re-imported.
+	 */
+	public static final Migration MIGRATION_7_8 = new Migration(7, 8) {
+		@Override
+		public void migrate(@NonNull SupportSQLiteDatabase db) {
+			// ALTER TABLE appends the column, so the field is declared last on the entity as
+			// well and a migrated database has the same column order as a freshly created
+			// one. Room compares columns by name and would accept either, but a difference
+			// there is the sort of thing that only shows up in a positional insert written
+			// years later.
+			db.execSQL("ALTER TABLE `student_year` ADD COLUMN `division` TEXT");
+		}
+	};
+
+	/**
 	 * The recreate-and-copy dance, for a table that has to change in a way SQLite cannot do in
 	 * place. The new table is built beside the old one under a {@code _new} suffix, every row is
 	 * copied across, the old table is dropped and the new one takes its name. Indices belong to

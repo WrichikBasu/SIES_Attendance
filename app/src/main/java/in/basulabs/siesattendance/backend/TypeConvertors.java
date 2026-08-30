@@ -118,6 +118,20 @@ public final class TypeConvertors {
 		return value == null ? null : Year.valueOf(value);
 	}
 
+	// ── Division ─────────────────────────────────────────────────────────
+
+	@TypeConverter
+	@Nullable
+	public static String fromDivision(@Nullable Division division) {
+		return division == null ? null : division.name();
+	}
+
+	@TypeConverter
+	@Nullable
+	public static Division toDivision(@Nullable String value) {
+		return value == null ? null : Division.valueOf(value);
+	}
+
 	// ── CourseType ────────────────────────────────────────────────────────
 
 	@TypeConverter

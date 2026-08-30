@@ -57,6 +57,7 @@
     <string name="hint_offering_department">Offering department</string>
     <string name="hint_year">Year</string>
     <string name="hint_semester">Semester</string>
+    <string name="hint_division">Division</string>
     <string name="hint_course_type">Course type</string>
     <string name="hint_professor">Professor</string>
     <string name="hint_remarks">Remarks (optional)</string>
@@ -127,7 +128,8 @@
     <string name="dialog_csv_format_title">CSV format</string>
     <string name="dialog_csv_format_message">The first row must be a header. Column order does
         not matter.\n\nRequired: rollNo, name, year, stream, majorDept\nOptional: pronouns,
-        email, minorDept, oeDept\n\nExample:\n\n%1$s</string>
+        email, minorDept, oeDept, semester, division\n\nDivision applies only to BSc and BA
+        (A to D); leave it blank for every other stream.\n\nExample:\n\n%1$s</string>
 
     <!-- Warnings and errors -->
     <string name="error_required">Required</string>
@@ -338,6 +340,9 @@
     <string name="hint_search_courses">Search by code, topic, department or stream</string>
     <string name="label_no_courses_match">No courses match that search.</string>
 
+    <string name="section_divisions">Divisions</string>
+    <string name="hint_section_divisions">Optional. Only BSc and BA classes are split
+        into divisions; choosing one leaves out every student who has none.</string>
     <string name="section_defaulters">Defaulter threshold</string>
     <string name="section_groups">Course groups</string>
     <string name="hint_section_groups">Optional. Each group gets its own sheet with a combined

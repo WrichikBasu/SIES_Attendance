@@ -670,7 +670,7 @@ public final class AttendanceRecordImporter {
 				index = new HashMap<>();
 
 				for (StudentWithYear student : db.daoStudent().filterStudentsSync(
-						academicYear, null, null, null, null, null, null, "")) {
+						academicYear, null, null, null, null, null, null, null, "")) {
 					index.put(normalise(student.rollNo), student.studentID);
 				}
 				students.put(academicYear, index);

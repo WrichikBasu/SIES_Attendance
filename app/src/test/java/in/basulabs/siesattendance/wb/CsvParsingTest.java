@@ -122,6 +122,7 @@ public class CsvParsingTest {
 		int deptCol = header.indexOf("majorDept");
 		int streamCol = header.indexOf("stream");
 		int semCol = header.indexOf("semester");
+		int divCol = header.indexOf("division");
 
 		for (int i = 1; i < lines.length; i++) {
 			List<String> cells = CsvImporter.splitCsvLine(lines[i]);
@@ -142,9 +143,15 @@ public class CsvParsingTest {
 					stream != null);
 
 			Integer semester = Integer.valueOf(cells.get(semCol));
+
+			String rawDivision = cells.get(divCol);
+			var division = in.basulabs.siesattendance.backend.Division.fromAny(rawDivision);
+			assertTrue("row " + i + " division did not resolve: " + rawDivision,
+					rawDivision.isEmpty() || division != null);
+
 			assertEquals("row " + i + " fails the same validation the import runs", null,
 					in.basulabs.siesattendance.backend.AcademicRules
-							.validate(dept, stream, year, semester));
+							.validate(dept, stream, year, semester, division));
 		}
 	}
 

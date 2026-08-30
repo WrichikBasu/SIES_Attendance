@@ -6,7 +6,7 @@ import androidx.annotation.Nullable;
 /**
  * A degree stream.
  * <p>
- * The aided and unaided divisions are labelled distinctly, because a dropdown listing "BSc"
+ * The aided and unaided streams are labelled distinctly, because a dropdown listing "BSc"
  * twice gives the user no way to tell which one they are choosing. {@link #baseLabel()} is the
  * label without that qualifier, and is what matching against outside data goes through: a CSV
  * saying "BSc" against a Computer Science student means the unaided stream, since that is the
@@ -58,11 +58,24 @@ public enum Stream {
 	}
 
 	/**
-	 * True for the divisions the college runs on an unaided basis. Only affects display: the
-	 * qualifier is dropped from class labels, which are already long enough without it.
+	 * True for the streams the college runs on an unaided basis. Only affects display: the
+	 * qualifier is dropped from class labels, which are already long enough without it. Not to
+	 * be confused with {@link Division}, which is a split within one class.
 	 */
 	public boolean isUnaided() {
 		return this == BSc_unaided || this == MSc_unaided;
+	}
+
+	/**
+	 * True for the streams whose classes are split into lettered divisions.
+	 * <p>
+	 * Only the aided BSc and BA are large enough to be divided; the unaided BSc is not, which
+	 * is the one place the aided and unaided split means something beyond a label. Everything
+	 * else, the postgraduate streams included, runs one undivided class, so a division on any
+	 * of them is not a smaller number but a value that does not exist. See {@link Division}.
+	 */
+	public boolean hasDivisions() {
+		return this == BSc || this == BA;
 	}
 
 	/**
