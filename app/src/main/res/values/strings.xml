@@ -59,7 +59,10 @@
     <string name="hint_semester">Semester</string>
     <string name="hint_division">Division</string>
     <string name="hint_course_type">Course type</string>
-    <string name="hint_professor">Professor</string>
+    <string name="hint_professor">Coordinator</string>
+    <string name="hint_other_instructors">Other instructors</string>
+    <string name="hint_other_instructors_none">None</string>
+    <string name="dialog_other_instructors_title">Who else teaches this course?</string>
     <string name="hint_remarks">Remarks (optional)</string>
     <string name="hint_course">Course</string>
     <string name="hint_batch">Batch</string>

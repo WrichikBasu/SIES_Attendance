@@ -1,22 +1,31 @@
 package in.basulabs.siesattendance.backend;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.lifecycle.LiveData;
 import androidx.room.Dao;
 import androidx.room.Insert;
 import androidx.room.OnConflictStrategy;
 import androidx.room.Query;
+import androidx.room.Transaction;
 import androidx.room.Update;
 
 import java.time.ZonedDateTime;
 import java.util.List;
 
 /**
- * Courses, and the links between courses and batches.
+ * Courses, the links between courses and batches, and the links between courses and the
+ * professors who teach them.
  * <p>
  * Two things are deliberately absent: there is no delete, and the batch lookup does not filter
  * by course. Both are explained in the comments below, since in each case the obvious version
  * was written first and caused a problem.
+ * <p>
+ * One invariant is worth stating up front, because every instructor query depends on it: a
+ * course's coordinator — {@link EntityCourse#profID} — always has a row in
+ * {@code course_instructor}. {@link #insert}, {@link #update} and {@link #setInstructors} each
+ * maintain it, so no caller has to remember, and a read of the link table alone is the whole
+ * answer to who teaches a course.
  */
 @Dao
 public abstract class DaoCourse {
@@ -28,16 +37,39 @@ public abstract class DaoCourse {
 	/**
 	 * Inserts a course, stamping it with an ID first. Nothing in the database generates one:
 	 * see {@link IdGenerator}.
+	 * <p>
+	 * The coordinator is written into {@code course_instructor} in the same transaction. A
+	 * course created and never touched again therefore has exactly one instructor, which is the
+	 * behaviour there was before the table existed.
 	 *
 	 * @return the ID the course was written under
 	 */
+	@Transaction
 	public long insert(EntityCourse course) {
 		course.courseID = IdGenerator.idFor(course.courseID);
-		return insertRow(course);
+		long id = insertRow(course);
+		addInstructor(new EntityCourseInstructor(course.courseID, course.profID));
+		return id;
 	}
 
+	/** The raw update. Callers want {@link #update}, which keeps the coordinator link honest. */
 	@Update
-	public abstract void update(EntityCourse course);
+	protected abstract void updateRow(EntityCourse course);
+
+	/**
+	 * Updates a course, making sure the coordinator is still among its instructors.
+	 * <p>
+	 * A previous coordinator who has been replaced is left in place rather than removed: by the
+	 * time this runs there is no way to tell whether they were on the course only by virtue of
+	 * coordinating it, or whether someone added them as an instructor in their own right.
+	 * Dropping them would silently discard the second case. Removing an instructor is what
+	 * {@link #setInstructors} is for, where the caller states the whole list and means it.
+	 */
+	@Transaction
+	public void update(EntityCourse course) {
+		updateRow(course);
+		addInstructor(new EntityCourseInstructor(course.courseID, course.profID));
+	}
 
 	@Query("SELECT COUNT(*) FROM lectures WHERE courseID = :courseID")
 	public abstract int countLectures(long courseID);
@@ -106,6 +138,82 @@ public abstract class DaoCourse {
 
 	@Query("DELETE FROM course_batch_map WHERE courseID = :courseID AND batchID = :batchID")
 	public abstract void unlinkBatch(long courseID, long batchID);
+
+	/*
+	 * Instructors. A course is taught by one or more professors; courses.profID names only the
+	 * coordinator among them. See EntityCourseInstructor for why the column was kept rather
+	 * than replaced.
+	 */
+
+	/** Who teaches this course, coordinator included, in the order the pickers display. */
+	@Query("SELECT p.* FROM professors p "
+			+ "JOIN course_instructor ci ON ci.profID = p.profID "
+			+ "WHERE ci.courseID = :courseID ORDER BY p.name ASC")
+	public abstract List<EntityProfessor> getInstructorsSync(long courseID);
+
+	/** The same, as bare IDs, for the form that only needs to tick boxes. */
+	@Query("SELECT profID FROM course_instructor WHERE courseID = :courseID")
+	public abstract List<Long> getInstructorIdsSync(long courseID);
+
+	/**
+	 * The courses a professor teaches — the link read backwards.
+	 * <p>
+	 * This is the query that {@code courses.profID} could not answer correctly, and the reason
+	 * the table exists: a co-instructor on a team-taught course was invisible to it.
+	 */
+	@Query("SELECT c.* FROM courses c "
+			+ "JOIN course_instructor ci ON ci.courseID = c.courseID "
+			+ "WHERE ci.profID = :profID ORDER BY c.courseCode ASC")
+	public abstract List<EntityCourse> getCoursesTaughtBySync(long profID);
+
+	@Insert(onConflict = OnConflictStrategy.IGNORE)
+	public abstract void addInstructor(EntityCourseInstructor link);
+
+	@Query("DELETE FROM course_instructor "
+			+ "WHERE courseID = :courseID AND profID = :profID")
+	public abstract void removeInstructor(long courseID, long profID);
+
+	@Query("DELETE FROM course_instructor WHERE courseID = :courseID")
+	protected abstract void clearInstructors(long courseID);
+
+	@Query("SELECT profID FROM courses WHERE courseID = :courseID")
+	protected abstract Long coordinatorOf(long courseID);
+
+	/**
+	 * Replaces a course's instructors with exactly {@code profIDs}, plus the coordinator.
+	 * <p>
+	 * The coordinator is folded in rather than trusted to be in the list, because they are
+	 * chosen in a different field of the form from the rest and an edit that changes only the
+	 * coordinator would otherwise leave them off their own course. Folding them in here means
+	 * the invariant holds no matter what the caller passes — including an empty list, which
+	 * leaves the course with the single instructor it had before this table existed.
+	 * <p>
+	 * Cleared and rewritten rather than diffed. The row count is the number of people teaching
+	 * one course, the pair is the whole row, and a diff would only be a slower way to reach the
+	 * same state.
+	 */
+	@Transaction
+	public void setInstructors(long courseID, @NonNull List<Long> profIDs) {
+
+		Long boxed = coordinatorOf(courseID);
+		if (boxed == null) {
+			// No such course. Writing links for it would violate the foreign key anyway.
+			return;
+		}
+
+		// Unboxed deliberately: the comparison below is against a Long from the caller's list,
+		// and two boxed Longs outside the cache range compare by identity, not by value.
+		long coordinator = boxed;
+
+		clearInstructors(courseID);
+		addInstructor(new EntityCourseInstructor(courseID, coordinator));
+
+		for (Long profID : profIDs) {
+			if (profID != null && profID != coordinator) {
+				addInstructor(new EntityCourseInstructor(courseID, profID));
+			}
+		}
+	}
 
 	/*
 	 * The batch dropdown deliberately does not filter by course.

@@ -136,6 +136,31 @@
 
         </com.google.android.material.textfield.TextInputLayout>
 
+        <!--
+            Co-instructors, over and above the coordinator above. Not a dropdown: a course can
+            be taught by several people, so this opens a multiple-choice dialog and shows the
+            result. The field is read-only text for the same reason the dropdowns are — the
+            value has to be a professor on record, not something typed.
+        -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilOtherInstructors"
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:hint="@string/hint_other_instructors">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etOtherInstructors"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:cursorVisible="false"
+                android:focusable="false"
+                android:inputType="none" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/tilCourseType"
             android:layout_width="match_parent"

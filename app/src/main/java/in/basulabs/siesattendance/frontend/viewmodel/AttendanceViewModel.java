@@ -846,10 +846,18 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return db.daoCourse().getAll();
 	}
 
-	public void addCourse(@NonNull EntityCourse course, @NonNull Runnable onDone) {
+	/**
+	 * Saves a new course and the professors who teach it.
+	 *
+	 * @param instructorIDs the co-instructors, which need not include {@code course.profID}:
+	 *                      the coordinator is folded in by {@code DaoCourse.setInstructors}
+	 */
+	public void addCourse(@NonNull EntityCourse course, @NonNull List<Long> instructorIDs,
+	                      @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				db.daoCourse().insert(course);
+				db.daoCourse().setInstructors(course.courseID, instructorIDs);
 				toastMessage.postValue("Course saved");
 				onDone.run();
 			} catch (Exception e) {
@@ -1462,16 +1470,28 @@ public class AttendanceViewModel extends AndroidViewModel {
 		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoCourse().getByIdSync(courseID)));
 	}
 
-	public void updateCourse(@NonNull EntityCourse course, @NonNull Runnable onDone) {
+	/** @see #addCourse for what {@code instructorIDs} does and does not have to contain */
+	public void updateCourse(@NonNull EntityCourse course, @NonNull List<Long> instructorIDs,
+	                         @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				db.daoCourse().update(course);
+				db.daoCourse().setInstructors(course.courseID, instructorIDs);
 				toastMessage.postValue("Course updated");
 				onDone.run();
 			} catch (Exception e) {
 				toastMessage.postValue("Could not update: " + e.getMessage());
 			}
 		});
+	}
+
+	/**
+	 * The professors teaching a course, coordinator included, for the edit form to tick.
+	 */
+	public void loadCourseInstructorIdsSync(long courseID,
+	                                        @NonNull java.util.function.Consumer<List<Long>> cb) {
+		MainDatabase.DB_EXECUTOR.execute(() ->
+				cb.accept(db.daoCourse().getInstructorIdsSync(courseID)));
 	}
 
 	/**

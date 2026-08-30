@@ -20,7 +20,9 @@ import com.google.android.material.textfield.TextInputLayout;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.AcademicRules;
@@ -42,8 +44,15 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * all of them, and is what decides who ends up on the course's roll; see the roster query in
  * {@code DaoStudent}.
  * <p>
- * A course cannot be saved without a professor, which is why the form warns up front when none
- * have been entered yet rather than failing at save time.
+ * A course cannot be saved without a coordinator, which is why the form warns up front when no
+ * professors have been entered yet rather than failing at save time.
+ * <p>
+ * The coordinator is one field and the rest of the teaching staff is another. A course can be
+ * team-taught, and a practical batch can have a demonstrator who never gives a lecture, so
+ * {@code courses.profID} names only the person answerable for the course and
+ * {@code course_instructor} holds everyone who teaches it. The second field edits that table;
+ * the coordinator is added to it for free, which is why they are excluded from the picker
+ * rather than shown already ticked and un-tickable.
  */
 public class FragmentAddCourse extends Fragment {
 
@@ -58,6 +67,8 @@ public class FragmentAddCourse extends Fragment {
 	private AutoCompleteTextView actvStream, actvDept, actvYear, actvSemester,
 			actvType, actvProfessor;
 
+	private TextInputEditText etOtherInstructors;
+
 	/**
 	 * Loaded asynchronously to fill the professor dropdown. Empty until the load returns, which
 	 * is what {@link #pendingProfID} exists to deal with.
@@ -66,6 +77,15 @@ public class FragmentAddCourse extends Fragment {
 
 	/** Professor to select once the dropdown finishes loading, used when editing. */
 	private long pendingProfID = -1L;
+
+	/**
+	 * The co-instructors currently ticked. Ordered so the summary line does not reshuffle
+	 * itself every time the dialog is reopened.
+	 * <p>
+	 * The coordinator is deliberately absent: they are added by the save, and holding them here
+	 * as well would mean two places could disagree about whether they are on the course.
+	 */
+	private final Set<Long> otherInstructorIDs = new LinkedHashSet<>();
 
 	// Tracked as values because the stream list depends on the department and "BSc" alone
 	// cannot say whether the aided or unaided constant is meant.
@@ -114,6 +134,8 @@ public class FragmentAddCourse extends Fragment {
 		actvSemester = view.findViewById(R.id.actvSemester);
 		actvType = view.findViewById(R.id.actvCourseType);
 		actvProfessor = view.findViewById(R.id.actvProfessor);
+		etOtherInstructors = view.findViewById(R.id.etOtherInstructors);
+		etOtherInstructors.setOnClickListener(v -> showInstructorPicker());
 
 		bindDropdowns();
 
@@ -181,6 +203,21 @@ public class FragmentAddCourse extends Fragment {
 				applyPendingProfessor();
 			});
 		});
+
+		// Read separately from the course row, and every instructor is loaded rather than only
+		// the co-instructors: the coordinator is among them in the database, and which one they
+		// are is not known here until the course row arrives. They are filtered out when the
+		// summary is drawn instead, where the answer is available.
+		viewModel.loadCourseInstructorIdsSync(editingCourseID, ids -> {
+			if (!isAdded()) {
+				return;
+			}
+			Ui.onMain(this, () -> {
+				otherInstructorIDs.clear();
+				otherInstructorIDs.addAll(ids);
+				showInstructorSummary();
+			});
+		});
 	}
 
 	/**
@@ -195,9 +232,104 @@ public class FragmentAddCourse extends Fragment {
 			if (professor.profID == pendingProfID) {
 				actvProfessor.setText(
 						professor.name + " (" + professor.department + ")", false);
+				// The summary names people, so it can only be written once the names are here.
+				showInstructorSummary();
 				return;
 			}
 		}
+	}
+
+	/**
+	 * The multiple-choice picker for everyone teaching the course besides the coordinator.
+	 * <p>
+	 * The coordinator is left out of the list entirely. They are on the course by definition,
+	 * so offering them as a choice would only let someone untick a box that does not do
+	 * anything.
+	 */
+	private void showInstructorPicker() {
+
+		if (professors.isEmpty()) {
+			return;
+		}
+
+		long coordinator = coordinatorProfID();
+
+		List<EntityProfessor> choices = new ArrayList<>();
+		for (EntityProfessor professor : professors) {
+			if (professor.profID != coordinator) {
+				choices.add(professor);
+			}
+		}
+
+		if (choices.isEmpty()) {
+			return;
+		}
+
+		String[] labels = new String[choices.size()];
+		boolean[] checked = new boolean[choices.size()];
+
+		for (int i = 0; i < choices.size(); i++) {
+			EntityProfessor professor = choices.get(i);
+			labels[i] = professor.name + " (" + professor.department + ")";
+			checked[i] = otherInstructorIDs.contains(professor.profID);
+		}
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_other_instructors_title)
+				.setMultiChoiceItems(labels, checked, (dialog, which, isChecked) ->
+						checked[which] = isChecked)
+				.setPositiveButton(android.R.string.ok, (dialog, which) -> {
+					otherInstructorIDs.clear();
+					for (int i = 0; i < choices.size(); i++) {
+						if (checked[i]) {
+							otherInstructorIDs.add(choices.get(i).profID);
+						}
+					}
+					showInstructorSummary();
+				})
+				.setNegativeButton(R.string.action_cancel, null)
+				.show();
+	}
+
+	/**
+	 * Writes the co-instructors into the field as a comma-separated list of names.
+	 * <p>
+	 * The coordinator is skipped even if they are in the set, which they are immediately after
+	 * an edit form loads: the read that fills it returns every instructor, and the coordinator
+	 * is one of them.
+	 */
+	private void showInstructorSummary() {
+
+		if (etOtherInstructors == null) {
+			return;
+		}
+
+		long coordinator = coordinatorProfID();
+		StringBuilder names = new StringBuilder();
+
+		for (EntityProfessor professor : professors) {
+			if (professor.profID == coordinator
+					|| !otherInstructorIDs.contains(professor.profID)) {
+				continue;
+			}
+			if (names.length() > 0) {
+				names.append(", ");
+			}
+			names.append(professor.name);
+		}
+
+		etOtherInstructors.setText(names.length() == 0
+				? getString(R.string.hint_other_instructors_none)
+				: names.toString());
+	}
+
+	/**
+	 * The professor currently chosen as coordinator, or -1 before one has been. Read from the
+	 * dropdown rather than held in a field, because the dropdown is what the user is editing.
+	 */
+	private long coordinatorProfID() {
+		int index = indexOfSelectedProfessor();
+		return index < 0 ? -1L : professors.get(index).profID;
 	}
 
 	/**
@@ -229,7 +361,13 @@ public class FragmentAddCourse extends Fragment {
 			actvProfessor.setAdapter(new ArrayAdapter<>(requireContext(),
 					android.R.layout.simple_list_item_1, labels));
 			applyPendingProfessor();
+			showInstructorSummary();
 		}));
+
+		// Changing the coordinator changes who the picker may offer and who the summary may
+		// name, so both are redrawn rather than left showing the previous choice.
+		actvProfessor.setOnItemClickListener((parent, view, position, id) ->
+				showInstructorSummary());
 	}
 
 	/**
@@ -299,15 +437,20 @@ public class FragmentAddCourse extends Fragment {
 		}
 		course.profID = professors.get(index).profID;
 
+		// Passed as-is, coordinator and all. setInstructors folds them in and drops the
+		// duplicate, so the form does not have to work out which of the two fields a professor
+		// arrived from.
+		List<Long> instructorIDs = new ArrayList<>(otherInstructorIDs);
+
 		Runnable navigateBack = () -> Ui.onMain(this, () -> {
 			Navigation.findNavController(button).navigateUp();
 		});
 
 		if (editingCourseID > 0) {
 			course.courseID = editingCourseID;
-			viewModel.updateCourse(course, navigateBack);
+			viewModel.updateCourse(course, instructorIDs, navigateBack);
 		} else {
-			viewModel.addCourse(course, navigateBack);
+			viewModel.addCourse(course, instructorIDs, navigateBack);
 		}
 	}
 

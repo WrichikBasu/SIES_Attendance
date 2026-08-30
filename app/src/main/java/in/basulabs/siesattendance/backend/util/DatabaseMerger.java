@@ -247,6 +247,9 @@ public final class DatabaseMerger {
 		specs.add(new Spec("course_batch_map", new String[]{"courseID", "batchID"}, null,
 				fks("courseID", "courses", "batchID", "batch_desc")));
 
+		specs.add(new Spec("course_instructor", new String[]{"courseID", "profID"}, null,
+				fks("courseID", "courses", "profID", "professors")));
+
 		specs.add(new Spec("lectures",
 				new String[]{"courseID", "batchID", "startDateTime", "endDateTime"},
 				"lectureID",

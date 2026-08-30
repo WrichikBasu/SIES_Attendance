@@ -323,6 +323,42 @@ public final class Migrations {
 	};
 
 	/**
+	 * Version 8 to 9: adds the {@code course_instructor} table, so a course can be taught by
+	 * more than one professor.
+	 * <p>
+	 * {@code courses.profID} stays where it is and keeps its foreign key, but it now means the
+	 * course's coordinator rather than the sole instructor. Every existing course is seeded
+	 * with one instructor row naming that same professor, which is what makes the new table
+	 * answer the question on its own: after this runs, "who teaches this course" is a read of
+	 * {@code course_instructor} and never a union of the two.
+	 * <p>
+	 * The seed cannot lose anything. {@code profID} is NOT NULL and enforced by a foreign key,
+	 * so every course has exactly one, and the insert produces exactly one row per course.
+	 */
+	public static final Migration MIGRATION_8_9 = new Migration(8, 9) {
+		@Override
+		public void migrate(@NonNull SupportSQLiteDatabase db) {
+
+			db.execSQL("CREATE TABLE IF NOT EXISTS `course_instructor` ("
+					+ "`courseID` INTEGER NOT NULL, "
+					+ "`profID` INTEGER NOT NULL, "
+					+ "PRIMARY KEY(`courseID`, `profID`), "
+					+ "FOREIGN KEY(`courseID`) REFERENCES `courses`(`courseID`) "
+					+ "  ON UPDATE CASCADE ON DELETE RESTRICT, "
+					+ "FOREIGN KEY(`profID`) REFERENCES `professors`(`profID`) "
+					+ "  ON UPDATE CASCADE ON DELETE RESTRICT)");
+
+			// courseID leads the primary key and is served by it; profID is not, and both the
+			// foreign key check and the read-it-backwards lookup need the index.
+			db.execSQL("CREATE INDEX IF NOT EXISTS `index_course_instructor_profID` "
+					+ "ON `course_instructor` (`profID`)");
+
+			db.execSQL("INSERT OR IGNORE INTO `course_instructor` (`courseID`, `profID`) "
+					+ "SELECT `courseID`, `profID` FROM `courses`");
+		}
+	};
+
+	/**
 	 * The recreate-and-copy dance, for a table that has to change in a way SQLite cannot do in
 	 * place. The new table is built beside the old one under a {@code _new} suffix, every row is
 	 * copied across, the old table is dropped and the new one takes its name. Indices belong to
