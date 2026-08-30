@@ -29,6 +29,16 @@ public enum CourseType {
 	/** The laboratory half of a minor course, following the same department condition. */
 	MINOR_PRACTICALS("Minor practicals"),
 
+	/**
+	 * Discipline specific elective. Chosen from the basket the student's own discipline offers,
+	 * so it carries the same department condition as a major course: the roll is the students
+	 * majoring in the offering department.
+	 */
+	DSE("DSE"),
+
+	/** The laboratory half of a DSE, following the same department condition. */
+	DSE_PRACTICALS("DSE practicals"),
+
 	/** Open elective, matched against the student's declared OE department. */
 	OE("OE"),
 

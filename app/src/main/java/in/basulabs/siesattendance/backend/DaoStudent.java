@@ -362,11 +362,13 @@ public abstract class DaoStudent {
 	 * <p>
 	 * A course states the year, stream and offering department it belongs to. Which of a
 	 * student's three departments has to match depends on how they are taking it: a major
-	 * course matches their major department, an open elective their OE choice. AEC, IKS, VSC
-	 * and SEC courses, and the practicals belonging to the latter two, are taken by the whole
-	 * year and stream regardless of department, so no department condition applies to them.
-	 * Note that this is the opposite of how major and minor practicals behave, which follow
-	 * the same department as the course they belong to.
+	 * course matches their major department, an open elective their OE choice. A discipline
+	 * specific elective is chosen from the basket the student's own discipline offers, so it
+	 * follows the major department as well. AEC, IKS, VSC and SEC courses, and the practicals
+	 * belonging to the latter two, are taken by the whole year and stream regardless of
+	 * department, so no department condition applies to them. Note that this is the opposite of
+	 * how major, minor and DSE practicals behave, which follow the same department as the
+	 * course they belong to.
 	 * <p>
 	 * A course type missing from every branch below matches nobody, which reads in the app as
 	 * a course with no students and no batches. Any type added to {@link CourseType} has to be
@@ -388,7 +390,8 @@ public abstract class DaoStudent {
 			"   AND y.academicYear = :academicYear " +
 			"INNER JOIN students s ON s.studentID = y.studentID " +
 			"WHERE c.courseID = :courseID AND (" +
-			"   (c.courseType IN ('MAJOR', 'MAJOR_PRACTICALS') " +
+			"   (c.courseType IN ('MAJOR', 'MAJOR_PRACTICALS', " +
+			"                     'DSE', 'DSE_PRACTICALS') " +
 			"      AND y.majorDept = c.offeringDepartment) " +
 			"   OR (c.courseType IN ('MINOR', 'MINOR_PRACTICALS') " +
 			"      AND (y.minorDept = c.offeringDepartment " +
