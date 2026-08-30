@@ -2,6 +2,7 @@ package in.basulabs.siesattendance.wb;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -104,6 +105,45 @@ public class StatsAndExportFilterTest {
 		assertEquals(today.withDayOfMonth(today.lengthOfMonth()), filter.to);
 		assertEquals(today.getMonth(), filter.from.getMonth());
 		assertEquals(today.getMonth(), filter.to.getMonth());
+	}
+
+	@Test
+	public void lastMonthIsTheWholePreviousCalendarMonth() {
+		StatsFilter filter = new StatsFilter(2025);
+		filter.applyDateRange(StatsFilter.DateRange.LAST_MONTH, SESSION_2025);
+
+		LocalDate lastMonth = LocalDate.now().minusMonths(1);
+
+		assertEquals(lastMonth.withDayOfMonth(1), filter.from);
+		assertEquals(lastMonth.withDayOfMonth(lastMonth.lengthOfMonth()), filter.to);
+		assertEquals("both ends must fall in the same month", filter.from.getMonth(),
+				filter.to.getMonth());
+	}
+
+	@Test
+	public void lastMonthAndLastThirtyDaysAreNotTheSameWindow() {
+		// They are offered side by side and mean different things: one is a calendar month,
+		// the other a rolling window that usually straddles two.
+		StatsFilter calendar = new StatsFilter(2025);
+		calendar.applyDateRange(StatsFilter.DateRange.LAST_MONTH, SESSION_2025);
+
+		StatsFilter rolling = new StatsFilter(2025);
+		rolling.applyDateRange(StatsFilter.DateRange.LAST_30_DAYS, SESSION_2025);
+
+		assertNotEquals(calendar.from, rolling.from);
+		assertNotEquals(calendar.to, rolling.to);
+	}
+
+	@Test
+	public void lastMonthCrossesTheYearBoundaryWithoutSpecialCasing() {
+		// January's "last month" is December of the year before, which minusMonths handles and
+		// a withMonth(month - 1) would not.
+		LocalDate january = LocalDate.of(2026, 1, 15);
+		LocalDate lastMonth = january.minusMonths(1);
+
+		assertEquals(2025, lastMonth.getYear());
+		assertEquals(12, lastMonth.getMonthValue());
+		assertEquals(31, lastMonth.withDayOfMonth(lastMonth.lengthOfMonth()).getDayOfMonth());
 	}
 
 	@Test

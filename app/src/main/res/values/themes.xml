@@ -71,4 +71,25 @@
 
     <style name="Theme.SIESAttendance" parent="Base.Theme.SIESAttendance" />
 
+    <!--
+      The "filters active" line that every filterable screen carries.
+
+      Defined once rather than per layout because it has to look the same everywhere: it is a
+      warning that what is on screen is not the whole picture, and one screen saying so quietly
+      while another shouts would defeat it. colorError rather than a literal red, so it stays
+      legible in both themes and against either background.
+
+      Starts gone. Every screen shows it only while something is actually narrowing the view,
+      which is what makes it worth noticing when it does appear.
+    -->
+    <style name="Widget.App.FiltersActive" parent="">
+        <item name="android:textAppearance">?attr/textAppearanceLabelMedium</item>
+        <item name="android:textColor">?attr/colorError</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:text">@string/label_filters_active</item>
+        <item name="android:paddingTop">2dp</item>
+        <item name="android:paddingBottom">2dp</item>
+        <item name="android:visibility">gone</item>
+    </style>
+
 </resources>

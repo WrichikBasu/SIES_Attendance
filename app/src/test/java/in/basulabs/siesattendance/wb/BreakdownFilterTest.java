@@ -81,6 +81,28 @@ public class BreakdownFilterTest {
 		assertEquals(today.withDayOfMonth(today.lengthOfMonth()), filter.to);
 	}
 
+	@Test
+	public void lastMonthCoversThePreviousCalendarMonth() {
+
+		BreakdownFilter filter = new BreakdownFilter();
+		filter.apply(BreakdownFilter.Window.LAST_MONTH, SESSION_2025);
+
+		LocalDate lastMonth = LocalDate.now().minusMonths(1);
+
+		assertEquals(lastMonth.withDayOfMonth(1), filter.from);
+		assertEquals(lastMonth.withDayOfMonth(lastMonth.lengthOfMonth()), filter.to);
+	}
+
+	@Test
+	public void lastMonthDescribesItselfByItsOwnName() {
+		// A preset's label is what the scope line shows, rather than the two dates behind it.
+		BreakdownFilter filter = new BreakdownFilter();
+		filter.apply(BreakdownFilter.Window.LAST_MONTH, SESSION_2025);
+
+		assertEquals("Last month", filter.describe());
+		assertFalse(filter.isUnrestricted());
+	}
+
 	/**
 	 * Thirty days including today, not thirty days before it.
 	 */

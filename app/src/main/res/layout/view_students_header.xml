@@ -117,6 +117,18 @@
 
         </LinearLayout>
 
+        <!--
+          Sits directly under the toggle, so the warning is next to the button that would show
+          what is doing the narrowing. Visible whether the panel is open or closed.
+        -->
+        <TextView
+            android:id="@+id/tvFiltersActive"
+            style="@style/Widget.App.FiltersActive"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="16dp"
+            tools:visibility="visible" />
+
         <!-- Bulk actions -->
         <LinearLayout
             android:layout_width="match_parent"

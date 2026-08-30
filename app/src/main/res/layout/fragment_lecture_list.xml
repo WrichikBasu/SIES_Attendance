@@ -11,7 +11,11 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <!-- Period filter bar -->
+        <!--
+          Filter bar. The period keeps its own button because sessions and months are picked
+          from lists that are built from the data, which a dropdown of fixed entries cannot do;
+          everything else is an ordinary choice and lives in the panel below.
+        -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -25,21 +29,23 @@
                 style="@style/Widget.Material3.Button.TonalButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/action_filter"
+                android:text="@string/action_period"
                 android:textAppearance="?attr/textAppearanceLabelSmall"
                 app:icon="@drawable/ic_calendar"
                 app:iconGravity="textStart" />
 
-            <TextView
-                android:id="@+id/tvWindowLabel"
-                android:layout_width="0dp"
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnToggleFilters"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:layout_weight="1"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:textAppearance="?attr/textAppearanceBodySmall"
-                tools:text="2025-26" />
+                android:text="@string/action_show_filters"
+                android:textAppearance="?attr/textAppearanceLabelSmall" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnClearPeriod"
@@ -48,6 +54,124 @@
                 android:layout_height="wrap_content"
                 android:text="@string/action_clear_filters"
                 android:textAppearance="?attr/textAppearanceLabelSmall" />
+
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvWindowLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:paddingHorizontal="16dp"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            tools:text="2025-26" />
+
+        <!--
+          Says the list is narrowed even with the panel collapsed, which is the state the screen
+          is usually left in: a filtered list looks exactly like a short one otherwise.
+        -->
+        <TextView
+            android:id="@+id/tvFiltersActive"
+            style="@style/Widget.App.FiltersActive"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="16dp"
+            tools:visibility="visible" />
+
+        <LinearLayout
+            android:id="@+id/panelLectureFilters"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="12dp"
+            android:paddingTop="8dp"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/hint_course">
+
+                <AutoCompleteTextView
+                    android:id="@+id/actvCourse"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="@string/hint_professor">
+
+                <AutoCompleteTextView
+                    android:id="@+id/actvProfessor"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="@string/hint_department">
+
+                <AutoCompleteTextView
+                    android:id="@+id/actvDept"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="6dp"
+                    android:layout_weight="1"
+                    android:hint="@string/hint_batch">
+
+                    <AutoCompleteTextView
+                        android:id="@+id/actvBatch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="none" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:hint="@string/hint_course_type">
+
+                    <AutoCompleteTextView
+                        android:id="@+id/actvCourseType"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="none" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+            </LinearLayout>
 
         </LinearLayout>
 

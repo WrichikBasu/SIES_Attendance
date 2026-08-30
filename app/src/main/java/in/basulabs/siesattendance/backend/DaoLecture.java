@@ -12,6 +12,7 @@ import java.time.ZonedDateTime;
 import java.util.List;
 
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
+import in.basulabs.siesattendance.backend.stats.SqlBits;
 
 /**
  * Lectures, along with the joined view of them that every list in the app displays.
@@ -87,6 +88,37 @@ public abstract class DaoLecture {
 			"BETWEEN :fromEpoch AND :toEpoch " +
 			"ORDER BY l.startDateTime ASC")
 	public abstract List<LectureDetails> getDetailsBetweenSync(long fromEpoch, long toEpoch);
+
+	/**
+	 * The lectures list, narrowed by whatever {@code LectureFilter} holds.
+	 * <p>
+	 * Every argument is optional and a null one drops its condition, so this one statement
+	 * serves the unfiltered list and every combination of period, course, professor, department,
+	 * batch and course type. Written as one query rather than a builder because the shape never
+	 * changes: unlike the statistics and the export, there is nothing here that is a set or a
+	 * variable-length IN clause.
+	 * <p>
+	 * Newest first, which is the order the unfiltered list has always used and the one a record
+	 * of what has already happened is read in. Note that {@link #getDetailsBetween} sorts the
+	 * other way; that one backs the dashboard's "lectures today", where the day should read
+	 * forwards.
+	 *
+	 * @param department the course's offering department, matched by its constant name
+	 * @param batchID    the batch a lecture was held for; whole-class lectures have none and are
+	 *                   excluded when it is set
+	 */
+	@Query(DETAILS_SELECT +
+			"WHERE (:fromEpoch IS NULL OR " + SqlBits.EPOCH_START + " >= :fromEpoch) " +
+			"AND (:toEpoch IS NULL OR " + SqlBits.EPOCH_START + " <= :toEpoch) " +
+			"AND (:courseID IS NULL OR l.courseID = :courseID) " +
+			"AND (:profID IS NULL OR c.profID = :profID) " +
+			"AND (:department IS NULL OR c.offeringDepartment = :department) " +
+			"AND (:batchID IS NULL OR l.batchID = :batchID) " +
+			"AND (:courseType IS NULL OR c.courseType = :courseType) " +
+			"ORDER BY " + SqlBits.EPOCH_START + " DESC")
+	public abstract LiveData<List<LectureDetails>> getFilteredDetails(
+			Long fromEpoch, Long toEpoch, Long courseID, Long profID, Department department,
+			Long batchID, CourseType courseType);
 
 	@Query(DETAILS_SELECT + "WHERE l.lectureID = :lectureID")
 	public abstract LectureDetails getDetailsByIdSync(long lectureID);

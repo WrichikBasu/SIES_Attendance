@@ -89,7 +89,8 @@ public class FragmentStats extends Fragment {
 
 	private MaterialButton toggleFilters, btnFrom, btnTo;
 
-	private TextView tvPercent, tvLectures, tvRecords, tvBelow, tvEmpty, tvActiveFilters;
+	private TextView tvPercent, tvLectures, tvRecords, tvBelow, tvEmpty, tvActiveFilters,
+			tvFiltersActive;
 
 	private AutoCompleteTextView actvSession, actvRange, actvSort, actvCourse, actvBatch,
 			actvProfessor, actvCourseType, actvYear, actvStream, actvDept, actvDivision;
@@ -225,6 +226,7 @@ public class FragmentStats extends Fragment {
 		tvBelow = view.findViewById(R.id.tvBelowCount);
 		tvEmpty = view.findViewById(R.id.tvEmptyStats);
 		tvActiveFilters = view.findViewById(R.id.tvActiveFilters);
+		tvFiltersActive = view.findViewById(R.id.tvFiltersActive);
 
 		actvSession = view.findViewById(R.id.actvSession);
 		tvOrphanWarning = view.findViewById(R.id.tvOrphanWarning);
@@ -787,6 +789,15 @@ public class FragmentStats extends Fragment {
 		}
 
 		tvActiveFilters.setText(String.join(" · ", parts));
+
+		// The scope line above lists what the report covers whether or not anything was chosen;
+		// this only appears when something was, which is what makes it a warning rather than
+		// another line of text to read past. The session and the grouping are excluded on
+		// purpose, by hasActiveFilters: those are always set and would leave it permanently lit.
+		if (tvFiltersActive != null) {
+			tvFiltersActive.setVisibility(
+					filter.hasActiveFilters() ? View.VISIBLE : View.GONE);
+		}
 	}
 
 	// ── Export ───────────────────────────────────────────────────────────

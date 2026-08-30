@@ -74,7 +74,7 @@ public class FragmentStudents extends Fragment {
 
 	private ChipGroup classChips;
 
-	private TextView resultCount, pastSessionNotice;
+	private TextView resultCount, pastSessionNotice, filtersActive;
 
 	private AutoCompleteTextView actvSession, actvYear, actvStream, actvDivision, actvMajor,
 			actvMinor, actvOe, actvBatch;
@@ -190,6 +190,7 @@ public class FragmentStudents extends Fragment {
 
 		filterPanel = header.findViewById(R.id.scrollFilters);
 		toggleFilters = header.findViewById(R.id.btnToggleFilters);
+		filtersActive = header.findViewById(R.id.tvFiltersActive);
 
 		setupSearchIn(header);
 		setupButtonsIn(header);
@@ -373,6 +374,7 @@ public class FragmentStudents extends Fragment {
 	/** Re-runs the student query with the current filters. A no-op while {@link #binding} is set. */
 	private void rerun() {
 		if (!binding) {
+			updateFiltersActive();
 			viewModel.refreshStudents();
 		}
 	}
@@ -486,6 +488,8 @@ public class FragmentStudents extends Fragment {
 					R.plurals.student_count, students.size(), students.size()));
 		}
 
+		updateFiltersActive();
+
 		if (lastClasses != null) {
 			buildClassChips(lastClasses);
 		}
@@ -496,6 +500,26 @@ public class FragmentStudents extends Fragment {
 		if (!sessionsBound && lastSessions != null && !lastSessions.isEmpty()) {
 			bindSessions(lastSessions);
 		}
+	}
+
+	/**
+	 * Shows the red line whenever the list is narrowed, including by the dimensions the class
+	 * chips do not cover and while the filter panel is closed.
+	 * <p>
+	 * Wider than {@link #hasActiveFilter()}, which answers a different question: that one drives
+	 * the "all classes" chip and so only counts the three dimensions a chip stands for. A list
+	 * narrowed to one batch is still a narrowed list.
+	 */
+	private void updateFiltersActive() {
+
+		if (filtersActive == null) {
+			return;
+		}
+
+		StudentFilter filter = viewModel.studentFilter();
+		boolean narrowed = filter.hasActiveFilters() || !filter.query.isEmpty();
+
+		filtersActive.setVisibility(narrowed ? View.VISIBLE : View.GONE);
 	}
 
 	/** Whether anything beyond the session is narrowing the list, which the clear button follows. */

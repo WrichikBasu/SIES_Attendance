@@ -62,7 +62,15 @@ public class StatsFilter {
 	@Nullable
 	public Long courseID;
 
-	/** Restricts to lectures held for one batch. Whole-class lectures are excluded by it. */
+	/**
+	 * Restricts to the students who are in one batch, rather than to the lectures held for it.
+	 * <p>
+	 * Batches nest: a class is split into A, and A into B and C for the practicals. Matching
+	 * the lecture's own batch meant asking for B returned nothing from a lecture held for A,
+	 * even though every student in B sat it. Matching membership instead makes a subset batch
+	 * answerable, and includes the whole-class lectures its students attended, which is what
+	 * "how is batch B doing" means.
+	 */
 	@Nullable
 	public Long batchID;
 
@@ -127,6 +135,7 @@ public class StatsFilter {
 	public enum DateRange {
 		ALL_TIME("Whole session"),
 		THIS_MONTH("This month"),
+		LAST_MONTH("Last month"),
 		LAST_30_DAYS("Last 30 days"),
 		SESSION_FIRST_HALF("First half of session"),
 		SESSION_SECOND_HALF("Second half of session"),
@@ -167,6 +176,16 @@ public class StatsFilter {
 			case THIS_MONTH:
 				from = today.withDayOfMonth(1);
 				to = today.withDayOfMonth(today.lengthOfMonth());
+				break;
+
+			case LAST_MONTH:
+				// The previous calendar month, whole. Distinct from the rolling thirty days
+				// below, which is the question people actually mean less often than they
+				// reach for it: "last month" almost always means October, not the 30th of
+				// October back to the 1st.
+				LocalDate lastMonth = today.minusMonths(1);
+				from = lastMonth.withDayOfMonth(1);
+				to = lastMonth.withDayOfMonth(lastMonth.lengthOfMonth());
 				break;
 
 			case LAST_30_DAYS:

@@ -154,8 +154,22 @@ public final class StatsQueryBuilder {
 			args.add(filter.courseID);
 		}
 
+		// Matched on the students in the batch, not on the batch the lecture was held for.
+		//
+		// The two differ whenever batches overlap, and they overlap by design: a class is split
+		// into A, and A into B and C for the practicals. A lecture held for A is attended by
+		// every student in B, so asking for B and getting nothing back — which is what
+		// comparing l.batchID gave — is wrong in exactly the case the batches exist for.
+		// Membership answers the question actually being asked: how are the students of this
+		// batch doing, across whatever lectures they sat, whole-class ones included.
+		//
+		// Membership is per session, so it is matched against the session the lecture resolved
+		// to rather than the one being viewed. A student who moved between batches between
+		// years is then counted under the batch they were in at the time.
 		if (filter.batchID != null) {
-			where.append(" AND l.batchID = ?");
+			where.append(" AND EXISTS (SELECT 1 FROM batch_student_map bm")
+					.append("   WHERE bm.batchID = ? AND bm.studentID = a.studentID")
+					.append("   AND bm.academicYear = ay.academicYear)");
 			args.add(filter.batchID);
 		}
 

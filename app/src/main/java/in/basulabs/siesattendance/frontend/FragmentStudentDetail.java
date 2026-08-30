@@ -78,6 +78,9 @@ public class FragmentStudentDetail extends Fragment {
 
 	private TextView breakdownScope;
 
+	/** The red line saying the breakdown below is not the student's whole record. */
+	private TextView breakdownFiltersActive;
+
 	private TextInputEditText fromField, toField;
 
 	private ChipGroup windowChips;
@@ -188,6 +191,7 @@ public class FragmentStudentDetail extends Fragment {
 		breakdownScope = view.findViewById(R.id.tvBreakdownScope);
 		filterPanel = view.findViewById(R.id.panelBreakdownFilter);
 		windowChips = view.findViewById(R.id.cgBreakdownWindow);
+		breakdownFiltersActive = view.findViewById(R.id.tvBreakdownFiltersActive);
 		fromField = view.findViewById(R.id.etBreakdownFrom);
 		toField = view.findViewById(R.id.etBreakdownTo);
 		clearFilter = view.findViewById(R.id.btnBreakdownClear);
@@ -335,6 +339,13 @@ public class FragmentStudentDetail extends Fragment {
 
 		breakdownScope.setText(filter.describe());
 		clearFilter.setVisibility(filter.isUnrestricted() ? View.GONE : View.VISIBLE);
+
+		// The percentages under this line are computed over the filtered rows, so a narrowed
+		// breakdown has to announce itself: 40% of one month reads exactly like 40% of a career.
+		if (breakdownFiltersActive != null) {
+			breakdownFiltersActive.setVisibility(
+					filter.isUnrestricted() ? View.GONE : View.VISIBLE);
+		}
 	}
 
 	/**

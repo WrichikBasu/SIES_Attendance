@@ -216,6 +216,20 @@
 
         </LinearLayout>
 
+        <!--
+          Distinct from the scope line above, which always says what the report covers, session
+          included. This says the report has been narrowed, and it is red because a figure read
+          off a filtered report and quoted as the whole picture is the mistake this screen makes
+          easiest.
+        -->
+        <TextView
+            android:id="@+id/tvFiltersActive"
+            style="@style/Widget.App.FiltersActive"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="16dp"
+            tools:visibility="visible" />
+
     <!-- Filter panel. No inner scroller: the whole header scrolls with the list now. -->
     <FrameLayout
         android:id="@+id/scrollFilters"

@@ -292,6 +292,8 @@
     <string name="filter_custom_range">A custom date range</string>
     <string name="filter_all_lectures">All lectures</string>
     <string name="action_filter">Filter</string>
+    <string name="action_period">Period</string>
+    <string name="label_filters_active">Filters active — some records are hidden</string>
     <string name="empty_lectures_in_period">No lectures in this period.</string>
 
     <plurals name="warn_orphan_lectures">

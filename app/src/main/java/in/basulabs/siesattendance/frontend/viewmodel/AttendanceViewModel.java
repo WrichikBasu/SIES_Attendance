@@ -58,6 +58,7 @@ import in.basulabs.siesattendance.backend.util.CourseGroup;
 import in.basulabs.siesattendance.backend.util.ExportFilter;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
 import in.basulabs.siesattendance.backend.util.DatabaseBackup;
+import in.basulabs.siesattendance.backend.util.LectureFilter;
 
 /**
  * The single ViewModel behind every screen.
@@ -965,72 +966,57 @@ public class AttendanceViewModel extends AndroidViewModel {
 	// ── Lecture list filtering ───────────────────────────────────────────
 
 	/**
-	 * The window the lectures tab is showing. Held here rather than in the fragment so it
-	 * survives the tab being swiped away and back.
+	 * What the lectures tab is showing. Held here rather than in the fragment so it survives the
+	 * tab being swiped away and back.
+	 * <p>
+	 * The filter object is mutated in place by the screen and then handed back through
+	 * {@link #refreshLectures()}, which is what re-runs the query. Mutable rather than replaced
+	 * wholesale because the screen edits one dimension at a time and rebuilding it per keystroke
+	 * would only move the same state somewhere less obvious.
 	 */
-	private final MutableLiveData<LectureWindow> lectureWindow =
-			new MutableLiveData<>(new LectureWindow(null, null, LectureWindow.Kind.ALL, null));
+	private final LectureFilter lectureFilter = new LectureFilter();
+
+	private final MutableLiveData<LectureFilter> lectureFilterLive =
+			new MutableLiveData<>(new LectureFilter());
 
 	/**
-	 * A date window for the lectures list, plus enough context to label itself.
+	 * The live filter, for the screen to read and mutate. Every change has to be followed by
+	 * {@link #refreshLectures()}; there are no per-field setters, in keeping with
+	 * {@link #studentFilter()}.
 	 */
-	public static class LectureWindow {
-
-		public enum Kind {
-			ALL,
-			SESSION,
-			MONTH,
-			CUSTOM
-		}
-
-		@Nullable
-		public final LocalDate from;
-
-		@Nullable
-		public final LocalDate to;
-
-		@NonNull
-		public final Kind kind;
-
-		/** What to show in the filter bar. */
-		@Nullable
-		public final String label;
-
-		public LectureWindow(@Nullable LocalDate from, @Nullable LocalDate to,
-		                     @NonNull Kind kind, @Nullable String label) {
-			this.from = from;
-			this.to = to;
-			this.kind = kind;
-			this.label = label;
-		}
-	}
-
-	/** The window currently narrowing the lecture list, which the filter bar labels itself from. */
-	public LiveData<LectureWindow> getLectureWindow() {
-		return lectureWindow;
-	}
-
-	/** Changes the window, which re-queries {@link #getFilteredLectures()} through its switchMap. */
-	public void setLectureWindow(@NonNull LectureWindow window) {
-		lectureWindow.setValue(window);
+	@NonNull
+	public LectureFilter lectureFilter() {
+		return lectureFilter;
 	}
 
 	/**
-	 * Lectures inside the current window, re-queried whenever the window changes. An unbounded
-	 * window falls back to the full list rather than binding absurd sentinel epochs.
+	 * Publishes the current filter, which re-queries {@link #getFilteredLectures()} through its
+	 * switchMap. A snapshot is published rather than the live object so a query in flight cannot
+	 * see an edit made while it runs.
+	 */
+	public void refreshLectures() {
+		lectureFilterLive.setValue(lectureFilter.copy());
+	}
+
+	/** The published filter, which the bar labels itself from. */
+	public LiveData<LectureFilter> getLectureFilterLive() {
+		return lectureFilterLive;
+	}
+
+	/**
+	 * Lectures matching the current filter, re-queried whenever it changes.
+	 * <p>
+	 * Room-backed, so the list also updates itself when a lecture is added or deleted underneath
+	 * it. Nulls are passed straight through as "no condition" rather than being turned into
+	 * sentinel epochs, which is what lets one query serve the unfiltered list too.
 	 */
 	public LiveData<List<LectureDetails>> getFilteredLectures() {
-		return Transformations.switchMap(lectureWindow, window -> {
+		return Transformations.switchMap(lectureFilterLive, filter -> {
 
-			if (window == null || window.from == null || window.to == null) {
-				return db.daoLecture().getAllDetails();
-			}
+			LectureFilter f = filter == null ? new LectureFilter() : filter;
 
-			ZoneId zone = ZoneId.systemDefault();
-			long from = window.from.atStartOfDay(zone).toEpochSecond();
-			long to = window.to.plusDays(1).atStartOfDay(zone).toEpochSecond() - 1;
-
-			return db.daoLecture().getDetailsBetween(from, to);
+			return db.daoLecture().getFilteredDetails(f.fromEpoch(), f.toEpoch(), f.courseID,
+					f.professorID, f.department, f.batchID, f.courseType);
 		});
 	}
 

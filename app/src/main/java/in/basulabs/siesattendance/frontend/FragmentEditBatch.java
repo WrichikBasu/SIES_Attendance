@@ -68,7 +68,7 @@ public class FragmentEditBatch extends Fragment {
 
 	private AutoCompleteTextView actvYear, actvStream, actvDept, actvDivision;
 
-	private TextView selectedCount, emptyMessage;
+	private TextView selectedCount, emptyMessage, filtersActive;
 
 	private Chip chipShowSelected;
 
@@ -157,6 +157,7 @@ public class FragmentEditBatch extends Fragment {
 		actvStream = header.findViewById(R.id.actvFilterStream);
 		actvDept = header.findViewById(R.id.actvFilterDept);
 		actvDivision = header.findViewById(R.id.actvFilterDivision);
+		filtersActive = header.findViewById(R.id.tvFiltersActive);
 
 		selectedCount = header.findViewById(R.id.tvSelectedCount);
 		emptyMessage = header.findViewById(R.id.tvNoMatches);
@@ -358,11 +359,38 @@ public class FragmentEditBatch extends Fragment {
 
 	/** Recomputes the visible list and hands it to the adapter along with the unchanged selection. */
 	private void applyFilter() {
+
 		List<StudentWithYear> visible = visibleStudents();
 		adapter.submit(visible, selected);
+
 		if (emptyMessage != null) {
 			emptyMessage.setVisibility(visible.isEmpty() ? View.VISIBLE : View.GONE);
 		}
+
+		updateFiltersActive();
+	}
+
+	/**
+	 * Shows the red line whenever the roll on screen is not the whole session's.
+	 * <p>
+	 * The search box and the "selected only" chip count as filters here, unlike on the screens
+	 * where they only hide rows: "Select shown" ticks exactly what is visible, so anything
+	 * narrowing the list changes what that button will do.
+	 */
+	private void updateFiltersActive() {
+
+		if (filtersActive == null) {
+			return;
+		}
+
+		boolean searching = etSearch != null && etSearch.getText() != null
+				&& etSearch.getText().toString().trim().length() > 0;
+
+		boolean narrowed = filterYear != null || filterStream != null || filterDept != null
+				|| filterDivision != null || searching
+				|| (chipShowSelected != null && chipShowSelected.isChecked());
+
+		filtersActive.setVisibility(narrowed ? View.VISIBLE : View.GONE);
 	}
 
 	/** Keeps the running total honest: it counts the whole selection, not the visible part of it. */

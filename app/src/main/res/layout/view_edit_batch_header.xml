@@ -205,6 +205,19 @@
             android:layout_marginTop="4dp"
             android:text="@string/action_show_selected_only" />
 
+        <!--
+          Matters more here than on a list screen: "Select shown" applies to what the filters
+          have left, so a filter forgotten about is the difference between building the batch
+          that was wanted and building a fraction of it.
+        -->
+        <TextView
+            android:id="@+id/tvFiltersActive"
+            style="@style/Widget.App.FiltersActive"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="16dp"
+            tools:visibility="visible" />
+
 
     <!-- Sits at the end of the header, where the rows would begin -->
     <TextView

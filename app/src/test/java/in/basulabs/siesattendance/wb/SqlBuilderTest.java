@@ -322,6 +322,43 @@ public class SqlBuilderTest {
 	}
 
 	@Test
+	public void theBatchFilterMatchesMembershipRatherThanTheLecturesOwnBatch() {
+		// Batches nest: a class is split into A, and A into B and C. Comparing l.batchID meant
+		// asking for B returned nothing from a lecture held for A, even though every student
+		// in B sat it. The subset case is the one batches exist for, so it has to be the one
+		// the filter answers.
+		StatsFilter filter = new StatsFilter(2025);
+		filter.batchID = 3L;
+
+		String sql = StatsQueryBuilder.grouped(filter).getSql();
+
+		assertTrue("the batch has to be matched through batch_student_map",
+				sql.contains("EXISTS (SELECT 1 FROM batch_student_map bm"));
+		assertTrue("membership is per session, so it is matched against the resolved one",
+				sql.contains("bm.academicYear = ay.academicYear"));
+		assertFalse("matching the lecture's own batch is what excluded the subsets",
+				sql.contains("l.batchID = ?"));
+
+		assertEquals("argument count must match placeholder count",
+				placeholders(sql), argsOf(StatsQueryBuilder.grouped(filter)).size());
+	}
+
+	@Test
+	public void aBatchFilterStillCountsWholeClassLectures() {
+		// The old condition excluded them outright, since a whole-class lecture has no batch.
+		// Under membership they count, which is the point: a batch's students attend those too
+		// and their percentage is over everything they sat.
+		StatsFilter filter = new StatsFilter(2025);
+		filter.batchID = 1L;
+
+		String sql = StatsQueryBuilder.grouped(filter).getSql();
+
+		assertFalse("nothing may narrow the lectures themselves to a batch",
+				sql.contains("l.batchID IS NOT NULL"));
+		assertFalse(sql.contains("l.batchID ="));
+	}
+
+	@Test
 	public void aNullAcademicYearMeansEverySessionRatherThanNoSession() {
 		// This is what makes a year-on-year comparison possible at all.
 		StatsFilter allSessions = new StatsFilter(null);
@@ -495,6 +532,17 @@ public class SqlBuilderTest {
 			filter.groupBy = groupBy;
 			dump("stats_grouped_" + groupBy.name(), StatsQueryBuilder.grouped(filter));
 		}
+
+		// Batch on its own, for the harness to run against nested batches. Two arguments in
+		// this order: the session, then the batch.
+		StatsFilter batchOnly = new StatsFilter(2025);
+		batchOnly.batchID = 1L;
+		dump("stats_batch_only", StatsQueryBuilder.grouped(batchOnly));
+
+		StatsFilter batchAndCourse = new StatsFilter(2025);
+		batchAndCourse.courseID = 2L;
+		batchAndCourse.batchID = 1L;
+		dump("stats_batch_and_course", StatsQueryBuilder.grouped(batchAndCourse));
 
 		dump("stats_summary", StatsQueryBuilder.summary(new StatsFilter(2025)));
 		dump("stats_all_sessions", StatsQueryBuilder.grouped(new StatsFilter(null)));

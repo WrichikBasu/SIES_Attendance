@@ -70,6 +70,18 @@
                         tools:text="This month"
                         tools:visibility="visible" />
 
+                    <!--
+                      The filter reaching this screen was set on the one before it, which makes
+                      it the easiest of all to forget: the list is short because of a choice
+                      made two screens ago, and nothing here would otherwise say so.
+                    -->
+                    <TextView
+                        android:id="@+id/tvFiltersActive"
+                        style="@style/Widget.App.FiltersActive"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        tools:visibility="visible" />
+
                 </LinearLayout>
 
                 <TextView

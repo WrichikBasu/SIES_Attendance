@@ -489,6 +489,82 @@ def test_stats_class_grouping_splits_by_division():
     conn.close()
 
 
+def fixture_with_nested_batches():
+    """
+    The shared fixture plus a batch inside a batch: A1 = {Aarav}, a subset of Batch A =
+    {Aarav, Rahul}. No lecture is ever held for A1 — that is the point. A1 is how a class
+    already split into A gets split again, and its students sit A's lectures.
+    """
+    conn = build_fixture()
+    c = conn.cursor()
+
+    c.execute("INSERT INTO batch_desc VALUES (3,'Batch A1',NULL,2025)")
+    c.execute("INSERT INTO batch_student_map VALUES (3,1,2025)")
+    conn.commit()
+    return conn
+
+
+def test_stats_batch_filter_reaches_subset_batches():
+    """
+    Filtering the report by a batch has to follow the students in it, not the batch a lecture
+    was held for.
+
+    Batch A1 is a subset of Batch A and has no lectures of its own. Comparing l.batchID
+    returned nothing for it, which is wrong in exactly the case nested batches exist for: its
+    students sat every lecture held for A, and for the whole class.
+    """
+    conn = fixture_with_nested_batches()
+
+    # Batch A1: Aarav alone. He was marked on L1, L2, L3 and L5 — three whole-class lectures
+    # and one held for Batch A, none of them held for A1.
+    rows = {r["primaryLabel"]: r for r in run(conn, "stats_batch_only", [2025, 3])}
+
+    check("stats: a subset batch returns its students rather than nothing",
+          set(rows) == {"2025CS01"}, f"{sorted(rows)}")
+    check("stats: a subset batch counts the lectures its students actually sat",
+          rows["2025CS01"]["total"] == 4 and rows["2025CS01"]["attended"] == 4,
+          f"{rows['2025CS01']}")
+    check("stats: whole-class lectures count towards a batch's students",
+          rows["2025CS01"]["lectures"] == 4, f"{rows['2025CS01']}")
+
+    # Batch A itself: Aarav's four rows plus Rahul's three.
+    parent = {r["primaryLabel"]: r for r in run(conn, "stats_batch_only", [2025, 1])}
+    check("stats: the parent batch returns both its students",
+          set(parent) == {"2025CS01", "2025CS03"}, f"{sorted(parent)}")
+    check("stats: a student outside the batch is left out",
+          "2025CS02" not in parent, f"{sorted(parent)}")
+
+    total = sum(r["total"] for r in parent.values())
+    check("stats: the parent's rows are its members' rows, not one lecture's sheet",
+          total == 7, f"total={total}")
+
+    conn.close()
+
+
+def test_stats_batch_and_course_together_narrow_to_one_roll():
+    """
+    The pairing the request describes: a batch and a course together, answered by student.
+    CS202 has one lecture for Batch A and one for Batch B; asking for A1 and CS202 has to
+    return A1's student from A's lecture.
+    """
+    conn = fixture_with_nested_batches()
+
+    rows = {r["primaryLabel"]: r for r in run(conn, "stats_batch_and_course", [2025, 2, 3])}
+
+    check("stats: batch and course together return the batch's students on that course",
+          set(rows) == {"2025CS01"}, f"{sorted(rows)}")
+    check("stats: and only their rows for it",
+          rows["2025CS01"]["total"] == 1 and rows["2025CS01"]["lectures"] == 1,
+          f"{rows['2025CS01']}")
+
+    # Batch B sat the other lecture of the same course, and must not appear under A1.
+    b_rows = {r["primaryLabel"]: r for r in run(conn, "stats_batch_and_course", [2025, 2, 2])}
+    check("stats: the sibling batch answers with its own student",
+          set(b_rows) == {"2025CS02"}, f"{sorted(b_rows)}")
+
+    conn.close()
+
+
 def test_stats_lecture_counts_are_distinct(conn):
     rows = {r["primaryLabel"]: r for r in run(conn, "stats_grouped_COURSE")}
 
@@ -646,6 +722,114 @@ def test_dao_roster_query_agrees_with_the_export(conn):
         check(f"roster and export agree for course {course_id}",
               roster == exported,
               f"roster={sorted(roster)} export={sorted(exported)}")
+
+
+def lecture_filter_rows(conn, from_epoch=None, to_epoch=None, course_id=None,
+                        prof_id=None, department=None, batch_id=None, course_type=None):
+    """
+    Runs DaoLecture.getFilteredDetails, Room's own generated SQL, with one set of filters.
+
+    Every optional parameter appears twice in the statement — once in its IS NULL guard and
+    once in the comparison — so each value is bound twice, in declaration order. Getting that
+    pairing wrong is the failure this is worth executing for: the statement still runs, it
+    just filters on the wrong column.
+    """
+    sql = dao_sql("DaoLecture", "getFilteredDetails")
+
+    args = []
+    for value in (from_epoch, to_epoch, course_id, prof_id, department, batch_id, course_type):
+        args.append(value)
+        args.append(value)
+
+    cur = conn.execute(sql, args)
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def test_lecture_filter_narrows_by_every_dimension(conn):
+    """
+    The lectures list, filtered. One statement serves the unfiltered list and every
+    combination, so each dimension is checked on its own and then two together.
+    """
+    everything = lecture_filter_rows(conn)
+
+    check("lectures: no filter means every lecture on record",
+          len(everything) == 6, f"{len(everything)}")
+
+    # Not session-scoped, unlike the statistics: a lecture outside every defined session is
+    # still a lecture that was held, and hiding it from the record would hide the very thing
+    # DaoAcademicYear.countOrphanLectures exists to warn about.
+    check("lectures: the orphan lecture is listed rather than dropped",
+          any(r["notes"] == "orphan" for r in everything),
+          f"{[r['lectureID'] for r in everything]}")
+
+    # Deterministic: L4 starts at four in the afternoon and L3 at two, on the same day.
+    ids = [r["lectureID"] for r in everything]
+    check("lectures: newest first", ids == [5, 4, 3, 2, 1, 6], f"{ids}")
+
+    by_course = lecture_filter_rows(conn, course_id=2)
+    check("lectures: by course", {r["lectureID"] for r in by_course} == {3, 4},
+          f"{[r['lectureID'] for r in by_course]}")
+
+    # Courses 1, 2, 5 and 6 are Dr Sharma's and carry every lecture; Dr Rao's two courses
+    # have none, which is what makes this a real test of the join rather than of the count.
+    by_sharma = lecture_filter_rows(conn, prof_id=1)
+    by_rao = lecture_filter_rows(conn, prof_id=2)
+    check("lectures: by professor, through the course they own",
+          len(by_sharma) == 6 and len(by_rao) == 0,
+          f"sharma={len(by_sharma)} rao={len(by_rao)}")
+
+    by_dept = lecture_filter_rows(conn, department="COMPUTER_SCIENCE")
+    by_other_dept = lecture_filter_rows(conn, department="PHYSICS")
+    check("lectures: by the course's offering department",
+          len(by_dept) == 6 and len(by_other_dept) == 0,
+          f"cs={len(by_dept)} physics={len(by_other_dept)}")
+
+    by_batch = lecture_filter_rows(conn, batch_id=1)
+    check("lectures: by the batch the lecture was held for",
+          {r["lectureID"] for r in by_batch} == {3},
+          f"{[r['lectureID'] for r in by_batch]}")
+
+    # The opposite of the statistics filter, deliberately: this screen lists lectures, so a
+    # whole-class lecture is not one of Batch A's.
+    check("lectures: a whole-class lecture belongs to no batch",
+          all(r["batchID"] is not None for r in by_batch),
+          f"{[r['batchID'] for r in by_batch]}")
+
+    by_type = lecture_filter_rows(conn, course_type="MAJOR_PRACTICALS")
+    check("lectures: by course type", {r["lectureID"] for r in by_type} == {3, 4},
+          f"{[r['lectureID'] for r in by_type]}")
+
+
+def test_lecture_filter_combines_period_with_the_rest(conn):
+    """
+    The period and the other dimensions have to narrow together. They are cleared separately
+    and shown separately, which is exactly the shape that lets one of them be forgotten.
+    """
+    july_from = start_of_day(2025, 7, 1)
+    july_to = end_of_day(2025, 7, 31)
+
+    july = lecture_filter_rows(conn, from_epoch=july_from, to_epoch=july_to)
+    check("lectures: a period on its own",
+          {r["lectureID"] for r in july} == {1, 2, 3, 4},
+          f"{[r['lectureID'] for r in july]}")
+
+    july_major = lecture_filter_rows(conn, from_epoch=july_from, to_epoch=july_to,
+                                     course_type="MAJOR")
+    check("lectures: period and type together",
+          {r["lectureID"] for r in july_major} == {1, 2},
+          f"{[r['lectureID'] for r in july_major]}")
+
+    # An open lower bound is a null, not a sentinel: everything up to the end of July.
+    up_to_july = lecture_filter_rows(conn, to_epoch=july_to)
+    check("lectures: an open end binds no condition",
+          {r["lectureID"] for r in up_to_july} == {1, 2, 3, 4, 6},
+          f"{[r['lectureID'] for r in up_to_july]}")
+
+    nothing = lecture_filter_rows(conn, from_epoch=july_from, to_epoch=july_to,
+                                  department="PHYSICS")
+    check("lectures: a combination nothing matches returns nothing rather than everything",
+          nothing == [], f"{len(nothing)}")
 
 
 def test_lecture_detail_projection(conn):
@@ -916,6 +1100,8 @@ def main():
     test_stats_grouped_by_student(conn)
     test_export_narrows_to_one_division()
     test_stats_class_grouping_splits_by_division()
+    test_stats_batch_filter_reaches_subset_batches()
+    test_stats_batch_and_course_together_narrow_to_one_roll()
     test_stats_lecture_counts_are_distinct(conn)
     test_stats_excludes_orphan_lectures(conn)
     test_stats_batch_grouping_keeps_whole_class_lectures(conn)
@@ -926,6 +1112,8 @@ def main():
     test_stats_sort_orders(conn)
     test_stats_full_filter_returns_a_consistent_slice(conn)
     test_dao_roster_query_agrees_with_the_export(conn)
+    test_lecture_filter_narrows_by_every_dimension(conn)
+    test_lecture_filter_combines_period_with_the_rest(conn)
     test_lecture_detail_projection(conn)
     test_find_existing_catches_whole_class_duplicates(conn)
     test_unique_index_does_not_catch_whole_class_duplicates(conn)

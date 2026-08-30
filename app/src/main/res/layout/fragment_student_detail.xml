@@ -254,6 +254,18 @@
 
         </LinearLayout>
 
+        <!--
+          The scope line says what the breakdown covers; this says it is not the whole record.
+          Both are needed: the figures below are a fraction, and a fraction over part of a
+          student's history is a different number from the one their name is usually attached to.
+        -->
+        <TextView
+            android:id="@+id/tvBreakdownFiltersActive"
+            style="@style/Widget.App.FiltersActive"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            tools:visibility="visible" />
+
         <TextView
             android:id="@+id/tvBreakdownScope"
             android:layout_width="match_parent"

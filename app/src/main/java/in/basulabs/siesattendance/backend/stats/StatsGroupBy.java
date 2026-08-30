@@ -109,6 +109,12 @@ public enum StatsGroupBy {
 	/**
 	 * One row per batch. Whole-class lectures have a null batch, which would otherwise be
 	 * dropped by the grouping, so both expressions coalesce it into a row of its own.
+	 * <p>
+	 * This is the batch a lecture was <em>held for</em>, which is not what
+	 * {@code StatsFilter.batchID} means: that one follows the students in a batch. The two read
+	 * together rather than contradicting each other — filtering by a batch and grouping by one
+	 * shows which sessions its students sat, whole-class lectures included — but they answer
+	 * different questions and the difference is worth keeping in mind here.
 	 */
 	BATCH("Batch",
 			"COALESCE(l.batchID, 0)",

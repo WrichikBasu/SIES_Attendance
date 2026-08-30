@@ -104,8 +104,15 @@ public class FragmentStudentCourseDates extends Fragment {
 		// would simply appear not to exist.
 		TextView window = view.findViewById(R.id.tvMarkWindow);
 		String label = args == null ? null : args.getString("windowLabel");
+		boolean filtered = label != null && !label.isEmpty();
+
 		window.setText(label);
-		window.setVisibility(label == null || label.isEmpty() ? View.GONE : View.VISIBLE);
+		window.setVisibility(filtered ? View.VISIBLE : View.GONE);
+
+		// The same warning the rest of the app shows, in the same red, because this list is
+		// filtered by a choice made on the screen before it rather than on this one.
+		view.findViewById(R.id.tvFiltersActive)
+				.setVisibility(filtered ? View.VISIBLE : View.GONE);
 
 		RecyclerView recyclerView = view.findViewById(R.id.rvLectureMarks);
 		adapter = new AdapterStudentLectureMark();

@@ -43,6 +43,12 @@ public class BreakdownFilter {
 
 		THIS_MONTH("This month"),
 
+		/**
+		 * The previous calendar month, whole, which is what "last month" is normally taken to
+		 * mean.
+		 */
+		LAST_MONTH("Last month"),
+
 		LAST_30_DAYS("Last 30 days"),
 
 		CUSTOM("Custom");
@@ -103,6 +109,15 @@ public class BreakdownFilter {
 			case THIS_MONTH:
 				from = today.withDayOfMonth(1);
 				to = today.withDayOfMonth(today.lengthOfMonth());
+				break;
+
+			case LAST_MONTH:
+				// A whole calendar month, not the thirty days before today: the two differ by
+				// up to a fortnight, and it is the calendar one that lines up with how a
+				// month's attendance is talked about.
+				LocalDate lastMonth = today.minusMonths(1);
+				from = lastMonth.withDayOfMonth(1);
+				to = lastMonth.withDayOfMonth(lastMonth.lengthOfMonth());
 				break;
 
 			case LAST_30_DAYS:
