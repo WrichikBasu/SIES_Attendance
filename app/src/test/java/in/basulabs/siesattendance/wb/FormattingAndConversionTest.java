@@ -306,8 +306,9 @@ public class FormattingAndConversionTest {
 	public void aidedClassLabelsAreLeftAlone() {
 		assertEquals("SY BSc Physics",
 				new ClassKey(Year.SY, Stream.BSc, Department.PHYSICS, null, 1).label());
-		assertEquals("Masters Part 1 MSc Physics",
-				new ClassKey(Year.Masters_P1, Stream.MSc, Department.PHYSICS, null, 1).label());
+		assertEquals("Masters Part 1 MSc Chemistry",
+				new ClassKey(Year.Masters_P1, Stream.MSc, Department.CHEMISTRY, null, 1)
+						.label());
 	}
 
 	@Test

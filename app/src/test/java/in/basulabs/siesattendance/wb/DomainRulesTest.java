@@ -9,6 +9,7 @@ import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import in.basulabs.siesattendance.backend.AcademicRules;
@@ -113,8 +114,37 @@ public class DomainRulesTest {
 	public void unaidedDepartmentsGetTheUnaidedStreams() {
 		assertEquals(Arrays.asList(Stream.BSc_unaided, Stream.MSc_unaided),
 				AcademicRules.streamsFor(Department.COMPUTER_SCIENCE));
+		assertEquals(Arrays.asList(Stream.BSc_unaided, Stream.MSc_unaided),
+				AcademicRules.streamsFor(Department.BIOTECHNOLOGY));
 		assertEquals(Arrays.asList(Stream.BSc, Stream.MSc),
-				AcademicRules.streamsFor(Department.PHYSICS));
+				AcademicRules.streamsFor(Department.CHEMISTRY));
+	}
+
+	@Test
+	public void aDepartmentCanBeAidedAtOneLevelAndUnaidedAtTheOther() {
+		// The split runs through these departments rather than around them: the BSc is aided
+		// and the master's is not, so neither half can be inferred from the other.
+		for (Department d : new Department[]{Department.PHYSICS, Department.BOTANY,
+				Department.ZOOLOGY, Department.BIOANALYTICAL_SCIENCES,
+				Department.MICROBIOLOGY}) {
+			assertEquals(d.toString(), Arrays.asList(Stream.BSc, Stream.MSc_unaided),
+					AcademicRules.streamsFor(d));
+		}
+	}
+
+	@Test
+	public void ftnIsTaughtOnlyAsAnUnaidedMasters() {
+		assertEquals(Collections.singletonList(Stream.MSc_unaided),
+				AcademicRules.streamsFor(Department.FTN));
+		assertTrue(AcademicRules.hasMasters(Department.FTN));
+		assertFalse("FTN has no BSc", AcademicRules.hasUndergraduate(Department.FTN));
+
+		// With no stream chosen the department alone rules the undergraduate years out, so a
+		// student cannot be filed as FTN FY.
+		assertEquals(Arrays.asList(Year.Masters_P1, Year.Masters_P2),
+				AcademicRules.yearsFor(Department.FTN, null));
+		assertNotNull(AcademicRules.validate(Department.FTN, null, Year.FY, null));
+		assertNotNull(AcademicRules.validate(Department.FTN, Stream.BSc, null, null));
 	}
 
 	@Test
@@ -122,6 +152,7 @@ public class DomainRulesTest {
 		assertEquals(Stream.BCom, AcademicRules.soleStreamFor(Department.COMMERCE));
 		assertEquals(Stream.BMS, AcademicRules.soleStreamFor(Department.MANAGEMENT_STUDIES));
 		assertEquals(Stream.BAMMC, AcademicRules.soleStreamFor(Department.MASS_MEDIA));
+		assertEquals(Stream.MSc_unaided, AcademicRules.soleStreamFor(Department.FTN));
 		assertNull("Physics has a genuine choice",
 				AcademicRules.soleStreamFor(Department.PHYSICS));
 		assertNull(AcademicRules.soleStreamFor(null));
@@ -147,6 +178,7 @@ public class DomainRulesTest {
 	public void hasMastersFollowsTheStreamList() {
 		assertTrue(AcademicRules.hasMasters(Department.PHYSICS));
 		assertTrue(AcademicRules.hasMasters(Department.COMPUTER_SCIENCE));
+		assertTrue(AcademicRules.hasMasters(Department.FTN));
 		assertFalse(AcademicRules.hasMasters(Department.COMMERCE));
 		assertFalse(AcademicRules.hasMasters(Department.MANAGEMENT_STUDIES));
 		assertFalse(AcademicRules.hasMasters(Department.MASS_MEDIA));
@@ -159,7 +191,9 @@ public class DomainRulesTest {
 		assertNull(AcademicRules.validate(Department.PHYSICS, Stream.BSc, Year.SY, 3));
 		assertNull(AcademicRules.validate(Department.COMPUTER_SCIENCE, Stream.BSc_unaided,
 				Year.FY, 1));
-		assertNull(AcademicRules.validate(Department.PHYSICS, Stream.MSc, Year.Masters_P2, 4));
+		assertNull(AcademicRules.validate(Department.CHEMISTRY, Stream.MSc, Year.Masters_P2, 4));
+		assertNull(AcademicRules.validate(Department.PHYSICS, Stream.MSc_unaided,
+				Year.Masters_P2, 4));
 		assertNull(AcademicRules.validate(Department.COMMERCE, Stream.BCom, Year.TY, 6));
 	}
 
@@ -172,11 +206,17 @@ public class DomainRulesTest {
 				null, null));
 		assertNotNull(AcademicRules.validate(Department.PHYSICS, Stream.BSc_unaided,
 				null, null));
+		// Physics runs an aided BSc but an unaided master's, so the aided MSc is now as wrong
+		// against it as the unaided BSc is.
+		assertNotNull(AcademicRules.validate(Department.PHYSICS, Stream.MSc, null, null));
+		assertNotNull(AcademicRules.validate(Department.CHEMISTRY, Stream.MSc_unaided,
+				null, null));
 	}
 
 	@Test
 	public void validateRejectsUndergraduateYearOnAPostgraduateStream() {
-		assertNotNull(AcademicRules.validate(Department.PHYSICS, Stream.MSc, Year.SY, null));
+		assertNotNull(AcademicRules.validate(Department.PHYSICS, Stream.MSc_unaided, Year.SY,
+				null));
 		assertNotNull(AcademicRules.validate(Department.PHYSICS, Stream.BSc,
 				Year.Masters_P1, null));
 	}
@@ -192,7 +232,7 @@ public class DomainRulesTest {
 	@Test
 	public void validateRejectsASemesterTheYearDoesNotCover() {
 		assertNotNull(AcademicRules.validate(Department.PHYSICS, Stream.BSc, Year.FY, 5));
-		assertNotNull(AcademicRules.validate(Department.PHYSICS, Stream.MSc,
+		assertNotNull(AcademicRules.validate(Department.PHYSICS, Stream.MSc_unaided,
 				Year.Masters_P1, 3));
 		assertNotNull(AcademicRules.validate(null, null, Year.TY, 1));
 	}
@@ -301,6 +341,10 @@ public class DomainRulesTest {
 				AcademicRules.resolveRequested(Department.COMPUTER_SCIENCE, Stream.MSc));
 		assertEquals(Stream.BSc,
 				AcademicRules.resolveRequested(Department.PHYSICS, Stream.BSc_unaided));
+		// A file naming a bare "MSc" against Physics means the only master's Physics runs,
+		// which is now the unaided one.
+		assertEquals(Stream.MSc_unaided,
+				AcademicRules.resolveRequested(Department.PHYSICS, Stream.MSc));
 	}
 
 	@Test
@@ -330,7 +374,7 @@ public class DomainRulesTest {
 		assertEquals(Arrays.asList(Year.FY, Year.SY, Year.TY),
 				AcademicRules.yearsFor(Department.PHYSICS, Stream.BSc));
 		assertEquals(Arrays.asList(Year.Masters_P1, Year.Masters_P2),
-				AcademicRules.yearsFor(Department.PHYSICS, Stream.MSc));
+				AcademicRules.yearsFor(Department.PHYSICS, Stream.MSc_unaided));
 		assertEquals(Arrays.asList(Year.FY, Year.SY, Year.TY),
 				AcademicRules.yearsFor(Department.COMMERCE, null));
 		assertEquals(Arrays.asList(Year.FY, Year.SY, Year.TY, Year.Masters_P1, Year.Masters_P2),
@@ -403,7 +447,7 @@ public class DomainRulesTest {
 				Year.SY, 3, Division.A));
 		assertNotNull(AcademicRules.validate(Department.COMMERCE, Stream.BCom, Year.FY, 1,
 				Division.B));
-		assertNotNull(AcademicRules.validate(Department.PHYSICS, Stream.MSc,
+		assertNotNull(AcademicRules.validate(Department.PHYSICS, Stream.MSc_unaided,
 				Year.Masters_P1, 1, Division.A));
 	}
 

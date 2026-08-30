@@ -13,10 +13,11 @@ import java.util.Map;
 /**
  * Which streams a department can be studied under.
  * <p>
- * A department does not offer every stream: Physics is a BSc or MSc subject, Commerce is BCom
- * and nothing else, Management Studies has no postgraduate course at all. Encoding that here
- * means the pairing cannot be got wrong from any screen, and the stream dropdown collapses to a
- * single unambiguous choice for most departments.
+ * A department does not offer every stream: Commerce is BCom and nothing else, Management
+ * Studies has no postgraduate course at all, FTN has no undergraduate one, and Physics runs an
+ * aided BSc alongside an unaided MSc. Encoding that here means the pairing cannot be got wrong
+ * from any screen, and the stream dropdown collapses to a single unambiguous choice for most
+ * departments.
  * <p>
  * The narrowing runs one way only: department, then stream, then year, then semester. Each
  * choice restricts the ones after it and leaves the ones before it alone. A student's division
@@ -34,21 +35,34 @@ public final class AcademicRules {
 			new EnumMap<>(Department.class);
 
 	static {
-		// Sciences: aided BSc and MSc.
+		// Sciences aided at both levels.
 		for (Department department : new Department[]{
-				Department.PHYSICS, Department.CHEMISTRY, Department.MATHEMATICS,
-				Department.BOTANY, Department.ZOOLOGY, Department.BIOCHEMISTRY,
-				Department.STATISTICS, Department.BIOANALYTICAL_SCIENCES,
-				Department.MICROBIOLOGY, Department.FTN}) {
+				Department.CHEMISTRY, Department.MATHEMATICS,
+				Department.BIOCHEMISTRY, Department.STATISTICS}) {
 			STREAMS.put(department, Arrays.asList(Stream.BSc, Stream.MSc));
 		}
 
-		// Unaided sciences: stored separately, shown as plain BSc and MSc.
+		// Sciences with an aided undergraduate course and an unaided master's. The split runs
+		// through the department rather than between departments, which is why the pairings are
+		// listed here department by department and cannot be derived from either enum.
+		for (Department department : new Department[]{
+				Department.PHYSICS, Department.BOTANY, Department.ZOOLOGY,
+				Department.BIOANALYTICAL_SCIENCES, Department.MICROBIOLOGY}) {
+			STREAMS.put(department, Arrays.asList(Stream.BSc, Stream.MSc_unaided));
+		}
+
+		// Unaided at both levels: stored separately, shown as plain BSc and MSc.
 		for (Department department : new Department[]{
 				Department.COMPUTER_SCIENCE, Department.DATA_SCIENCE,
-				Department.INFORMATION_TECHNOLOGY, Department.ENVIRONMENTAL_SCIENCE}) {
+				Department.INFORMATION_TECHNOLOGY, Department.ENVIRONMENTAL_SCIENCE,
+				Department.BIOTECHNOLOGY}) {
 			STREAMS.put(department, Arrays.asList(Stream.BSc_unaided, Stream.MSc_unaided));
 		}
+
+		// FTN is taught only as a master's course, and that course is unaided. It is the one
+		// department with no undergraduate stream at all, which is what hasUndergraduate()
+		// below exists for.
+		STREAMS.put(Department.FTN, Collections.singletonList(Stream.MSc_unaided));
 
 		// Single-stream departments, none of which currently run a master's course.
 		STREAMS.put(Department.MANAGEMENT_STUDIES,
@@ -227,6 +241,19 @@ public final class AcademicRules {
 	}
 
 	/**
+	 * True when the department runs an undergraduate course. False for FTN, which is taught at
+	 * master's level only, so nothing offers it an FY, SY or TY to be filed under.
+	 */
+	public static boolean hasUndergraduate(@Nullable Department department) {
+		for (Stream stream : streamsFor(department)) {
+			if (!stream.isMasters()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * The years available for a department, so a Management Studies student cannot be filed as
 	 * Masters Part 1 when no such course exists.
 	 */
@@ -241,12 +268,17 @@ public final class AcademicRules {
 	 * A postgraduate stream leaves only the master's years, and an undergraduate stream only
 	 * the first three, which removes a combination that is simply not a thing: an MSc student
 	 * in their second year is Masters Part 2, never SY.
+	 * <p>
+	 * With no stream chosen the department alone still rules some out, in both directions: a
+	 * department with no master's course has no Masters Part 1, and one taught only at master's
+	 * level has no FY.
 	 */
 	@NonNull
 	public static List<Year> yearsFor(@Nullable Department department, @Nullable Stream stream) {
 
 		List<Year> years = new ArrayList<>();
 		boolean departmentHasMasters = hasMasters(department);
+		boolean departmentHasUndergraduate = hasUndergraduate(department);
 
 		for (Year year : Year.values()) {
 
@@ -254,7 +286,8 @@ public final class AcademicRules {
 				if (year.isMasters() != stream.isMasters()) {
 					continue;
 				}
-			} else if (year.isMasters() && !departmentHasMasters) {
+			} else if (year.isMasters() ? !departmentHasMasters
+					: !departmentHasUndergraduate) {
 				continue;
 			}
 

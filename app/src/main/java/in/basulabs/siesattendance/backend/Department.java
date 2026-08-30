@@ -11,7 +11,9 @@ import androidx.annotation.Nullable;
  */
 public enum Department {
 
-	// Aided sciences.
+	// Sciences. Whether a course is aided is a property of the stream rather than of the
+	// department: several of these run an aided BSc alongside an unaided MSc, and FTN is a
+	// master's course only. AcademicRules holds which streams each one offers.
 	PHYSICS("Physics"),
 	CHEMISTRY("Chemistry"),
 	MATHEMATICS("Mathematics"),
@@ -21,10 +23,11 @@ public enum Department {
 	STATISTICS("Statistics"),
 	BIOANALYTICAL_SCIENCES("Bioanalytical Sciences"),
 	MICROBIOLOGY("Microbiology"),
+	BIOTECHNOLOGY("Biotechnology"),
 	FTN("FTN"),
 
-	// Unaided sciences. Abbreviated because these are the names in everyday use, and a course
-	// list is easier to scan when the department column stays narrow.
+	// Abbreviated because these are the names in everyday use, and a course list is easier to
+	// scan when the department column stays narrow.
 	COMPUTER_SCIENCE("CS"),
 	DATA_SCIENCE("DS"),
 	INFORMATION_TECHNOLOGY("IT"),

@@ -359,6 +359,46 @@ public final class Migrations {
 	};
 
 	/**
+	 * Version 9 to 10: the master's courses in Physics, Botany, Zoology, Bioanalytical Sciences,
+	 * Microbiology and FTN became unaided, so their rows move from {@code MSc} to
+	 * {@code MSc_unaided}.
+	 * <p>
+	 * Nothing about the schema changes here; this is a data migration, and it is needed because
+	 * {@code AcademicRules} no longer pairs those departments with the aided MSc. A row left
+	 * behind would be a combination the app considers impossible, and could not be saved again
+	 * from any screen.
+	 * <p>
+	 * Students and courses have to move together. The roll for a course is an equality join on
+	 * year and stream ({@code DaoStudent.getRollForCourseSync}), so rewriting one side alone
+	 * would empty out every roll in those departments. A student's class follows the department
+	 * they major in, and a course's follows the department that owns it, which is what the two
+	 * statements below say.
+	 * <p>
+	 * The one thing this cannot repair is a course owned by one of these departments but taken
+	 * by students majoring elsewhere, an open elective being the way that happens: those
+	 * students keep the aided MSc their own department still runs, and drop off the roll. That
+	 * is the change itself rather than a fault in the migration, since the aided and unaided
+	 * master's are now two different classes, and which one such a course belongs to is a
+	 * question only a human can answer. FTN undergraduate rows are left untouched for the same
+	 * reason: FTN no longer has a BSc at all, so there is no honest value to move them to.
+	 */
+	public static final Migration MIGRATION_9_10 = new Migration(9, 10) {
+		@Override
+		public void migrate(@NonNull SupportSQLiteDatabase db) {
+
+			// Enum columns hold constant names, which is why these are string literals.
+			final String departments = "('PHYSICS', 'BOTANY', 'ZOOLOGY', "
+					+ "'BIOANALYTICAL_SCIENCES', 'MICROBIOLOGY', 'FTN')";
+
+			db.execSQL("UPDATE `student_year` SET `stream` = 'MSc_unaided' "
+					+ "WHERE `stream` = 'MSc' AND `majorDept` IN " + departments);
+
+			db.execSQL("UPDATE `courses` SET `stream` = 'MSc_unaided' "
+					+ "WHERE `stream` = 'MSc' AND `offeringDepartment` IN " + departments);
+		}
+	};
+
+	/**
 	 * The recreate-and-copy dance, for a table that has to change in a way SQLite cannot do in
 	 * place. The new table is built beside the old one under a {@code _new} suffix, every row is
 	 * copied across, the old table is dropped and the new one takes its name. Indices belong to
