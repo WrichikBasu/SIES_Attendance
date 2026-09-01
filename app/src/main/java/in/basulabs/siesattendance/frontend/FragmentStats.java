@@ -26,6 +26,7 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.datepicker.MaterialDatePicker;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputLayout;
 
 import java.time.Instant;
@@ -36,6 +37,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.AcademicRules;
@@ -65,6 +67,11 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * <p>
  * Grouping by student or by course produces rows that can be tapped to drill into that subject.
  * <p>
+ * The course filter takes several courses at once, chosen in a dialog and shown as chips. The
+ * headline figures are then the combined attendance across exactly those courses, computed from
+ * the same rows the report lists, which is the question "how are my two papers doing together"
+ * that one course at a time could not answer.
+ * <p>
  * The filter controls and the report are one scrolling surface, achieved by putting the controls
  * in an {@link AdapterHeader} in front of the list rather than in a scroll view above it. The
  * header is built asynchronously, so anything the screen has loaded before it exists is held in
@@ -87,12 +94,17 @@ public class FragmentStats extends Fragment {
 
 	private View filterPanel;
 
-	private MaterialButton toggleFilters, btnFrom, btnTo;
+	private MaterialButton toggleFilters, btnFrom, btnTo, btnSelectCourses;
+
+	/** The chips standing for the courses the report is restricted to. */
+	private ChipGroup courseChips;
+
+	private TextView tvNoCourses;
 
 	private TextView tvPercent, tvLectures, tvRecords, tvBelow, tvEmpty, tvActiveFilters,
 			tvFiltersActive;
 
-	private AutoCompleteTextView actvSession, actvRange, actvSort, actvCourse, actvBatch,
+	private AutoCompleteTextView actvSession, actvRange, actvSort, actvBatch,
 			actvProfessor, actvCourseType, actvYear, actvStream, actvDept, actvDivision;
 
 	private TextView tvOrphanWarning;
@@ -232,7 +244,9 @@ public class FragmentStats extends Fragment {
 		tvOrphanWarning = view.findViewById(R.id.tvOrphanWarning);
 		actvRange = view.findViewById(R.id.actvDateRange);
 		actvSort = view.findViewById(R.id.actvSort);
-		actvCourse = view.findViewById(R.id.actvCourse);
+		courseChips = view.findViewById(R.id.cgCourses);
+		tvNoCourses = view.findViewById(R.id.tvNoCourses);
+		btnSelectCourses = view.findViewById(R.id.btnSelectCourses);
 		actvBatch = view.findViewById(R.id.actvBatch);
 		actvProfessor = view.findViewById(R.id.actvProfessor);
 		actvCourseType = view.findViewById(R.id.actvCourseType);
@@ -435,18 +449,7 @@ public class FragmentStats extends Fragment {
 				batches = batchList;
 				professors = professorList;
 
-				List<String> courseLabels = new ArrayList<>();
-				courseLabels.add(anyLabel);
-				for (EntityCourse course : courseList) {
-					courseLabels.add(course.courseCode + " – " + course.courseTopic);
-				}
-				actvCourse.setAdapter(simple(courseLabels));
-				actvCourse.setText(anyLabel, false);
-				actvCourse.setOnItemClickListener((p, v, position, id) -> {
-					viewModel.statsFilter().courseID =
-							position == 0 ? null : courses.get(position - 1).courseID;
-					rerun();
-				});
+				bindCourseChips();
 
 				List<String> batchLabels = new ArrayList<>();
 				batchLabels.add(anyLabel);
@@ -477,6 +480,113 @@ public class FragmentStats extends Fragment {
 				binding = false;
 			});
 		});
+	}
+
+	// ── Course selection ─────────────────────────────────────────────────
+
+	/**
+	 * Offers every course at once, ticked or not, and applies whatever comes back.
+	 * <p>
+	 * A dialog rather than a row of chips to choose from: the college's whole course list is
+	 * far too long to sit inside the filter panel, whereas a selection of half a dozen is not,
+	 * which is why the chips show what was chosen rather than what could be.
+	 * <p>
+	 * The dialog works on its own copy of the ticks and only writes them back on Done, so
+	 * changing one's mind halfway through costs nothing and, more importantly, does not fire a
+	 * report per tick.
+	 */
+	private void showCourseDialog() {
+
+		if (courses.isEmpty()) {
+			return;
+		}
+
+		String[] labels = new String[courses.size()];
+		boolean[] checked = new boolean[courses.size()];
+		Set<Long> selected = viewModel.statsFilter().courseIDs;
+
+		for (int i = 0; i < courses.size(); i++) {
+			EntityCourse course = courses.get(i);
+			labels[i] = course.courseCode + " – " + course.courseTopic;
+			checked[i] = selected.contains(course.courseID);
+		}
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_choose_courses_title)
+				.setMultiChoiceItems(labels, checked,
+						(dialog, which, isChecked) -> checked[which] = isChecked)
+				.setNegativeButton(R.string.action_cancel, null)
+				.setNeutralButton(R.string.action_clear_selection, (dialog, which) ->
+						applyCourseSelection(new boolean[courses.size()]))
+				.setPositiveButton(R.string.action_done, (dialog, which) ->
+						applyCourseSelection(checked))
+				.show();
+	}
+
+	/** Writes a set of ticks onto the filter and re-runs the report once. */
+	private void applyCourseSelection(@NonNull boolean[] checked) {
+
+		Set<Long> selected = viewModel.statsFilter().courseIDs;
+		selected.clear();
+
+		for (int i = 0; i < courses.size(); i++) {
+			if (checked[i]) {
+				selected.add(courses.get(i).courseID);
+			}
+		}
+
+		bindCourseChips();
+		updateFilterSummary();
+		rerun();
+	}
+
+	/**
+	 * Draws one closable chip per selected course, or the "every course" line when none are.
+	 * <p>
+	 * Rebuilt outright rather than diffed: the selection is a handful of chips, and rebuilding
+	 * is what keeps this correct after a drill-down, a reset and the dialog alike.
+	 */
+	private void bindCourseChips() {
+
+		if (courseChips == null) {
+			return;
+		}
+
+		Set<Long> selected = viewModel.statsFilter().courseIDs;
+		courseChips.removeAllViews();
+
+		for (Long courseID : selected) {
+			Chip chip = new Chip(requireContext());
+			chip.setText(courseLabelFor(courseID));
+			chip.setCloseIconVisible(true);
+			chip.setOnCloseIconClickListener(v -> {
+				viewModel.statsFilter().courseIDs.remove(courseID);
+				bindCourseChips();
+				updateFilterSummary();
+				rerun();
+			});
+			courseChips.addView(chip);
+		}
+
+		boolean any = !selected.isEmpty();
+		courseChips.setVisibility(any ? View.VISIBLE : View.GONE);
+		tvNoCourses.setVisibility(any ? View.GONE : View.VISIBLE);
+	}
+
+	/**
+	 * The code to put on a chip. Falls back to the ID's own label while the course list is
+	 * still loading, or if a selected course has since gone, so a chip is never blank and the
+	 * filter it stands for is never silently invisible.
+	 */
+	@NonNull
+	private String courseLabelFor(long courseID) {
+
+		for (EntityCourse course : courses) {
+			if (course.courseID == courseID) {
+				return course.courseCode;
+			}
+		}
+		return getString(R.string.hint_course);
 	}
 
 	@NonNull
@@ -566,6 +676,8 @@ public class FragmentStats extends Fragment {
 					: R.string.action_hide_filters);
 		});
 
+		btnSelectCourses.setOnClickListener(v -> showCourseDialog());
+
 		view.findViewById(R.id.btnClearFilters).setOnClickListener(v -> {
 			viewModel.resetStatsFilter();
 			resetFilterControls();
@@ -581,10 +693,12 @@ public class FragmentStats extends Fragment {
 
 		actvRange.setText(StatsFilter.DateRange.ALL_TIME.label, false);
 		for (AutoCompleteTextView field : new AutoCompleteTextView[]{
-				actvCourse, actvBatch, actvProfessor, actvCourseType,
+				actvBatch, actvProfessor, actvCourseType,
 				actvYear, actvStream, actvDept, actvDivision}) {
 			field.setText(anyLabel, false);
 		}
+
+		bindCourseChips();
 
 		// The division list depends on the stream, which has just been cleared, so the field
 		// goes back to offering every division rather than the last stream's.
@@ -630,8 +744,11 @@ public class FragmentStats extends Fragment {
 
 		if (groupBy == StatsGroupBy.COURSE) {
 			// Narrowing to the tapped course and regrouping by student answers the obvious
-			// follow-up question: who is short in this course?
-			viewModel.statsFilter().courseID = row.rowId;
+			// follow-up question: who is short in this course? It replaces the selection
+			// rather than adding to it: the row that was tapped is the one being asked
+			// about, and adding it to a set of others would answer a question nobody asked.
+			viewModel.statsFilter().courseIDs.clear();
+			viewModel.statsFilter().courseIDs.add(row.rowId);
 			viewModel.statsFilter().groupBy = StatsGroupBy.STUDENT;
 			syncControlsToFilter();
 			viewModel.runStatsQuery();
@@ -655,15 +772,7 @@ public class FragmentStats extends Fragment {
 			chip.setChecked(StatsGroupBy.values()[i] == filter.groupBy);
 		}
 
-		if (filter.courseID != null) {
-			for (int i = 0; i < courses.size(); i++) {
-				if (courses.get(i).courseID == filter.courseID) {
-					EntityCourse course = courses.get(i);
-					actvCourse.setText(course.courseCode + " – " + course.courseTopic, false);
-					break;
-				}
-			}
-		}
+		bindCourseChips();
 
 		adapter.setContext(filter.groupBy, filter.threshold);
 		binding = false;
@@ -748,12 +857,18 @@ public class FragmentStats extends Fragment {
 			}
 		}
 
-		if (filter.courseID != null) {
-			for (EntityCourse course : courses) {
-				if (course.courseID == filter.courseID) {
-					parts.add(course.courseCode);
-					break;
+		// One or two courses are named; beyond that the codes would crowd out everything else
+		// on the line, and the chips below say which they are anyway.
+		if (!filter.courseIDs.isEmpty()) {
+			if (filter.courseIDs.size() <= 2) {
+				for (EntityCourse course : courses) {
+					if (filter.courseIDs.contains(course.courseID)) {
+						parts.add(course.courseCode);
+					}
 				}
+			} else {
+				parts.add(getResources().getQuantityString(R.plurals.count_courses_selected,
+						filter.courseIDs.size(), filter.courseIDs.size()));
 			}
 		}
 

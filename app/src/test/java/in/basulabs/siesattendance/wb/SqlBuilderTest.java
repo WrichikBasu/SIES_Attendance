@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import in.basulabs.siesattendance.backend.CourseType;
@@ -293,7 +294,8 @@ public class SqlBuilderTest {
 				filter.to = LocalDate.of(2025, 12, 31);
 			}
 			if ((mask & 8) != 0) {
-				filter.courseID = 7L;
+				filter.courseIDs.add(7L);
+				filter.courseIDs.add(9L);
 			}
 			if ((mask & 16) != 0) {
 				filter.batchID = 3L;
@@ -319,6 +321,49 @@ public class SqlBuilderTest {
 			assertEquals("mask " + mask, placeholders(grouped.getSql()),
 					argsOf(grouped).size());
 		}
+	}
+
+	@Test
+	public void severalCoursesAreAskedForWithOnePlaceholderEach() {
+		// The report's course filter is a set: the question is usually about a handful of
+		// courses read together, and the summary above the rows is then their combined figure.
+		StatsFilter filter = new StatsFilter(2025);
+		filter.courseIDs.add(4L);
+		filter.courseIDs.add(6L);
+		filter.courseIDs.add(9L);
+
+		SupportSQLiteQuery grouped = StatsQueryBuilder.grouped(filter);
+
+		assertTrue(grouped.getSql().contains("c.courseID IN (?, ?, ?)"));
+		assertEquals("argument count must match placeholder count",
+				placeholders(grouped.getSql()), argsOf(grouped).size());
+		// Every integer comes back from the recorder as a long, the session included.
+		assertEquals(Arrays.asList(2025L, 4L, 6L, 9L), argsOf(grouped));
+	}
+
+	@Test
+	public void noCoursesChosenMeansEveryCourseRatherThanNone() {
+		// An empty IN () is legal in SQLite and matches nothing, which is the opposite of what
+		// an untouched filter means, so the condition has to be absent altogether.
+		String sql = StatsQueryBuilder.grouped(new StatsFilter(2025)).getSql();
+
+		assertFalse(sql.contains("c.courseID IN"));
+		assertFalse(sql.contains("c.courseID = ?"));
+	}
+
+	@Test
+	public void theCourseSetNarrowsTheSummaryExactlyAsItNarrowsTheRows() {
+		// The headline percentage is the combined attendance across the chosen courses, so it
+		// has to be computed over the same rows the report lists.
+		StatsFilter filter = new StatsFilter(2025);
+		filter.courseIDs.add(1L);
+		filter.courseIDs.add(2L);
+
+		SupportSQLiteQuery grouped = StatsQueryBuilder.grouped(filter);
+		SupportSQLiteQuery summary = StatsQueryBuilder.summary(filter);
+
+		assertTrue(summary.getSql().contains("c.courseID IN (?, ?)"));
+		assertEquals(argsOf(grouped), argsOf(summary));
 	}
 
 	@Test
@@ -540,7 +585,7 @@ public class SqlBuilderTest {
 		dump("stats_batch_only", StatsQueryBuilder.grouped(batchOnly));
 
 		StatsFilter batchAndCourse = new StatsFilter(2025);
-		batchAndCourse.courseID = 2L;
+		batchAndCourse.courseIDs.add(2L);
 		batchAndCourse.batchID = 1L;
 		dump("stats_batch_and_course", StatsQueryBuilder.grouped(batchAndCourse));
 
@@ -591,7 +636,8 @@ public class SqlBuilderTest {
 		filter.groupBy = StatsGroupBy.STUDENT;
 		filter.applyDateRange(StatsFilter.DateRange.SESSION_FIRST_HALF,
 				EntityAcademicYear.defaultFor(2025));
-		filter.courseID = 1L;
+		filter.courseIDs.add(1L);
+		filter.courseIDs.add(2L);
 		filter.batchID = 1L;
 		filter.professorID = 1L;
 		filter.studentID = 1L;

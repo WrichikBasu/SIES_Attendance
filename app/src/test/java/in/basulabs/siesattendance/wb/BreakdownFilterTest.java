@@ -261,6 +261,47 @@ public class BreakdownFilterTest {
 		assertEquals("All time · OE", filter.describe());
 	}
 
+	// ── Chosen courses ───────────────────────────────────────────────────
+
+	/**
+	 * Picking courses narrows the breakdown, so the screen has to say so: the figure above the
+	 * list is then the combined attendance across those courses rather than the whole record.
+	 */
+	@Test
+	public void chosenCoursesAloneAreStillARestriction() {
+
+		BreakdownFilter filter = new BreakdownFilter();
+		filter.courseIDs.add(3L);
+
+		assertFalse(filter.isUnrestricted());
+		assertFalse(filter.hasDateWindow());
+	}
+
+	@Test
+	public void theChosenCoursesAreCountedRatherThanListed() {
+		// The codes are already on the chips and on the rows below; a line that grew with the
+		// selection would push the figures it describes off the screen.
+		BreakdownFilter filter = new BreakdownFilter();
+		filter.courseIDs.add(1L);
+		filter.courseIDs.add(2L);
+
+		assertEquals("All time · 2 courses", filter.describe());
+
+		filter.courseIDs.remove(2L);
+		assertEquals("All time · 1 course", filter.describe());
+	}
+
+	@Test
+	public void coursesSitAlongsideTheWindowAndTheTypeInTheSameLine() {
+
+		BreakdownFilter filter = new BreakdownFilter();
+		filter.apply(BreakdownFilter.Window.THIS_MONTH, SESSION_2025);
+		filter.courseType = CourseType.MAJOR;
+		filter.courseIDs.add(7L);
+
+		assertEquals("This month · Major · 1 course", filter.describe());
+	}
+
 	// ── Clearing ─────────────────────────────────────────────────────────
 
 	@Test
@@ -269,6 +310,7 @@ public class BreakdownFilterTest {
 		BreakdownFilter filter = new BreakdownFilter();
 		filter.apply(BreakdownFilter.Window.THIS_MONTH, SESSION_2025);
 		filter.courseType = CourseType.MINOR;
+		filter.courseIDs.add(5L);
 
 		filter.clear();
 
@@ -276,6 +318,7 @@ public class BreakdownFilterTest {
 		assertNull(filter.from);
 		assertNull(filter.to);
 		assertNull(filter.courseType);
+		assertTrue(filter.courseIDs.isEmpty());
 		assertEquals(BreakdownFilter.Window.ALL_TIME, filter.window);
 	}
 }

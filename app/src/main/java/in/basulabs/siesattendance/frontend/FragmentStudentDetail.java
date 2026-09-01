@@ -7,6 +7,7 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
@@ -25,9 +26,12 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 import in.basulabs.siesattendance.R;
 
@@ -41,6 +45,7 @@ import com.google.android.material.textfield.TextInputLayout;
 
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
+import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
@@ -64,6 +69,12 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * figure in the card above is recomputed from the same rows, so the headline always describes
  * whatever is on screen. The window travels down into the per-course dates as well —
  * see {@link #openCourseDates} for why it has to.
+ * <p>
+ * The chips in that filter also pick which courses the breakdown covers, several at a time. With
+ * two or three ticked the card above stops being the student's overall figure and becomes their
+ * combined figure across those courses — which is not the average of the rows, since the courses
+ * have different numbers of lectures behind them, and is the number a student short of the
+ * threshold in one paper actually needs.
  */
 public class FragmentStudentDetail extends Fragment {
 
@@ -81,9 +92,41 @@ public class FragmentStudentDetail extends Fragment {
 	/** The red line saying the breakdown below is not the student's whole record. */
 	private TextView breakdownFiltersActive;
 
+	/**
+	 * The same warning against the headline figure itself. The card and the filter controls sit
+	 * far enough apart that the percentage can be read without the line beside them ever coming
+	 * into view, and a narrowed percentage read as a whole one is the mistake this screen makes
+	 * easiest.
+	 */
+	private TextView overallFiltered;
+
 	private TextInputEditText fromField, toField;
 
 	private ChipGroup windowChips;
+
+	/**
+	 * One checkable chip per course this student has been marked in. Ticking several shows
+	 * their attendance as one figure in the card above.
+	 */
+	private ChipGroup courseChips;
+
+	/** The heading that folds the chips away, and what it says when they are folded. */
+	private View courseChipsRow;
+
+	private TextView courseChipsCount;
+
+	private ImageView courseChipsChevron;
+
+	/**
+	 * Whether the chips are unrolled. Folded to begin with: a student can carry a dozen courses
+	 * across their years, and a dozen chips is most of a panel to scroll past before reaching
+	 * the figures they filter. A selection already in force unrolls them, since a control the
+	 * user has set should be visible where they set it.
+	 */
+	private boolean courseChipsExpanded;
+
+	/** The courses behind those chips, read once when the screen opens. */
+	private final List<EntityCourse> studentCourses = new ArrayList<>();
 
 	private View filterPanel;
 
@@ -157,6 +200,7 @@ public class FragmentStudentDetail extends Fragment {
 		overallPercentage = view.findViewById(R.id.tvOverallPercentage);
 		overallDetail = view.findViewById(R.id.tvOverallDetail);
 		overallBar = view.findViewById(R.id.progressOverall);
+		overallFiltered = view.findViewById(R.id.tvOverallFiltered);
 		emptyBreakdown = view.findViewById(R.id.tvEmptyBreakdown);
 
 		RecyclerView recyclerView = view.findViewById(R.id.rvCourseBreakdown);
@@ -195,6 +239,15 @@ public class FragmentStudentDetail extends Fragment {
 		fromField = view.findViewById(R.id.etBreakdownFrom);
 		toField = view.findViewById(R.id.etBreakdownTo);
 		clearFilter = view.findViewById(R.id.btnBreakdownClear);
+		courseChips = view.findViewById(R.id.cgBreakdownCourses);
+		courseChipsRow = view.findViewById(R.id.rowBreakdownCourses);
+		courseChipsCount = view.findViewById(R.id.tvBreakdownCoursesCount);
+		courseChipsChevron = view.findViewById(R.id.ivBreakdownCoursesChevron);
+
+		courseChipsRow.setOnClickListener(v -> {
+			courseChipsExpanded = !courseChipsExpanded;
+			bindCourseChipsSection();
+		});
 
 		view.findViewById(R.id.btnBreakdownFilter).setOnClickListener(v -> {
 			boolean showing = filterPanel.getVisibility() == View.VISIBLE;
@@ -203,6 +256,9 @@ public class FragmentStudentDetail extends Fragment {
 
 		clearFilter.setOnClickListener(v -> {
 			filter().clear();
+			// Clearing puts the course type back to every type, so the chips it had hidden
+			// come back with it.
+			buildCourseChips();
 			bindFilterControls();
 			refreshBreakdown();
 		});
@@ -246,11 +302,167 @@ public class FragmentStudentDetail extends Fragment {
 				Arrays.asList(CourseType.values()), getString(R.string.filter_any),
 				filter().courseType, value -> {
 					filter().courseType = value;
+
+					// The chips are the courses of the chosen type, so choosing one rebuilds
+					// them and drops whatever no longer belongs; see reconcileCourseSelection.
+					reconcileCourseSelection();
+					buildCourseChips();
+
 					bindFilterControls();
 					refreshBreakdown();
 				});
 
+		loadCourseChips();
 		bindFilterControls();
+	}
+
+	/**
+	 * Reads the student's courses, which are what the chips are built from.
+	 * <p>
+	 * Read once from the whole record rather than derived from the breakdown currently on
+	 * screen, which is filtered by these very chips: taking them from it would make a course
+	 * vanish the moment the window it falls outside was chosen, and with it the only way to
+	 * deselect it. The course type is the one filter the chips do follow, and it is applied
+	 * when they are built rather than when they are read; see {@link #buildCourseChips()}.
+	 */
+	private void loadCourseChips() {
+
+		viewModel.loadStudentCourses(studentID, loaded -> {
+
+			if (loaded == null || !isAdded()) {
+				return;
+			}
+
+			Ui.onMain(this, () -> {
+				studentCourses.clear();
+				studentCourses.addAll(loaded);
+				buildCourseChips();
+				bindFilterControls();
+			});
+		});
+	}
+
+	/**
+	 * One chip per course of the chosen type, checkable and multi-select: the point is to see
+	 * two or three of them together, which is a question no single-select control can ask.
+	 * <p>
+	 * Nothing ticked means every course, so the chips start clear rather than all lit. A
+	 * student with no attendance at all — or none of the chosen type — gets no chips and no
+	 * heading, since an empty row of controls is worse than none.
+	 */
+	private void buildCourseChips() {
+
+		courseChips.removeAllViews();
+
+		// A selection made before this screen was opened — a report drilled into, or the filter
+		// this student was last looked at under — is a restriction in force, so the chips
+		// holding it start unrolled rather than folded away behind a heading.
+		courseChipsExpanded = courseChipsExpanded || !filter().courseIDs.isEmpty();
+
+		for (EntityCourse course : studentCourses) {
+
+			// A type narrows what the chips offer as well as what the breakdown counts. Two
+			// controls that disagree — a practicals-only breakdown beside a chip for a theory
+			// paper — would leave a chip that empties the list when tapped.
+			if (!matchesChosenType(course)) {
+				continue;
+			}
+
+			Chip chip = new Chip(requireContext());
+			chip.setText(course.courseCode);
+			chip.setCheckable(true);
+			chip.setId(View.generateViewId());
+			chip.setTag(course.courseID);
+			chip.setChecked(filter().courseIDs.contains(course.courseID));
+
+			chip.setOnCheckedChangeListener((button, isChecked) -> {
+
+				// The same listener fires when the controls are filled in from the filter,
+				// which would re-query the breakdown that is being displayed.
+				if (binding) {
+					return;
+				}
+
+				if (isChecked) {
+					filter().courseIDs.add(course.courseID);
+				} else {
+					filter().courseIDs.remove(course.courseID);
+				}
+
+				bindFilterControls();
+				refreshBreakdown();
+			});
+
+			courseChips.addView(chip);
+		}
+
+		bindCourseChipsSection();
+	}
+
+	/**
+	 * Folds the chips in or out, and says on the heading what is behind the fold.
+	 * <p>
+	 * The count matters more than the chevron: a filter that is hiding is worse than one taking
+	 * up room, so a folded selection is named on the line that folded it. Nothing selected says
+	 * so too, since "every course" is the thing the figures below are over.
+	 * <p>
+	 * A student with no attendance at all gets no heading and no chips, an empty row of
+	 * controls being worse than none.
+	 */
+	private void bindCourseChipsSection() {
+
+		// Counted from the chips on screen rather than from the student's courses, because a
+		// course type may have left none of them to show.
+		boolean any = courseChips.getChildCount() > 0;
+		courseChipsRow.setVisibility(any ? View.VISIBLE : View.GONE);
+		courseChips.setVisibility(any && courseChipsExpanded ? View.VISIBLE : View.GONE);
+
+		int selected = filter().courseIDs.size();
+		courseChipsCount.setText(selected == 0
+				? getString(R.string.label_every_course)
+				: getResources().getQuantityString(R.plurals.count_courses_selected,
+				selected, selected));
+
+		// Right for folded, down for unrolled: one drawable, turned, rather than two that
+		// could drift apart.
+		courseChipsChevron.setRotation(courseChipsExpanded ? 90f : 0f);
+		courseChipsChevron.setContentDescription(getString(courseChipsExpanded
+				? R.string.action_hide_courses : R.string.action_show_courses));
+	}
+
+	/** Whether a course survives the chosen course type. Every course does when none is set. */
+	private boolean matchesChosenType(@NonNull EntityCourse course) {
+		CourseType chosen = filter().courseType;
+		return chosen == null || course.courseType == chosen;
+	}
+
+	/**
+	 * Drops any chosen course that the course type has just excluded.
+	 * <p>
+	 * The alternative is a restriction in force with no control showing it: the breakdown would
+	 * be narrowed to a course whose chip is no longer on the screen, and nothing on the screen
+	 * would say which. Dropping it is the same rule the report applies to a division left over
+	 * from another stream — see {@code AcademicRules.reconcileDivision}.
+	 * <p>
+	 * Skipped while the courses are still being read, since nothing can be said about which
+	 * type a course is before its row has arrived.
+	 */
+	private void reconcileCourseSelection() {
+
+		if (studentCourses.isEmpty()) {
+			return;
+		}
+
+		Set<Long> kept = new LinkedHashSet<>();
+
+		for (EntityCourse course : studentCourses) {
+			if (matchesChosenType(course) && filter().courseIDs.contains(course.courseID)) {
+				kept.add(course.courseID);
+			}
+		}
+
+		filter().courseIDs.clear();
+		filter().courseIDs.addAll(kept);
 	}
 
 	/**
@@ -335,7 +547,14 @@ public class FragmentStudentDetail extends Fragment {
 			chip.setChecked(chip.getTag() == filter.window);
 		}
 
+		for (int i = 0; i < courseChips.getChildCount(); i++) {
+			Chip chip = (Chip) courseChips.getChildAt(i);
+			chip.setChecked(filter.courseIDs.contains((Long) chip.getTag()));
+		}
+
 		binding = false;
+
+		bindCourseChipsSection();
 
 		breakdownScope.setText(filter.describe());
 		clearFilter.setVisibility(filter.isUnrestricted() ? View.GONE : View.VISIBLE);
@@ -344,6 +563,12 @@ public class FragmentStudentDetail extends Fragment {
 		// breakdown has to announce itself: 40% of one month reads exactly like 40% of a career.
 		if (breakdownFiltersActive != null) {
 			breakdownFiltersActive.setVisibility(
+					filter.isUnrestricted() ? View.GONE : View.VISIBLE);
+		}
+
+		// And again beside the figure itself, which is the thing that gets quoted.
+		if (overallFiltered != null) {
+			overallFiltered.setVisibility(
 					filter.isUnrestricted() ? View.GONE : View.VISIBLE);
 		}
 	}

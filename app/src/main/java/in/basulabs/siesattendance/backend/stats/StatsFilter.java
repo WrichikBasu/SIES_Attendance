@@ -6,6 +6,8 @@ import androidx.annotation.Nullable;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 
@@ -59,8 +61,17 @@ public class StatsFilter {
 
 	// ── Subject filters ──────────────────────────────────────────────────
 
-	@Nullable
-	public Long courseID;
+	/**
+	 * The courses the report is restricted to. Empty means every course, so a filter nobody has
+	 * touched does not have to enumerate the syllabus to say so.
+	 * <p>
+	 * A set rather than a single ID because the question asked of this screen is usually about
+	 * a handful of courses at once — a student's majors, the practicals of one department, the
+	 * two papers a professor shares — and the headline figures are then the combined attendance
+	 * across exactly those, computed over the same rows the report lists.
+	 */
+	@NonNull
+	public final Set<Long> courseIDs = new LinkedHashSet<>();
 
 	/**
 	 * Restricts to the students who are in one batch, rather than to the lectures held for it.
@@ -239,7 +250,7 @@ public class StatsFilter {
 	 * those are always set, and counting them would leave the indicator permanently lit.
 	 */
 	public boolean hasActiveFilters() {
-		return from != null || to != null || courseID != null || batchID != null
+		return from != null || to != null || !courseIDs.isEmpty() || batchID != null
 				|| professorID != null || studentID != null || courseType != null
 				|| year != null || stream != null || department != null || division != null;
 	}
@@ -252,8 +263,9 @@ public class StatsFilter {
 	}
 
 	/**
-	 * A detached copy. Every field is either immutable or a primitive, so a shallow copy is a
-	 * genuine one; anything mutable added here would need copying properly.
+	 * A detached copy. Every field bar {@link #courseIDs} is immutable or a primitive, so a
+	 * shallow copy is a genuine one; the set is copied properly, since a query in flight must
+	 * not see a course added or removed while it runs.
 	 */
 	@NonNull
 	public StatsFilter copy() {
@@ -263,7 +275,7 @@ public class StatsFilter {
 		c.from = from;
 		c.to = to;
 		c.dateRange = dateRange;
-		c.courseID = courseID;
+		c.courseIDs.addAll(courseIDs);
 		c.batchID = batchID;
 		c.professorID = professorID;
 		c.studentID = studentID;
@@ -285,7 +297,7 @@ public class StatsFilter {
 		from = null;
 		to = null;
 		dateRange = DateRange.ALL_TIME;
-		courseID = null;
+		courseIDs.clear();
 		batchID = null;
 		professorID = null;
 		studentID = null;

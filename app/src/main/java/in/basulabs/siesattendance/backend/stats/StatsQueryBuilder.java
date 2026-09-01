@@ -149,9 +149,15 @@ public final class StatsQueryBuilder {
 			args.add(toEpoch);
 		}
 
-		if (filter.courseID != null) {
-			where.append(" AND c.courseID = ?");
-			args.add(filter.courseID);
+		// Several courses at once are the ordinary case here, so this is an IN rather than an
+		// equality. An empty set contributes no condition at all: SQLite would accept
+		// "IN ()" and quietly match nothing, which is the opposite of what an untouched
+		// filter means.
+		if (!filter.courseIDs.isEmpty()) {
+			where.append(" AND c.courseID IN (")
+					.append(placeholders(filter.courseIDs.size()))
+					.append(")");
+			args.addAll(filter.courseIDs);
 		}
 
 		// Matched on the students in the batch, not on the batch the lecture was held for.
@@ -211,6 +217,21 @@ public final class StatsQueryBuilder {
 		}
 
 		return where.toString();
+	}
+
+	/** A comma-separated run of {@code ?} placeholders, one per value being bound. */
+	@NonNull
+	private static String placeholders(int count) {
+
+		StringBuilder out = new StringBuilder();
+
+		for (int i = 0; i < count; i++) {
+			if (i > 0) {
+				out.append(", ");
+			}
+			out.append("?");
+		}
+		return out.toString();
 	}
 
 	/**

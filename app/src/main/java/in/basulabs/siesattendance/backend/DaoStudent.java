@@ -442,9 +442,12 @@ public abstract class DaoStudent {
 	 * {@code BreakdownFilter} for why the session is expressed as dates rather than as a
 	 * session column.
 	 *
-	 * @param fromEpoch  inclusive lower bound on the lecture's start, or null for none
-	 * @param toEpoch    inclusive upper bound on the lecture's start, or null for none
-	 * @param courseType restrict to courses of one type, or null for every type
+	 * @param fromEpoch   inclusive lower bound on the lecture's start, or null for none
+	 * @param toEpoch     inclusive upper bound on the lecture's start, or null for none
+	 * @param courseType  restrict to courses of one type, or null for every type
+	 * @param everyCourse true to ignore {@code courseIDs} entirely, which is what an empty
+	 *                    selection means
+	 * @param courseIDs   the courses to restrict to when {@code everyCourse} is false
 	 */
 	@Query("SELECT c.courseID, c.courseCode, c.courseTopic, " +
 			"COUNT(a.lectureID) AS totalLectures, " +
@@ -455,12 +458,34 @@ public abstract class DaoStudent {
 			"WHERE a.studentID = :studentID " +
 			LECTURE_IN_WINDOW +
 			"AND (:courseType IS NULL OR c.courseType = :courseType) " +
+			// The flag carries the "no selection" case rather than the list itself. An empty
+			// list expands to IN (), which SQLite accepts and matches nothing against, and
+			// nothing is the opposite of what choosing no courses means here.
+			"AND (:everyCourse OR c.courseID IN (:courseIDs)) " +
 			"GROUP BY c.courseID, c.courseCode, c.courseTopic " +
 			"ORDER BY c.courseCode ASC")
 	public abstract LiveData<List<StudentCourseStat>> getCourseBreakdown(long studentID,
 	                                                                     Long fromEpoch,
 	                                                                     Long toEpoch,
-	                                                                     CourseType courseType);
+	                                                                     CourseType courseType,
+	                                                                     boolean everyCourse,
+	                                                                     List<Long> courseIDs);
+
+	/**
+	 * Every course this student has been marked in, for the chips that pick which of them the
+	 * breakdown covers.
+	 * <p>
+	 * Deliberately unfiltered. The chips are the control, so narrowing them by the window they
+	 * set would take a course off the row the moment it was selected out, leaving no way back;
+	 * a course with nothing in the current window simply produces an empty breakdown, which
+	 * reads as the answer it is.
+	 */
+	@Query("SELECT DISTINCT c.* FROM courses c " +
+			"INNER JOIN lectures l ON l.courseID = c.courseID " +
+			"INNER JOIN attendance a ON a.lectureID = l.lectureID " +
+			"WHERE a.studentID = :studentID " +
+			"ORDER BY c.courseCode ASC")
+	public abstract List<EntityCourse> getAttendedCoursesSync(long studentID);
 
 	/**
 	 * The lectures behind one row of {@link #getCourseBreakdown}: every lecture of one course

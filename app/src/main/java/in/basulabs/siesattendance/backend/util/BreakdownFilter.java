@@ -6,6 +6,8 @@ import androidx.annotation.Nullable;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
@@ -79,6 +81,20 @@ public class BreakdownFilter {
 	 */
 	@Nullable
 	public CourseType courseType;
+
+	/**
+	 * The courses the breakdown is restricted to, empty for every course.
+	 * <p>
+	 * A set, because the question is rarely about one course on its own: a student asking
+	 * whether they are short is asking about the courses that decide it, which is some of what
+	 * they take rather than all or one. The overall figure above the list is summed from the
+	 * rows that survive this, so choosing three courses gives their combined attendance rather
+	 * than three separate fractions to average by hand — and averaging them by hand would give
+	 * the wrong answer anyway, since the courses have different numbers of lectures behind
+	 * them.
+	 */
+	@NonNull
+	public final Set<Long> courseIDs = new LinkedHashSet<>();
 
 	private static final DateTimeFormatter LABEL = DateTimeFormatter.ofPattern("d MMM yyyy");
 
@@ -155,7 +171,7 @@ public class BreakdownFilter {
 	}
 
 	public boolean isUnrestricted() {
-		return !hasDateWindow() && courseType == null;
+		return !hasDateWindow() && courseType == null && courseIDs.isEmpty();
 	}
 
 	/**
@@ -194,6 +210,14 @@ public class BreakdownFilter {
 			out.append(" · ").append(courseType);
 		}
 
+		// Counted rather than listed: the codes are already on the chips and on the rows
+		// below, and a scope line that grew with the selection would push the figures it
+		// describes off the screen.
+		if (!courseIDs.isEmpty()) {
+			out.append(" · ").append(courseIDs.size())
+					.append(courseIDs.size() == 1 ? " course" : " courses");
+		}
+
 		return out.toString();
 	}
 
@@ -203,5 +227,6 @@ public class BreakdownFilter {
 		to = null;
 		window = Window.ALL_TIME;
 		courseType = null;
+		courseIDs.clear();
 	}
 }

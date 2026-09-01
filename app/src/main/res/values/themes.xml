@@ -92,4 +92,17 @@
         <item name="android:visibility">gone</item>
     </style>
 
+    <!--
+      The same warning where there is no room for the sentence: against a headline figure,
+      rather than on a line of its own. Same colour and weight, so it reads as the same thing
+      said twice on one screen and not as a second, different alarm.
+    -->
+    <style name="Widget.App.FiltersActiveBadge" parent="">
+        <item name="android:textAppearance">?attr/textAppearanceLabelSmall</item>
+        <item name="android:textColor">?attr/colorError</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:text">@string/label_filtered_badge</item>
+        <item name="android:visibility">gone</item>
+    </style>
+
 </resources>

@@ -12,6 +12,7 @@ import org.junit.Test;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.Collections;
 
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
@@ -205,7 +206,7 @@ public class StatsAndExportFilterTest {
 
 		assertFalse(filter.hasActiveFilters());
 
-		filter.courseID = 3L;
+		filter.courseIDs.add(3L);
 		assertTrue(filter.hasActiveFilters());
 	}
 
@@ -221,7 +222,7 @@ public class StatsAndExportFilterTest {
 
 		each[0].from = LocalDate.now();
 		each[1].to = LocalDate.now();
-		each[2].courseID = 1L;
+		each[2].courseIDs.add(1L);
 		each[3].batchID = 1L;
 		each[4].professorID = 1L;
 		each[5].studentID = 1L;
@@ -243,7 +244,7 @@ public class StatsAndExportFilterTest {
 		filter.groupBy = StatsGroupBy.MONTH;
 		filter.sortOrder = StatsFilter.SortOrder.TOTAL_DESC;
 		filter.threshold = 60d;
-		filter.courseID = 1L;
+		filter.courseIDs.add(1L);
 		filter.batchID = 2L;
 		filter.professorID = 3L;
 		filter.studentID = 4L;
@@ -268,24 +269,50 @@ public class StatsAndExportFilterTest {
 	public void copyIsADetachedSnapshot() {
 		// A query in flight must not see an edit made while it runs.
 		StatsFilter filter = new StatsFilter(2025);
-		filter.courseID = 1L;
+		filter.courseIDs.add(1L);
 		filter.year = Year.SY;
 		filter.threshold = 60d;
 		filter.from = LocalDate.of(2025, 9, 1);
 
 		StatsFilter snapshot = filter.copy();
 
-		filter.courseID = 99L;
+		filter.courseIDs.add(99L);
 		filter.year = Year.TY;
 		filter.threshold = 40d;
 		filter.from = LocalDate.of(2024, 1, 1);
 		filter.groupBy = StatsGroupBy.WEEKDAY;
 
-		assertEquals(Long.valueOf(1L), snapshot.courseID);
+		assertEquals(Collections.singleton(1L), snapshot.courseIDs);
 		assertEquals(Year.SY, snapshot.year);
 		assertEquals(60d, snapshot.threshold, 0d);
 		assertEquals(LocalDate.of(2025, 9, 1), snapshot.from);
 		assertEquals(StatsGroupBy.STUDENT, snapshot.groupBy);
+	}
+
+	@Test
+	public void theCourseSetIsCopiedRatherThanShared() {
+		// A shallow copy would leave a query in flight reading the set the screen is still
+		// editing, which is the one case copy() exists to prevent.
+		StatsFilter filter = new StatsFilter(2025);
+		filter.courseIDs.add(1L);
+
+		StatsFilter snapshot = filter.copy();
+		filter.courseIDs.add(2L);
+		filter.courseIDs.remove(1L);
+
+		assertEquals(Collections.singleton(1L), snapshot.courseIDs);
+	}
+
+	@Test
+	public void clearingTheFiltersDropsEveryChosenCourse() {
+		StatsFilter filter = new StatsFilter(2025);
+		filter.courseIDs.add(1L);
+		filter.courseIDs.add(2L);
+
+		filter.clearFilters();
+
+		assertTrue(filter.courseIDs.isEmpty());
+		assertFalse(filter.hasActiveFilters());
 	}
 
 	@Test
@@ -296,7 +323,7 @@ public class StatsAndExportFilterTest {
 		filter.from = LocalDate.of(2025, 9, 1);
 		filter.to = LocalDate.of(2025, 9, 30);
 		filter.dateRange = StatsFilter.DateRange.CUSTOM;
-		filter.courseID = 1L;
+		filter.courseIDs.add(1L);
 		filter.batchID = 2L;
 		filter.professorID = 3L;
 		filter.studentID = 4L;
@@ -316,7 +343,7 @@ public class StatsAndExportFilterTest {
 		assertEquals(filter.from, copy.from);
 		assertEquals(filter.to, copy.to);
 		assertEquals(filter.dateRange, copy.dateRange);
-		assertEquals(filter.courseID, copy.courseID);
+		assertEquals(filter.courseIDs, copy.courseIDs);
 		assertEquals(filter.batchID, copy.batchID);
 		assertEquals(filter.professorID, copy.professorID);
 		assertEquals(filter.studentID, copy.studentID);

@@ -1320,7 +1320,19 @@ public class AttendanceViewModel extends AndroidViewModel {
 			long studentID, @NonNull BreakdownFilter filter) {
 
 		return db.daoStudent().getCourseBreakdown(studentID, filter.fromEpoch(),
-				filter.toEpoch(), filter.courseType);
+				filter.toEpoch(), filter.courseType, filter.courseIDs.isEmpty(),
+				new ArrayList<>(filter.courseIDs));
+	}
+
+	/**
+	 * The courses this student has ever been marked in, for the chips that choose which of them
+	 * the breakdown covers. Read once when the screen opens rather than derived from the
+	 * breakdown itself, which is filtered by the very selection these chips make.
+	 */
+	public void loadStudentCourses(long studentID,
+	                               @NonNull java.util.function.Consumer<List<EntityCourse>> cb) {
+		MainDatabase.DB_EXECUTOR.execute(() ->
+				cb.accept(db.daoStudent().getAttendedCoursesSync(studentID)));
 	}
 
 	/**

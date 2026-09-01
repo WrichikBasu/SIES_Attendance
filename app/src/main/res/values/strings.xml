@@ -249,6 +249,20 @@
     <string name="action_hide_filters">Hide filters</string>
     <string name="action_clear_filters">Clear</string>
     <string name="stats_no_filters">All attendance this academic year</string>
+
+    <!-- Choosing several courses at once, on the report and on a student's breakdown -->
+    <string name="action_choose_courses">Choose</string>
+    <string name="dialog_choose_courses_title">Courses to report on</string>
+    <string name="action_done">Done</string>
+    <string name="label_every_course">Every course</string>
+    <string name="label_courses_to_combine">Courses shown together</string>
+    <string name="action_show_courses">Show courses</string>
+    <string name="action_hide_courses">Hide courses</string>
+
+    <plurals name="count_courses_selected">
+        <item quantity="one">%d course</item>
+        <item quantity="other">%d courses</item>
+    </plurals>
     <string name="stat_present_of">%1$d of %2$d present</string>
     <string name="empty_stats">No attendance matches these filters.</string>
 
@@ -297,6 +311,7 @@
     <string name="action_filter">Filter</string>
     <string name="action_period">Period</string>
     <string name="label_filters_active">Filters active — some records are hidden</string>
+    <string name="label_filtered_badge">· Filtered</string>
     <string name="empty_lectures_in_period">No lectures in this period.</string>
 
     <plurals name="warn_orphan_lectures">

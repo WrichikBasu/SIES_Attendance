@@ -334,20 +334,55 @@
 
             </LinearLayout>
 
-            <com.google.android.material.textfield.TextInputLayout
-                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+            <!--
+              Courses, as a set rather than one at a time. The picker is a dialog because the
+              list is every course in the college and would not fit here, while the selection
+              itself is small and belongs on the screen: the chips below are what the report is
+              covering, and each can be taken off without reopening anything.
+            -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:hint="@string/hint_course">
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-                <AutoCompleteTextView
-                    android:id="@+id/actvCourse"
-                    android:layout_width="match_parent"
+                <TextView
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:inputType="none" />
+                    android:layout_weight="1"
+                    android:text="@string/label_courses"
+                    android:textAppearance="?attr/textAppearanceLabelMedium"
+                    android:textColor="?attr/colorOnSurfaceVariant" />
 
-            </com.google.android.material.textfield.TextInputLayout>
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnSelectCourses"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/action_choose_courses"
+                    android:textAppearance="?attr/textAppearanceLabelSmall"
+                    app:icon="@drawable/ic_add"
+                    app:iconGravity="textStart" />
+
+            </LinearLayout>
+
+            <!-- Shown in place of the chips while nothing is selected, which means every course. -->
+            <TextView
+                android:id="@+id/tvNoCourses"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/label_every_course"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="?attr/colorOnSurfaceVariant" />
+
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/cgCourses"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:visibility="gone"
+                app:chipSpacingVertical="0dp"
+                tools:visibility="visible" />
 
             <LinearLayout
                 android:layout_width="match_parent"
