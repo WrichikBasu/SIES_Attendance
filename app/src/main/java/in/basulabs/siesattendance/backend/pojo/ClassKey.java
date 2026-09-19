@@ -71,10 +71,21 @@ public class ClassKey {
 	@NonNull
 	public static String label(@NonNull Year year, @NonNull Stream stream,
 	                           @NonNull Department majorDept, @Nullable Division division) {
-		return year + " "
-				+ (stream.isUnaided() ? stream.toString().replace(" (unaided)", "") : stream)
-				+ " " + majorDept
+		return year + " " + streamLabel(stream) + " " + majorDept
 				+ (division == null ? "" : " " + division.longLabel());
+	}
+
+	/**
+	 * A stream as it is written inside a class label: the unaided qualifier dropped, for the
+	 * reason given on {@link #label(Year, Stream, Department, Division)}.
+	 * <p>
+	 * Separate so the statistics report can build the same label in SQL from the same rule;
+	 * see {@code StatsGroupBy.CLASS}. A class grouped in the report then reads exactly as the
+	 * same class does on a student's record.
+	 */
+	@NonNull
+	public static String streamLabel(@NonNull Stream stream) {
+		return stream.isUnaided() ? stream.toString().replace(" (unaided)", "") : stream.toString();
 	}
 
 	@NonNull

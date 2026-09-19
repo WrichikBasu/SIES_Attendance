@@ -455,38 +455,96 @@ def test_export_narrows_to_one_division():
     conn.close()
 
 
-def test_stats_class_grouping_splits_by_division():
+def test_stats_class_grouping_splits_by_division() -> None:
     """
     A division is a class, so the class breakdown has to keep two of them apart, and a class
     with no division has to read exactly as it did before the column existed.
+
+    The labels are the display form ClassKey.label builds — "SY BSc CS", not the stored
+    "SY BSc_unaided COMPUTER_SCIENCE" — so a class in the report reads as it does on a
+    student's record.
     """
     conn = fixture_with_two_divisions()
 
     rows = {r["primaryLabel"]: r for r in run(conn, "stats_grouped_CLASS")}
 
-    check("stats: an undivided class reads exactly as it did before",
-          "SY BSc_unaided COMPUTER_SCIENCE" in rows, f"{sorted(rows)}")
+    check("stats: an undivided class reads as ClassKey.label writes it",
+          "SY BSc CS" in rows, f"{sorted(rows)}")
     check("stats: two divisions of one class are two rows",
-          "SY BSc PHYSICS Div B" in rows and "SY BSc PHYSICS Div C" in rows,
+          "SY BSc Physics Div B" in rows and "SY BSc Physics Div C" in rows,
           f"{sorted(rows)}")
     check("stats: concatenating a null division must not null the whole label",
           all(label is not None for label in rows), f"{sorted(rows, key=str)}")
 
     check("stats: each division carries only its own student",
-          rows["SY BSc PHYSICS Div B"]["students"] == 1
-          and rows["SY BSc PHYSICS Div C"]["students"] == 1)
+          rows["SY BSc Physics Div B"]["students"] == 1
+          and rows["SY BSc Physics Div C"]["students"] == 1)
     check("stats: the divisions are not merged into one figure",
-          rows["SY BSc PHYSICS Div B"]["attended"] == 1
-          and rows["SY BSc PHYSICS Div C"]["attended"] == 0,
-          f"{rows['SY BSc PHYSICS Div B']} {rows['SY BSc PHYSICS Div C']}")
+          rows["SY BSc Physics Div B"]["attended"] == 1
+          and rows["SY BSc Physics Div C"]["attended"] == 0,
+          f"{rows['SY BSc Physics Div B']} {rows['SY BSc Physics Div C']}")
 
     # The whole CS class still lands in a single row, so nulls group together rather than
     # falling out of the report.
     check("stats: null divisions group together rather than one row each",
-          rows["SY BSc_unaided COMPUTER_SCIENCE"]["students"] == 3,
-          f"{rows['SY BSc_unaided COMPUTER_SCIENCE']}")
+          rows["SY BSc CS"]["students"] == 3,
+          f"{rows['SY BSc CS']}")
 
     conn.close()
+
+
+def looks_like_a_stored_name(label: str) -> bool:
+    """
+    True for text shaped like an enum constant's name() rather than its label: an underscore
+    (COMPUTER_SCIENCE, MAJOR_PRACTICALS, BSc_unaided), or a word of capital letters alone
+    (PHYSICS, MAJOR) that is not one of the labels that genuinely are abbreviations.
+
+    Words with digits in them are left alone: course codes, roll numbers and week labels are
+    uppercase by nature and are not enum values.
+    """
+    abbreviations: set[str] = {"CS", "DS", "IT", "EVS", "FTN", "OE", "DSE", "VSC", "SEC",
+                               "AEC", "IKS", "FY", "SY", "TY", "BA", "MA"}
+    if "_" in label:
+        return True
+    return any(word.isalpha() and word.isupper() and len(word) > 1
+               and word not in abbreviations
+               for word in label.split())
+
+
+def test_stats_enum_groupings_show_labels_not_stored_names(conn: sqlite3.Connection) -> None:
+    """
+    Enums are stored by name(), which is an identifier. Every grouping that labels a row from
+    an enum column has to show the label the rest of the app uses, not the stored form.
+    """
+    departments = {r["primaryLabel"] for r in run(conn, "stats_grouped_DEPARTMENT")}
+    check("stats: a department row is labelled as the department is shown",
+          departments == {"CS"}, f"{sorted(departments)}")
+
+    types = {r["primaryLabel"] for r in run(conn, "stats_grouped_COURSE_TYPE")}
+    check("stats: a course type row is labelled as the type is shown",
+          types == {"Major", "Major practicals"}, f"{sorted(types)}")
+
+    professors = {r["primaryLabel"]: r["secondaryLabel"]
+                  for r in run(conn, "stats_grouped_PROFESSOR")}
+    check("stats: a professor's department is shown by its label",
+          professors == {"DR SHARMA": "CS"}, f"{professors}")
+
+    # Belt and braces across every grouping, so a grouping added later that selects an enum
+    # column bare is caught here too.
+    for name in sorted(os.listdir(SQLDIR)):
+        if not name.startswith("stats_grouped_"):
+            continue
+        grouping = name[len("stats_grouped_"):-len(".sql")]
+        # The student and professor groupings carry people's names, stored in whatever case
+        # the office typed them and corrected on display; not an enum at all.
+        name_field = {"STUDENT": "secondaryLabel", "PROFESSOR": "primaryLabel"}.get(grouping)
+        for row in run(conn, name[:-len(".sql")]):
+            for field in ("primaryLabel", "secondaryLabel"):
+                label = row[field]
+                if field == name_field or not isinstance(label, str):
+                    continue
+                check(f"stats: {grouping} {field} is a label, not a stored name",
+                      not looks_like_a_stored_name(label), label)
 
 
 def fixture_with_nested_batches():
@@ -1100,6 +1158,7 @@ def main():
     test_stats_grouped_by_student(conn)
     test_export_narrows_to_one_division()
     test_stats_class_grouping_splits_by_division()
+    test_stats_enum_groupings_show_labels_not_stored_names(conn)
     test_stats_batch_filter_reaches_subset_batches()
     test_stats_batch_and_course_together_narrow_to_one_roll()
     test_stats_lecture_counts_are_distinct(conn)

@@ -2,6 +2,13 @@ package in.basulabs.siesattendance.backend.stats;
 
 import androidx.annotation.NonNull;
 
+import in.basulabs.siesattendance.backend.CourseType;
+import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Division;
+import in.basulabs.siesattendance.backend.Stream;
+import in.basulabs.siesattendance.backend.Year;
+import in.basulabs.siesattendance.backend.pojo.ClassKey;
+
 /**
  * The dimension a statistics query is grouped by.
  * <p>
@@ -18,6 +25,12 @@ import androidx.annotation.NonNull;
  * <p>
  * A grouping with no natural key uses {@code "0"} as its id expression. Those rows cannot be
  * drilled into, which {@link #isDrillable()} reports.
+ * <p>
+ * An enum column is never selected bare into a label. It is stored by {@code name()}, which is
+ * an identifier, so every one goes through {@link SqlBits#labelOf} and comes out as the text the
+ * rest of the app shows for it. It is still grouped by the stored column: the label is derived
+ * from it one-to-one, and grouping on the raw value keeps two constants that happen to share a
+ * label from being merged into one row.
  */
 public enum StatsGroupBy {
 
@@ -82,8 +95,9 @@ public enum StatsGroupBy {
 			"c.semester"),
 
 	/**
-	 * One row per class, e.g. SY BSc COMPUTER_SCIENCE, or SY BSc PHYSICS Div B where the class
-	 * is split into divisions.
+	 * One row per class, e.g. SY BSc CS, or SY BSc Physics Div B where the class is split into
+	 * divisions. Reads exactly as the class does everywhere else in the app, because it is built
+	 * from the same rule, {@link ClassKey#label}, including dropping the unaided qualifier.
 	 * <p>
 	 * The division is part of the grouping because it is part of the class: two divisions of
 	 * the same year and stream are taught apart, and merging them hides exactly the comparison
@@ -94,15 +108,19 @@ public enum StatsGroupBy {
 	 */
 	CLASS("Class",
 			"0",
-			"y.year || ' ' || y.stream || ' ' || y.majorDept"
-					+ " || COALESCE(' Div ' || y.division, '')",
+			SqlBits.labelOf("y.year", Year.class)
+					+ " || ' ' || " + SqlBits.labelOf("y.stream", Stream.class,
+					ClassKey::streamLabel)
+					+ " || ' ' || " + SqlBits.labelOf("y.majorDept", Department.class)
+					+ " || COALESCE(' ' || " + SqlBits.labelOf("y.division", Division.class,
+					Division::longLabel) + ", '')",
 			"''",
 			"y.year, y.stream, y.majorDept, y.division"),
 
 	/** One row per department offering the course. */
 	DEPARTMENT("Department",
 			"0",
-			"c.offeringDepartment",
+			SqlBits.labelOf("c.offeringDepartment", Department.class),
 			"''",
 			"c.offeringDepartment"),
 
@@ -125,7 +143,7 @@ public enum StatsGroupBy {
 	/** One row per course type: major, minor, practicals, OE, AEC, IKS. */
 	COURSE_TYPE("Course type",
 			"0",
-			"c.courseType",
+			SqlBits.labelOf("c.courseType", CourseType.class),
 			"''",
 			"c.courseType"),
 
@@ -133,7 +151,7 @@ public enum StatsGroupBy {
 	PROFESSOR("Professor",
 			"p.profID",
 			"p.name",
-			"p.department",
+			SqlBits.labelOf("p.department", Department.class),
 			"p.profID, p.name, p.department",
 			NameField.PRIMARY),
 

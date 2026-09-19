@@ -506,6 +506,58 @@ public class SqlBuilderTest {
 	}
 
 	@Test
+	public void everyConstantOfAnEnumGetsItsLabelAndAnUnknownValueFallsThrough() {
+
+		String sql = SqlBits.labelOf("c.courseType", CourseType.class);
+
+		for (CourseType type : CourseType.values()) {
+			assertTrue(type.name(), sql.contains(
+					"WHEN '" + type.name() + "' THEN '" + type + "'"));
+		}
+
+		// A value stored by some older build and since dropped from the enum shows as itself,
+		// visibly wrong, rather than as a blank row.
+		assertTrue(sql.endsWith("ELSE c.courseType END)"));
+	}
+
+	@Test
+	public void aQuoteInALabelCannotBreakTheStatement() {
+		// Labels are compile-time constants, never user input, but one reworded to contain
+		// an apostrophe would otherwise end the literal early.
+		String sql = SqlBits.labelOf("y.division", Division.class, d -> "Div " + d + "'s");
+
+		assertTrue(sql, sql.contains("THEN 'Div A''s'"));
+	}
+
+	@Test
+	public void theEnumGroupingsLabelTheirRowsRatherThanShowTheStoredName() {
+
+		assertTrue(StatsGroupBy.DEPARTMENT.primaryExpr.contains(
+				"WHEN 'COMPUTER_SCIENCE' THEN 'CS'"));
+		assertTrue(StatsGroupBy.COURSE_TYPE.primaryExpr.contains(
+				"WHEN 'MAJOR_PRACTICALS' THEN 'Major practicals'"));
+		assertTrue(StatsGroupBy.PROFESSOR.secondaryExpr.contains(
+				"WHEN 'POLITICAL_SCIENCE' THEN 'Pol. Sc.'"));
+
+		// The class label is built by the same rule as ClassKey.label, which drops the
+		// unaided qualifier and writes the division out as "Div B".
+		String klass = StatsGroupBy.CLASS.primaryExpr;
+		assertTrue(klass.contains("WHEN 'BSc_unaided' THEN 'BSc'"));
+		assertTrue(klass.contains("WHEN 'Masters_P1' THEN 'Masters Part 1'"));
+		assertTrue(klass.contains("WHEN 'B' THEN 'Div B'"));
+	}
+
+	@Test
+	public void theEnumGroupingsStillGroupByTheStoredColumn() {
+		// Grouping on the label would merge two constants that happened to share one; the
+		// stored value is the identity, the label only how it is shown.
+		assertEquals("c.offeringDepartment", StatsGroupBy.DEPARTMENT.groupByExpr);
+		assertEquals("c.courseType", StatsGroupBy.COURSE_TYPE.groupByExpr);
+		assertEquals("y.year, y.stream, y.majorDept, y.division",
+				StatsGroupBy.CLASS.groupByExpr);
+	}
+
+	@Test
 	public void nonAggregateExpressionsAppearInTheGroupByClause() {
 		// SQLite will happily pick an arbitrary row's value for a bare column that is not
 		// grouped, which is how a report starts showing the wrong label against the right
