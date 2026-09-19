@@ -6,7 +6,9 @@ import androidx.annotation.Nullable;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 import in.basulabs.siesattendance.backend.CourseType;
@@ -76,11 +78,17 @@ public class BreakdownFilter {
 	public Window window = Window.ALL_TIME;
 
 	/**
-	 * Restricts the breakdown to courses of one type, so the practicals can be looked at apart
-	 * from the lectures. Null means every type.
+	 * The course types the breakdown is restricted to, empty for every type.
+	 * <p>
+	 * A set rather than a single value because the question is usually about a group of types
+	 * read together — "how are the practicals doing" spans every laboratory type the student
+	 * takes, not one of them — and the overall figure above the list is then their combined
+	 * attendance rather than one fraction per type to average by hand. Averaging them by hand
+	 * would give the wrong answer anyway, since the types carry different numbers of lectures
+	 * behind them.
 	 */
-	@Nullable
-	public CourseType courseType;
+	@NonNull
+	public final Set<CourseType> courseTypes = new LinkedHashSet<>();
 
 	/**
 	 * The courses the breakdown is restricted to, empty for every course.
@@ -97,6 +105,15 @@ public class BreakdownFilter {
 	public final Set<Long> courseIDs = new LinkedHashSet<>();
 
 	private static final DateTimeFormatter LABEL = DateTimeFormatter.ofPattern("d MMM yyyy");
+
+	/**
+	 * What a complete side of the syllabus is called on the scope line. Kept here beside the
+	 * text it is joined with, as the rest of {@link #describe()} is; the chips that select them
+	 * in one tap take their own labels from the string resources, where display text belongs.
+	 */
+	private static final String PRACTICALS = "Practicals";
+
+	private static final String THEORY = "Theory";
 
 	/**
 	 * Recomputes {@link #from} and {@link #to} for a preset.
@@ -171,7 +188,7 @@ public class BreakdownFilter {
 	}
 
 	public boolean isUnrestricted() {
-		return !hasDateWindow() && courseType == null && courseIDs.isEmpty();
+		return !hasDateWindow() && courseTypes.isEmpty() && courseIDs.isEmpty();
 	}
 
 	/**
@@ -206,8 +223,8 @@ public class BreakdownFilter {
 			out.append("All time");
 		}
 
-		if (courseType != null) {
-			out.append(" · ").append(courseType);
+		if (!courseTypes.isEmpty()) {
+			out.append(" · ").append(describeCourseTypes());
 		}
 
 		// Counted rather than listed: the codes are already on the chips and on the rows
@@ -221,12 +238,47 @@ public class BreakdownFilter {
 		return out.toString();
 	}
 
+	/**
+	 * The course types for the scope line.
+	 * <p>
+	 * A complete side of the syllabus collapses to the one word that stands for it, since
+	 * spelling out every laboratory type to say "practicals" is what selecting them in one tap
+	 * exists to avoid. Past two entries the rest are counted rather than named, the same way the
+	 * courses are: the chips are already showing which they are, and a scope line that grew with
+	 * the selection would push the figures it describes off the screen.
+	 */
+	@NonNull
+	private String describeCourseTypes() {
+
+		Set<CourseType> remaining = new LinkedHashSet<>(courseTypes);
+		List<String> named = new ArrayList<>();
+
+		if (remaining.containsAll(CourseType.theory())) {
+			named.add(THEORY);
+			remaining.removeAll(CourseType.theory());
+		}
+
+		if (remaining.containsAll(CourseType.practicals())) {
+			named.add(PRACTICALS);
+			remaining.removeAll(CourseType.practicals());
+		}
+
+		for (CourseType type : remaining) {
+			named.add(type.toString());
+		}
+
+		if (named.size() <= 2) {
+			return String.join(", ", named);
+		}
+		return courseTypes.size() + " course types";
+	}
+
 	/** Puts everything back to the whole record. */
 	public void clear() {
 		from = null;
 		to = null;
 		window = Window.ALL_TIME;
-		courseType = null;
+		courseTypes.clear();
 		courseIDs.clear();
 	}
 }

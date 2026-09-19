@@ -444,7 +444,9 @@ public abstract class DaoStudent {
 	 *
 	 * @param fromEpoch   inclusive lower bound on the lecture's start, or null for none
 	 * @param toEpoch     inclusive upper bound on the lecture's start, or null for none
-	 * @param courseType  restrict to courses of one type, or null for every type
+	 * @param everyType   true to ignore {@code courseTypes} entirely, which is what an empty
+	 *                    selection means
+	 * @param courseTypes the types to restrict to when {@code everyType} is false
 	 * @param everyCourse true to ignore {@code courseIDs} entirely, which is what an empty
 	 *                    selection means
 	 * @param courseIDs   the courses to restrict to when {@code everyCourse} is false
@@ -457,7 +459,10 @@ public abstract class DaoStudent {
 			"INNER JOIN courses c ON c.courseID = l.courseID " +
 			"WHERE a.studentID = :studentID " +
 			LECTURE_IN_WINDOW +
-			"AND (:courseType IS NULL OR c.courseType = :courseType) " +
+			// Several types at once: "how are the practicals doing" is one breakdown across
+			// every laboratory type, not one per type. Guarded by its own flag for the same
+			// reason the courses below are.
+			"AND (:everyType OR c.courseType IN (:courseTypes)) " +
 			// The flag carries the "no selection" case rather than the list itself. An empty
 			// list expands to IN (), which SQLite accepts and matches nothing against, and
 			// nothing is the opposite of what choosing no courses means here.
@@ -467,7 +472,8 @@ public abstract class DaoStudent {
 	public abstract LiveData<List<StudentCourseStat>> getCourseBreakdown(long studentID,
 	                                                                     Long fromEpoch,
 	                                                                     Long toEpoch,
-	                                                                     CourseType courseType,
+	                                                                     boolean everyType,
+	                                                                     List<CourseType> courseTypes,
 	                                                                     boolean everyCourse,
 	                                                                     List<Long> courseIDs);
 

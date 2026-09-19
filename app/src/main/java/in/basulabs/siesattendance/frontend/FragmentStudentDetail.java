@@ -13,6 +13,7 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 import androidx.core.view.MenuProvider;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Lifecycle;
@@ -27,10 +28,11 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 import in.basulabs.siesattendance.R;
@@ -51,7 +53,6 @@ import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.backend.util.BreakdownFilter;
 import in.basulabs.siesattendance.frontend.adapter.AdapterStudentCourseStat;
-import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -103,6 +104,21 @@ public class FragmentStudentDetail extends Fragment {
 	private TextInputEditText fromField, toField;
 
 	private ChipGroup windowChips;
+
+	/** The chips choosing which course types the breakdown covers. */
+	private ChipGroup typeChipGroup;
+
+	/**
+	 * One chip per {@link CourseType}, in {@code values()} order, so a chip can be found from
+	 * its constant and back without hanging tags off the views.
+	 */
+	private final List<Chip> typeChips = new ArrayList<>();
+
+	/**
+	 * The shortcut chips, each against the types it stands for. Ordered, so they stay in the
+	 * order they were added to the group.
+	 */
+	private final Map<Chip, List<CourseType>> shortcuts = new LinkedHashMap<>();
 
 	/**
 	 * One checkable chip per course this student has been marked in. Ticking several shows
@@ -243,6 +259,7 @@ public class FragmentStudentDetail extends Fragment {
 		courseChipsRow = view.findViewById(R.id.rowBreakdownCourses);
 		courseChipsCount = view.findViewById(R.id.tvBreakdownCoursesCount);
 		courseChipsChevron = view.findViewById(R.id.ivBreakdownCoursesChevron);
+		typeChipGroup = view.findViewById(R.id.cgBreakdownCourseType);
 
 		courseChipsRow.setOnClickListener(v -> {
 			courseChipsExpanded = !courseChipsExpanded;
@@ -256,8 +273,8 @@ public class FragmentStudentDetail extends Fragment {
 
 		clearFilter.setOnClickListener(v -> {
 			filter().clear();
-			// Clearing puts the course type back to every type, so the chips it had hidden
-			// come back with it.
+			// Clearing puts the course types back to every type, so the courses they had
+			// hidden come back with them.
 			buildCourseChips();
 			bindFilterControls();
 			refreshBreakdown();
@@ -298,22 +315,112 @@ public class FragmentStudentDetail extends Fragment {
 		bindClearIcon(view.findViewById(R.id.tilBreakdownFrom), true);
 		bindClearIcon(view.findViewById(R.id.tilBreakdownTo), false);
 
-		DropdownBinder.bind(view.findViewById(R.id.actvBreakdownCourseType),
-				Arrays.asList(CourseType.values()), getString(R.string.filter_any),
-				filter().courseType, value -> {
-					filter().courseType = value;
-
-					// The chips are the courses of the chosen type, so choosing one rebuilds
-					// them and drops whatever no longer belongs; see reconcileCourseSelection.
-					reconcileCourseSelection();
-					buildCourseChips();
-
-					bindFilterControls();
-					refreshBreakdown();
-				});
+		buildCourseTypeChips();
 
 		loadCourseChips();
 		bindFilterControls();
+	}
+
+	/**
+	 * One checkable chip per {@link CourseType}, preceded by the two shortcuts that tick a whole
+	 * side of the syllabus at once.
+	 * <p>
+	 * The same control as the report's, and for the same reason: "how are the practicals doing"
+	 * spans every laboratory type the student takes, which a single-select dropdown cannot ask.
+	 * <p>
+	 * A shortcut is not a type of its own and nothing is stored for it: it adds its constants to
+	 * the same selection the individual chips edit, and shows itself ticked exactly when all of
+	 * them are in it, so the two cannot disagree about what the breakdown covers. Which
+	 * constants each stands for is {@link CourseType#practicals()}'s and
+	 * {@link CourseType#theory()}'s business, so a subject split into a lecture and a lab later
+	 * is covered here without a change.
+	 */
+	private void buildCourseTypeChips() {
+
+		typeChips.clear();
+		shortcuts.clear();
+		typeChipGroup.removeAllViews();
+
+		addShortcutChip(R.string.filter_all_theory, CourseType.theory());
+		addShortcutChip(R.string.filter_all_practicals, CourseType.practicals());
+
+		for (CourseType type : CourseType.values()) {
+			Chip chip = new Chip(requireContext());
+			chip.setText(type.toString());
+			chip.setCheckable(true);
+			chip.setId(View.generateViewId());
+			chip.setOnClickListener(v -> {
+				if (chip.isChecked()) {
+					filter().courseTypes.add(type);
+				} else {
+					filter().courseTypes.remove(type);
+				}
+				onCourseTypesChanged();
+			});
+
+			typeChips.add(chip);
+			typeChipGroup.addView(chip);
+		}
+
+		syncCourseTypeChips();
+	}
+
+	/** One shortcut chip, which adds or removes the whole group of types it stands for. */
+	private void addShortcutChip(@StringRes int label, @NonNull List<CourseType> members) {
+
+		Chip chip = new Chip(requireContext());
+		chip.setText(label);
+		chip.setCheckable(true);
+		chip.setId(View.generateViewId());
+		chip.setOnClickListener(v -> {
+			if (chip.isChecked()) {
+				filter().courseTypes.addAll(members);
+			} else {
+				filter().courseTypes.removeAll(members);
+			}
+			onCourseTypesChanged();
+		});
+
+		shortcuts.put(chip, members);
+		typeChipGroup.addView(chip);
+	}
+
+	/**
+	 * What every course type chip does after editing the selection.
+	 * <p>
+	 * The course chips are the courses of the chosen types, so a change here rebuilds them and
+	 * drops whatever no longer belongs; see {@link #reconcileCourseSelection()}.
+	 */
+	private void onCourseTypesChanged() {
+		reconcileCourseSelection();
+		buildCourseChips();
+		bindFilterControls();
+		refreshBreakdown();
+	}
+
+	/**
+	 * Puts the type chips back in step with the selection on the filter, wherever the change
+	 * came from: a chip, the clear button, or the filter this student was last looked at under.
+	 * <p>
+	 * {@code setChecked} fires the checked-change listener rather than the click listener these
+	 * chips are wired with, so this cannot loop back through {@link #onCourseTypesChanged()}.
+	 */
+	private void syncCourseTypeChips() {
+
+		if (typeChipGroup == null) {
+			return;
+		}
+
+		Set<CourseType> selected = filter().courseTypes;
+		CourseType[] types = CourseType.values();
+
+		for (int i = 0; i < typeChips.size(); i++) {
+			typeChips.get(i).setChecked(selected.contains(types[i]));
+		}
+
+		for (Map.Entry<Chip, List<CourseType>> shortcut : shortcuts.entrySet()) {
+			shortcut.getKey().setChecked(selected.containsAll(shortcut.getValue()));
+		}
 	}
 
 	/**
@@ -322,7 +429,7 @@ public class FragmentStudentDetail extends Fragment {
 	 * Read once from the whole record rather than derived from the breakdown currently on
 	 * screen, which is filtered by these very chips: taking them from it would make a course
 	 * vanish the moment the window it falls outside was chosen, and with it the only way to
-	 * deselect it. The course type is the one filter the chips do follow, and it is applied
+	 * deselect it. The course types are the one filter the chips do follow, and they are applied
 	 * when they are built rather than when they are read; see {@link #buildCourseChips()}.
 	 */
 	private void loadCourseChips() {
@@ -343,11 +450,11 @@ public class FragmentStudentDetail extends Fragment {
 	}
 
 	/**
-	 * One chip per course of the chosen type, checkable and multi-select: the point is to see
+	 * One chip per course of the chosen types, checkable and multi-select: the point is to see
 	 * two or three of them together, which is a question no single-select control can ask.
 	 * <p>
 	 * Nothing ticked means every course, so the chips start clear rather than all lit. A
-	 * student with no attendance at all — or none of the chosen type — gets no chips and no
+	 * student with no attendance at all — or none of the chosen types — gets no chips and no
 	 * heading, since an empty row of controls is worse than none.
 	 */
 	private void buildCourseChips() {
@@ -361,7 +468,7 @@ public class FragmentStudentDetail extends Fragment {
 
 		for (EntityCourse course : studentCourses) {
 
-			// A type narrows what the chips offer as well as what the breakdown counts. Two
+			// The types narrow what the chips offer as well as what the breakdown counts. Two
 			// controls that disagree — a practicals-only breakdown beside a chip for a theory
 			// paper — would leave a chip that empties the list when tapped.
 			if (!matchesChosenType(course)) {
@@ -412,7 +519,7 @@ public class FragmentStudentDetail extends Fragment {
 	private void bindCourseChipsSection() {
 
 		// Counted from the chips on screen rather than from the student's courses, because a
-		// course type may have left none of them to show.
+		// course type selection may have left none of them to show.
 		boolean any = courseChips.getChildCount() > 0;
 		courseChipsRow.setVisibility(any ? View.VISIBLE : View.GONE);
 		courseChips.setVisibility(any && courseChipsExpanded ? View.VISIBLE : View.GONE);
@@ -430,10 +537,10 @@ public class FragmentStudentDetail extends Fragment {
 				? R.string.action_hide_courses : R.string.action_show_courses));
 	}
 
-	/** Whether a course survives the chosen course type. Every course does when none is set. */
+	/** Whether a course survives the chosen course types. Every course does when none is set. */
 	private boolean matchesChosenType(@NonNull EntityCourse course) {
-		CourseType chosen = filter().courseType;
-		return chosen == null || course.courseType == chosen;
+		Set<CourseType> chosen = filter().courseTypes;
+		return chosen.isEmpty() || chosen.contains(course.courseType);
 	}
 
 	/**
@@ -539,6 +646,8 @@ public class FragmentStudentDetail extends Fragment {
 
 		fromField.setText(filter.from == null ? "" : filter.from.format(DATE_LABEL));
 		toField.setText(filter.to == null ? "" : filter.to.format(DATE_LABEL));
+
+		syncCourseTypeChips();
 
 		windowChips.clearCheck();
 

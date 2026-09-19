@@ -7,6 +7,8 @@ import androidx.sqlite.db.SupportSQLiteQuery;
 import java.util.ArrayList;
 import java.util.List;
 
+import in.basulabs.siesattendance.backend.CourseType;
+
 /**
  * Turns a {@link StatsFilter} into SQL.
  * <p>
@@ -189,11 +191,20 @@ public final class StatsQueryBuilder {
 			args.add(filter.studentID);
 		}
 
+		// Several types at once, for the same reason the courses above are a set: "every kind of
+		// practical" and "the theory and the lab of this subject together" are one report each,
+		// not one per type. An empty set contributes no condition, so an untouched filter still
+		// means every type rather than none.
+		//
 		// Enums are stored by name(), so name() is what gets bound. Never toString(): the
 		// label is for display and is not unique across constants.
-		if (filter.courseType != null) {
-			where.append(" AND c.courseType = ?");
-			args.add(filter.courseType.name());
+		if (!filter.courseTypes.isEmpty()) {
+			where.append(" AND c.courseType IN (")
+					.append(placeholders(filter.courseTypes.size()))
+					.append(")");
+			for (CourseType type : filter.courseTypes) {
+				args.add(type.name());
+			}
 		}
 
 		if (filter.year != null) {

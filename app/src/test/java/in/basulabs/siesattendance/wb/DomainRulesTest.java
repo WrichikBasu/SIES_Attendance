@@ -88,6 +88,57 @@ public class DomainRulesTest {
 	}
 
 	@Test
+	public void everyPracticalTypeIsRecognisedAsOneAndNothingElseIs() {
+		// The statistics screen's "practicals" shortcut promises to cover every kind of
+		// practical, including any added later, which it can only do because membership is
+		// read off the constant's own name rather than from a list kept somewhere else.
+		for (CourseType c : CourseType.values()) {
+			assertEquals(c.name(), c.name().contains("PRACTICAL"), c.isPractical());
+		}
+
+		assertTrue(CourseType.practicals().contains(CourseType.MAJOR_PRACTICALS));
+		assertTrue(CourseType.practicals().contains(CourseType.MINOR_PRACTICALS));
+		assertTrue(CourseType.practicals().contains(CourseType.DSE_PRACTICALS));
+		assertFalse(CourseType.practicals().contains(CourseType.MAJOR));
+		assertFalse(CourseType.practicals().contains(CourseType.IKS));
+
+		for (CourseType c : CourseType.practicals()) {
+			assertTrue(c.name(), c.isPractical());
+		}
+	}
+
+	@Test
+	public void theTheoryShortcutIsTheLectureHalfOfEverySplitSubject() {
+		// Pinned rather than derived a second time. The membership is what the chip promises,
+		// and a type that gains a laboratory counterpart later should have to be looked at
+		// rather than joining the group silently.
+		assertEquals(Arrays.asList(CourseType.MAJOR, CourseType.MINOR, CourseType.DSE,
+				CourseType.VSC, CourseType.SEC), CourseType.theory());
+
+		// OE, AEC and IKS are taught as lectures too, but they are not one half of a split
+		// subject, which is what is being asked for by "the theory".
+		assertFalse(CourseType.theory().contains(CourseType.OE));
+		assertFalse(CourseType.theory().contains(CourseType.AEC));
+		assertFalse(CourseType.theory().contains(CourseType.IKS));
+	}
+
+	@Test
+	public void theTwoShortcutsPairUpAndNeverOverlap() {
+
+		for (CourseType c : CourseType.theory()) {
+			assertNotNull(c.name(), CourseType.fromAny(c.name() + "_PRACTICALS"));
+			assertFalse(c.name(), c.isPractical());
+		}
+
+		for (CourseType c : CourseType.practicals()) {
+			assertFalse(c.name(), c.isTheory());
+		}
+
+		assertEquals("each theory type has exactly one laboratory counterpart",
+				CourseType.theory().size(), CourseType.practicals().size());
+	}
+
+	@Test
 	public void streamLabelsAreUniqueSoLabelLookupIsUnambiguous() {
 		// The whole reason BSc_unaided is labelled "BSc (unaided)": two constants reading
 		// "BSc" would make every dropdown and every CSV ambiguous.

@@ -226,7 +226,7 @@ public class StatsAndExportFilterTest {
 		each[3].batchID = 1L;
 		each[4].professorID = 1L;
 		each[5].studentID = 1L;
-		each[6].courseType = CourseType.MAJOR;
+		each[6].courseTypes.add(CourseType.MAJOR);
 		each[7].year = Year.SY;
 		each[8].stream = Stream.BSc;
 		each[9].department = Department.PHYSICS;
@@ -248,7 +248,7 @@ public class StatsAndExportFilterTest {
 		filter.batchID = 2L;
 		filter.professorID = 3L;
 		filter.studentID = 4L;
-		filter.courseType = CourseType.OE;
+		filter.courseTypes.add(CourseType.OE);
 		filter.year = Year.TY;
 		filter.stream = Stream.BSc;
 		filter.department = Department.PHYSICS;
@@ -316,6 +316,29 @@ public class StatsAndExportFilterTest {
 	}
 
 	@Test
+	public void theCourseTypeSetIsCopiedRatherThanShared() {
+		StatsFilter filter = new StatsFilter(2025);
+		filter.courseTypes.add(CourseType.MAJOR);
+
+		StatsFilter snapshot = filter.copy();
+		filter.courseTypes.add(CourseType.MINOR);
+		filter.courseTypes.remove(CourseType.MAJOR);
+
+		assertEquals(Collections.singleton(CourseType.MAJOR), snapshot.courseTypes);
+	}
+
+	@Test
+	public void clearingTheFiltersDropsEveryChosenCourseType() {
+		StatsFilter filter = new StatsFilter(2025);
+		filter.courseTypes.addAll(CourseType.practicals());
+
+		filter.clearFilters();
+
+		assertTrue(filter.courseTypes.isEmpty());
+		assertFalse(filter.hasActiveFilters());
+	}
+
+	@Test
 	public void copyCarriesEveryFieldAcross() {
 		StatsFilter filter = new StatsFilter(2025);
 		filter.groupBy = StatsGroupBy.PROFESSOR;
@@ -327,7 +350,7 @@ public class StatsAndExportFilterTest {
 		filter.batchID = 2L;
 		filter.professorID = 3L;
 		filter.studentID = 4L;
-		filter.courseType = CourseType.IKS;
+		filter.courseTypes.add(CourseType.IKS);
 		// A consistent combination, since a division only exists on an undergraduate BSc.
 		filter.year = Year.TY;
 		filter.stream = Stream.BSc;
@@ -347,7 +370,7 @@ public class StatsAndExportFilterTest {
 		assertEquals(filter.batchID, copy.batchID);
 		assertEquals(filter.professorID, copy.professorID);
 		assertEquals(filter.studentID, copy.studentID);
-		assertEquals(filter.courseType, copy.courseType);
+		assertEquals(filter.courseTypes, copy.courseTypes);
 		assertEquals(filter.year, copy.year);
 		assertEquals(filter.stream, copy.stream);
 		assertEquals(filter.department, copy.department);

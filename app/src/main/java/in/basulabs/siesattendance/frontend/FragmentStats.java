@@ -13,6 +13,7 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 import androidx.core.view.MenuProvider;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Lifecycle;
@@ -35,8 +36,11 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 import in.basulabs.siesattendance.R;
@@ -67,10 +71,10 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * <p>
  * Grouping by student or by course produces rows that can be tapped to drill into that subject.
  * <p>
- * The course filter takes several courses at once, chosen in a dialog and shown as chips. The
- * headline figures are then the combined attendance across exactly those courses, computed from
- * the same rows the report lists, which is the question "how are my two papers doing together"
- * that one course at a time could not answer.
+ * The course and course type filters each take several values at once, shown as chips. The
+ * headline figures are then the combined attendance across exactly those, computed from the same
+ * rows the report lists, which is the question "how are my two papers doing together" — or "how
+ * are the practicals doing" — that one value at a time could not answer.
  * <p>
  * The filter controls and the report are one scrolling surface, achieved by putting the controls
  * in an {@link AdapterHeader} in front of the list rather than in a scroll view above it. The
@@ -99,13 +103,28 @@ public class FragmentStats extends Fragment {
 	/** The chips standing for the courses the report is restricted to. */
 	private ChipGroup courseChips;
 
+	/** The chips choosing which course types the report covers. */
+	private ChipGroup courseTypeChips;
+
+	/**
+	 * One chip per {@link CourseType}, in {@code values()} order, so a chip can be found from
+	 * its constant and back without hanging tags off the views.
+	 */
+	private final List<Chip> typeChips = new ArrayList<>();
+
+	/**
+	 * The shortcut chips, each against the types it stands for. Ordered, so they stay in the
+	 * order they were added to the group.
+	 */
+	private final Map<Chip, List<CourseType>> shortcuts = new LinkedHashMap<>();
+
 	private TextView tvNoCourses;
 
 	private TextView tvPercent, tvLectures, tvRecords, tvBelow, tvEmpty, tvActiveFilters,
 			tvFiltersActive;
 
 	private AutoCompleteTextView actvSession, actvRange, actvSort, actvBatch,
-			actvProfessor, actvCourseType, actvYear, actvStream, actvDept, actvDivision;
+			actvProfessor, actvYear, actvStream, actvDept, actvDivision;
 
 	private TextView tvOrphanWarning;
 
@@ -193,6 +212,7 @@ public class FragmentStats extends Fragment {
 
 		bindViews(header);
 		buildGroupChips();
+		buildCourseTypeChips();
 		buildStaticDropdowns();
 		setupDateButtons();
 		setupActions(header);
@@ -249,7 +269,7 @@ public class FragmentStats extends Fragment {
 		btnSelectCourses = view.findViewById(R.id.btnSelectCourses);
 		actvBatch = view.findViewById(R.id.actvBatch);
 		actvProfessor = view.findViewById(R.id.actvProfessor);
-		actvCourseType = view.findViewById(R.id.actvCourseType);
+		courseTypeChips = view.findViewById(R.id.cgCourseType);
 		actvYear = view.findViewById(R.id.actvYear);
 		actvStream = view.findViewById(R.id.actvStream);
 		actvDept = view.findViewById(R.id.actvDept);
@@ -286,9 +306,147 @@ public class FragmentStats extends Fragment {
 		groupChips.setSelectionRequired(true);
 	}
 
+	// ── Course type ──────────────────────────────────────────────────────
+
+	/**
+	 * One checkable chip per {@link CourseType}, preceded by the two shortcuts that tick a whole
+	 * side of the syllabus at once.
+	 * <p>
+	 * A shortcut is not a type of its own and nothing is stored for it: it adds its constants to
+	 * the same selection the individual chips edit, and shows itself ticked exactly when all of
+	 * them are in it. That keeps one source of truth — the set on the filter — so ticking the
+	 * practicals by hand lights the shortcut up, and taking one back off puts it out again,
+	 * rather than the two disagreeing about what the report covers.
+	 * <p>
+	 * Which constants each stands for is {@link CourseType#practicals()}'s and
+	 * {@link CourseType#theory()}'s business, so a subject split into a lecture and a lab later
+	 * is covered here without a change.
+	 */
+	private void buildCourseTypeChips() {
+
+		typeChips.clear();
+		shortcuts.clear();
+		courseTypeChips.removeAllViews();
+
+		addShortcutChip(R.string.filter_all_theory, CourseType.theory());
+		addShortcutChip(R.string.filter_all_practicals, CourseType.practicals());
+
+		for (CourseType type : CourseType.values()) {
+			Chip chip = new Chip(requireContext());
+			chip.setText(type.toString());
+			chip.setCheckable(true);
+			chip.setOnClickListener(v -> {
+				Set<CourseType> selected = viewModel.statsFilter().courseTypes;
+				if (chip.isChecked()) {
+					selected.add(type);
+				} else {
+					selected.remove(type);
+				}
+				onCourseTypesChanged();
+			});
+
+			typeChips.add(chip);
+			courseTypeChips.addView(chip);
+		}
+
+		syncCourseTypeChips();
+	}
+
+	/** One shortcut chip, which adds or removes the whole group of types it stands for. */
+	private void addShortcutChip(@StringRes int label, @NonNull List<CourseType> members) {
+
+		Chip chip = new Chip(requireContext());
+		chip.setText(label);
+		chip.setCheckable(true);
+		chip.setOnClickListener(v -> {
+			Set<CourseType> selected = viewModel.statsFilter().courseTypes;
+			if (chip.isChecked()) {
+				selected.addAll(members);
+			} else {
+				selected.removeAll(members);
+			}
+			onCourseTypesChanged();
+		});
+
+		shortcuts.put(chip, members);
+		courseTypeChips.addView(chip);
+	}
+
+	/** What every course type chip does after editing the selection. */
+	private void onCourseTypesChanged() {
+		syncCourseTypeChips();
+		updateFilterSummary();
+		rerun();
+	}
+
+	/**
+	 * Puts the chips back in step with the selection on the filter, wherever the change came
+	 * from: a chip, the clear button, or a filter restored in code.
+	 * <p>
+	 * {@code setChecked} fires the checked-change listener rather than the click listener the
+	 * chips are wired with, so this cannot loop back through {@link #onCourseTypesChanged()}.
+	 */
+	private void syncCourseTypeChips() {
+
+		if (courseTypeChips == null) {
+			return;
+		}
+
+		Set<CourseType> selected = viewModel.statsFilter().courseTypes;
+		CourseType[] types = CourseType.values();
+
+		for (int i = 0; i < typeChips.size(); i++) {
+			typeChips.get(i).setChecked(selected.contains(types[i]));
+		}
+
+		for (Map.Entry<Chip, List<CourseType>> shortcut : shortcuts.entrySet()) {
+			shortcut.getKey().setChecked(selected.containsAll(shortcut.getValue()));
+		}
+	}
+
+	/**
+	 * The course types for the line that says what the report covers.
+	 * <p>
+	 * A complete side of the syllabus collapses to the one word its shortcut chip is labelled
+	 * with, since listing five constants to say "practicals" is what the shortcut exists to
+	 * avoid. Past two entries the rest are counted rather than named, the same way the courses
+	 * are: the chips above already say which they are, and a summary line that grew with the
+	 * selection would push the figures it describes off the screen.
+	 */
+	@NonNull
+	private String courseTypeSummary(@NonNull Set<CourseType> types) {
+
+		Set<CourseType> remaining = new LinkedHashSet<>(types);
+		List<String> named = new ArrayList<>();
+
+		if (remaining.containsAll(CourseType.theory())) {
+			named.add(getString(R.string.filter_all_theory));
+			remaining.removeAll(CourseType.theory());
+		}
+
+		if (remaining.containsAll(CourseType.practicals())) {
+			named.add(getString(R.string.filter_all_practicals));
+			remaining.removeAll(CourseType.practicals());
+		}
+
+		for (CourseType type : remaining) {
+			named.add(type.toString());
+		}
+
+		if (named.size() <= 2) {
+			return String.join(", ", named);
+		}
+		return getResources().getQuantityString(R.plurals.count_course_types_selected,
+				types.size(), types.size());
+	}
+
 	// ── Dropdowns ────────────────────────────────────────────────────────
 
-	/** The dropdowns whose contents come from enums and never change: range, sort, class filters. */
+	/**
+	 * The dropdowns whose contents come from enums and never change: range, sort, class filters.
+	 * Course type is not among them; it is a set, and lives on the chips built by
+	 * {@link #buildCourseTypeChips()}.
+	 */
 	private void buildStaticDropdowns() {
 
 		binding = true;
@@ -319,12 +477,6 @@ public class FragmentStats extends Fragment {
 			viewModel.statsFilter().sortOrder = StatsFilter.SortOrder.values()[position];
 			rerun();
 		});
-
-		DropdownBinder.bind(actvCourseType, Arrays.asList(CourseType.values()), anyLabel,
-				null, value -> {
-					viewModel.statsFilter().courseType = value;
-					rerun();
-				});
 
 		// Department, stream and year are linked here too, so a report cannot be asked for
 		// something like Commerce students on a BSc stream.
@@ -693,12 +845,13 @@ public class FragmentStats extends Fragment {
 
 		actvRange.setText(StatsFilter.DateRange.ALL_TIME.label, false);
 		for (AutoCompleteTextView field : new AutoCompleteTextView[]{
-				actvBatch, actvProfessor, actvCourseType,
+				actvBatch, actvProfessor,
 				actvYear, actvStream, actvDept, actvDivision}) {
 			field.setText(anyLabel, false);
 		}
 
 		bindCourseChips();
+		syncCourseTypeChips();
 
 		// The division list depends on the stream, which has just been cleared, so the field
 		// goes back to offering every division rather than the last stream's.
@@ -773,6 +926,7 @@ public class FragmentStats extends Fragment {
 		}
 
 		bindCourseChips();
+		syncCourseTypeChips();
 
 		adapter.setContext(filter.groupBy, filter.threshold);
 		binding = false;
@@ -890,8 +1044,8 @@ public class FragmentStats extends Fragment {
 			}
 		}
 
-		if (filter.courseType != null) {
-			parts.add(filter.courseType.toString());
+		if (!filter.courseTypes.isEmpty()) {
+			parts.add(courseTypeSummary(filter.courseTypes));
 		}
 		if (filter.year != null) {
 			parts.add(filter.year.toString());

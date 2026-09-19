@@ -307,7 +307,8 @@ public class SqlBuilderTest {
 				filter.studentID = 11L;
 			}
 			if ((mask & 128) != 0) {
-				filter.courseType = CourseType.MAJOR;
+				filter.courseTypes.add(CourseType.MAJOR);
+				filter.courseTypes.add(CourseType.MAJOR_PRACTICALS);
 			}
 			if ((mask & 256) != 0) {
 				filter.year = Year.SY;
@@ -367,6 +368,48 @@ public class SqlBuilderTest {
 	}
 
 	@Test
+	public void severalCourseTypesAreAskedForWithOnePlaceholderEach() {
+		// The type filter is a set for the same reason the course filter is: "how are the
+		// practicals doing" is one report over every laboratory type, not five reports whose
+		// percentages cannot honestly be averaged afterwards.
+		StatsFilter filter = new StatsFilter(2025);
+		filter.courseTypes.add(CourseType.MAJOR_PRACTICALS);
+		filter.courseTypes.add(CourseType.MINOR_PRACTICALS);
+		filter.courseTypes.add(CourseType.DSE_PRACTICALS);
+
+		SupportSQLiteQuery grouped = StatsQueryBuilder.grouped(filter);
+
+		assertTrue(grouped.getSql().contains("c.courseType IN (?, ?, ?)"));
+		assertEquals("argument count must match placeholder count",
+				placeholders(grouped.getSql()), argsOf(grouped).size());
+		assertEquals(Arrays.asList(2025L, "MAJOR_PRACTICALS", "MINOR_PRACTICALS",
+				"DSE_PRACTICALS"), argsOf(grouped));
+	}
+
+	@Test
+	public void noCourseTypeChosenMeansEveryTypeRatherThanNone() {
+		// Same trap as the empty course set: "IN ()" is legal and matches nothing.
+		String sql = StatsQueryBuilder.grouped(new StatsFilter(2025)).getSql();
+
+		assertFalse(sql.contains("c.courseType IN"));
+		assertFalse(sql.contains("c.courseType = ?"));
+	}
+
+	@Test
+	public void theCourseTypeSetNarrowsTheSummaryExactlyAsItNarrowsTheRows() {
+		// The headline percentage for "practicals" is the combined attendance across every
+		// laboratory type, so it has to be computed over the same rows the report lists.
+		StatsFilter filter = new StatsFilter(2025);
+		filter.courseTypes.addAll(CourseType.practicals());
+
+		SupportSQLiteQuery grouped = StatsQueryBuilder.grouped(filter);
+		SupportSQLiteQuery summary = StatsQueryBuilder.summary(filter);
+
+		assertTrue(summary.getSql().contains("c.courseType IN ("));
+		assertEquals(argsOf(grouped), argsOf(summary));
+	}
+
+	@Test
 	public void theBatchFilterMatchesMembershipRatherThanTheLecturesOwnBatch() {
 		// Batches nest: a class is split into A, and A into B and C. Comparing l.batchID meant
 		// asking for B returned nothing from a lecture held for A, even though every student
@@ -418,7 +461,7 @@ public class SqlBuilderTest {
 	@Test
 	public void statsEnumsAreBoundByConstantNameNeverByLabel() {
 		StatsFilter filter = new StatsFilter(2025);
-		filter.courseType = CourseType.MAJOR_PRACTICALS;
+		filter.courseTypes.add(CourseType.MAJOR_PRACTICALS);
 		filter.year = Year.Masters_P2;
 		filter.stream = Stream.MSc_unaided;
 		filter.department = Department.COMPUTER_SCIENCE;
@@ -641,7 +684,7 @@ public class SqlBuilderTest {
 		filter.batchID = 1L;
 		filter.professorID = 1L;
 		filter.studentID = 1L;
-		filter.courseType = CourseType.MAJOR;
+		filter.courseTypes.add(CourseType.MAJOR);
 		filter.year = Year.SY;
 		filter.stream = Stream.BSc;
 		filter.department = Department.PHYSICS;

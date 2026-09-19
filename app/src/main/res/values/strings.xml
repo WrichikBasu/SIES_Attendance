@@ -228,6 +228,10 @@
 
 
     <string name="filter_any">Any</string>
+    <!-- Ticks every practical course type at once on the statistics filter. -->
+    <string name="filter_all_practicals">Practicals</string>
+    <!-- Ticks the lecture half of every split subject: major, minor, DSE, VSC and SEC. -->
+    <string name="filter_all_theory">Theory</string>
     <string name="section_choose_students">Choose students</string>
     <string name="hint_batch_cross_class">A batch can mix years, streams and departments. Use
         the filters to find students, then tick them — switching filters keeps what you have
@@ -262,6 +266,10 @@
     <plurals name="count_courses_selected">
         <item quantity="one">%d course</item>
         <item quantity="other">%d courses</item>
+    </plurals>
+    <plurals name="count_course_types_selected">
+        <item quantity="one">%d course type</item>
+        <item quantity="other">%d course types</item>
     </plurals>
     <string name="stat_present_of">%1$d of %2$d present</string>
     <string name="empty_stats">No attendance matches these filters.</string>

@@ -1320,7 +1320,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 			long studentID, @NonNull BreakdownFilter filter) {
 
 		return db.daoStudent().getCourseBreakdown(studentID, filter.fromEpoch(),
-				filter.toEpoch(), filter.courseType, filter.courseIDs.isEmpty(),
+				filter.toEpoch(), filter.courseTypes.isEmpty(),
+				new ArrayList<>(filter.courseTypes), filter.courseIDs.isEmpty(),
 				new ArrayList<>(filter.courseIDs));
 	}
 

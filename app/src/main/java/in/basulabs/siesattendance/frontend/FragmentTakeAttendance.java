@@ -130,6 +130,18 @@ public class FragmentTakeAttendance extends Fragment {
 
 	private Long pendingBatchID;
 
+	/**
+	 * Navigation argument: the day the sheet should open on, as an epoch day.
+	 * <p>
+	 * Set by the callers that are already looking at one particular day, so the sheet starts on
+	 * the day being browsed rather than on today. Absent means today, which is what the entry
+	 * points with no day of their own want.
+	 * <p>
+	 * Distinct from {@link #KEY_DATE}: that one is the working date saved across a rotation,
+	 * and it wins over this, since by then the user may have moved it.
+	 */
+	public static final String ARG_DATE = "initialDate";
+
 	private static final String KEY_COURSE = "courseID";
 	private static final String KEY_BATCH = "batchID";
 	private static final String KEY_DATE = "date";
@@ -194,6 +206,15 @@ public class FragmentTakeAttendance extends Fragment {
 			rollTouched = true;
 			viewModel.setAllPresence(false);
 		});
+
+		// Opened from a day being browsed, the sheet starts on that day. Landing on today and
+		// leaving the date to be corrected by hand is how a session gets filed under the wrong
+		// date, which is not something the saved sheet shows afterwards. Only on a fresh
+		// visit: after a rotation, restoreFrom below puts back whatever was actually set.
+		Bundle args = getArguments();
+		if (savedInstanceState == null && args != null && args.containsKey(ARG_DATE)) {
+			date = LocalDate.ofEpochDay(args.getLong(ARG_DATE));
+		}
 
 		etDate.setText(date.format(DATE_LABEL));
 		etDate.setOnClickListener(v -> pickDate());

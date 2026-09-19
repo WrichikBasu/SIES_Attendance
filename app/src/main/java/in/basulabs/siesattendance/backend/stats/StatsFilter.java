@@ -92,8 +92,18 @@ public class StatsFilter {
 	@Nullable
 	public Long studentID;
 
-	@Nullable
-	public CourseType courseType;
+	/**
+	 * The course types the report is restricted to. Empty means every type.
+	 * <p>
+	 * A set rather than a single value for the same reason {@link #courseIDs} is one: the
+	 * questions asked here are about a group of types at once — every kind of practical, the
+	 * theory and the laboratory half of a subject together — and the headline figures are then
+	 * the combined attendance across exactly those, over the same rows the report lists.
+	 * Selecting each type separately and averaging the answers by hand would give the wrong
+	 * number anyway, since the types carry different numbers of lectures behind them.
+	 */
+	@NonNull
+	public final Set<CourseType> courseTypes = new LinkedHashSet<>();
 
 	// ── Class filters, applied to the student rather than the course ─────
 
@@ -251,7 +261,7 @@ public class StatsFilter {
 	 */
 	public boolean hasActiveFilters() {
 		return from != null || to != null || !courseIDs.isEmpty() || batchID != null
-				|| professorID != null || studentID != null || courseType != null
+				|| professorID != null || studentID != null || !courseTypes.isEmpty()
 				|| year != null || stream != null || department != null || division != null;
 	}
 
@@ -263,9 +273,9 @@ public class StatsFilter {
 	}
 
 	/**
-	 * A detached copy. Every field bar {@link #courseIDs} is immutable or a primitive, so a
-	 * shallow copy is a genuine one; the set is copied properly, since a query in flight must
-	 * not see a course added or removed while it runs.
+	 * A detached copy. Every field bar the two sets is immutable or a primitive, so a shallow
+	 * copy is a genuine one; the sets are copied properly, since a query in flight must not see
+	 * a course or a type added or removed while it runs.
 	 */
 	@NonNull
 	public StatsFilter copy() {
@@ -279,7 +289,7 @@ public class StatsFilter {
 		c.batchID = batchID;
 		c.professorID = professorID;
 		c.studentID = studentID;
-		c.courseType = courseType;
+		c.courseTypes.addAll(courseTypes);
 		c.year = year;
 		c.stream = stream;
 		c.department = department;
@@ -301,7 +311,7 @@ public class StatsFilter {
 		batchID = null;
 		professorID = null;
 		studentID = null;
-		courseType = null;
+		courseTypes.clear();
 		year = null;
 		stream = null;
 		department = null;

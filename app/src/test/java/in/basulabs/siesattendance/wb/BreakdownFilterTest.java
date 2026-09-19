@@ -189,10 +189,77 @@ public class BreakdownFilterTest {
 	public void aCourseTypeAloneIsStillARestriction() {
 
 		BreakdownFilter filter = new BreakdownFilter();
-		filter.courseType = CourseType.MAJOR_PRACTICALS;
+		filter.courseTypes.add(CourseType.MAJOR_PRACTICALS);
 
 		assertFalse(filter.isUnrestricted());
 		assertFalse(filter.hasDateWindow());
+	}
+
+	/**
+	 * The whole point of the set: "how are the practicals doing" is one breakdown across every
+	 * laboratory type, whose combined figure is not the average of the per-type ones.
+	 */
+	@Test
+	public void everyPracticalTypeCollapsesToTheOneWordThatStandsForThem() {
+
+		BreakdownFilter filter = new BreakdownFilter();
+		filter.courseTypes.addAll(CourseType.practicals());
+
+		assertEquals("All time · Practicals", filter.describe());
+
+		// One short of the full set is no longer "Practicals", and with four left it is past
+		// what the line will name, so it says how many rather than which.
+		filter.courseTypes.remove(CourseType.MAJOR_PRACTICALS);
+		assertEquals("All time · " + filter.courseTypes.size() + " course types",
+				filter.describe());
+	}
+
+	@Test
+	public void everyLectureHalfCollapsesToTheOneWordThatStandsForThem() {
+
+		BreakdownFilter filter = new BreakdownFilter();
+		filter.courseTypes.addAll(CourseType.theory());
+
+		assertEquals("All time · Theory", filter.describe());
+
+		// OE is not one half of a split subject, so it is named beside the group rather than
+		// swallowed by it.
+		filter.courseTypes.add(CourseType.OE);
+		assertEquals("All time · Theory, OE", filter.describe());
+	}
+
+	@Test
+	public void bothSidesOfTheSyllabusReadAsTwoWordsRatherThanTen() {
+
+		BreakdownFilter filter = new BreakdownFilter();
+		filter.courseTypes.addAll(CourseType.theory());
+		filter.courseTypes.addAll(CourseType.practicals());
+
+		assertEquals("All time · Theory, Practicals", filter.describe());
+	}
+
+	@Test
+	public void twoTypesAreNamedAndAlongerSelectionIsCounted() {
+
+		BreakdownFilter filter = new BreakdownFilter();
+		filter.courseTypes.add(CourseType.MAJOR);
+		filter.courseTypes.add(CourseType.MINOR);
+
+		assertEquals("All time · Major, Minor", filter.describe());
+
+		filter.courseTypes.add(CourseType.OE);
+		assertEquals("All time · 3 course types", filter.describe());
+	}
+
+	@Test
+	public void thePracticalsShorthandStillLeavesRoomToNameOneMoreType() {
+		// A complete set of practicals counts as one entry on the line, not as five, so adding
+		// a theory paper beside it still reads as two names rather than a count.
+		BreakdownFilter filter = new BreakdownFilter();
+		filter.courseTypes.addAll(CourseType.practicals());
+		filter.courseTypes.add(CourseType.MAJOR);
+
+		assertEquals("All time · Practicals, Major", filter.describe());
 	}
 
 	// ── What the screen says ─────────────────────────────────────────────
@@ -247,7 +314,7 @@ public class BreakdownFilterTest {
 
 		BreakdownFilter filter = new BreakdownFilter();
 		filter.apply(BreakdownFilter.Window.THIS_MONTH, SESSION_2025);
-		filter.courseType = CourseType.MAJOR;
+		filter.courseTypes.add(CourseType.MAJOR);
 
 		assertEquals("This month · Major", filter.describe());
 	}
@@ -256,7 +323,7 @@ public class BreakdownFilterTest {
 	public void aCourseTypeWithNoWindowStillNamesTheWindow() {
 
 		BreakdownFilter filter = new BreakdownFilter();
-		filter.courseType = CourseType.OE;
+		filter.courseTypes.add(CourseType.OE);
 
 		assertEquals("All time · OE", filter.describe());
 	}
@@ -296,7 +363,7 @@ public class BreakdownFilterTest {
 
 		BreakdownFilter filter = new BreakdownFilter();
 		filter.apply(BreakdownFilter.Window.THIS_MONTH, SESSION_2025);
-		filter.courseType = CourseType.MAJOR;
+		filter.courseTypes.add(CourseType.MAJOR);
 		filter.courseIDs.add(7L);
 
 		assertEquals("This month · Major · 1 course", filter.describe());
@@ -309,7 +376,7 @@ public class BreakdownFilterTest {
 
 		BreakdownFilter filter = new BreakdownFilter();
 		filter.apply(BreakdownFilter.Window.THIS_MONTH, SESSION_2025);
-		filter.courseType = CourseType.MINOR;
+		filter.courseTypes.add(CourseType.MINOR);
 		filter.courseIDs.add(5L);
 
 		filter.clear();
@@ -317,7 +384,7 @@ public class BreakdownFilterTest {
 		assertTrue(filter.isUnrestricted());
 		assertNull(filter.from);
 		assertNull(filter.to);
-		assertNull(filter.courseType);
+		assertTrue(filter.courseTypes.isEmpty());
 		assertTrue(filter.courseIDs.isEmpty());
 		assertEquals(BreakdownFilter.Window.ALL_TIME, filter.window);
 	}
