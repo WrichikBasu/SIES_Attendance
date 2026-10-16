@@ -44,4 +44,5 @@ google-services.json
 *.hprof
 
 
-
+__pycache__/
+app/src/test/sql/__pycache__/

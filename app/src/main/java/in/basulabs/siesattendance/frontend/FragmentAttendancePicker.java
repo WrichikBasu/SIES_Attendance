@@ -8,6 +8,7 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -32,7 +33,9 @@ import java.util.Locale;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
+import in.basulabs.siesattendance.backend.util.MarkSheetExporter;
 import in.basulabs.siesattendance.frontend.adapter.AdapterLecture;
+import in.basulabs.siesattendance.frontend.util.MarkExportFlow;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -56,6 +59,13 @@ public class FragmentAttendancePicker extends Fragment {
 	 * see {@link #observeForDate()}.
 	 */
 	private LiveData<List<LectureDetails>> currentSource;
+
+	/** The day's lectures as last shown, so an export can be refused before a file is made. */
+	@Nullable
+	private List<LectureDetails> shownLectures;
+
+	/** Exporting the day's marks; a field so its save dialogs are registered in time. */
+	private final MarkExportFlow exportFlow = new MarkExportFlow(this);
 
 	@Nullable
 	@Override
@@ -107,11 +117,11 @@ public class FragmentAttendancePicker extends Fragment {
 	}
 
 	/**
-	 * The register import lives in the overflow rather than on the screen.
+	 * The register import and the day's export live in the overflow rather than on the screen.
 	 * <p>
-	 * This is the screen it belongs to, since what it produces is lectures with their sheets
-	 * already filled in, but it is a once-a-term operation sitting beside the thing a professor
-	 * opens the app to do every day. It should not compete with it for space.
+	 * This is the screen they belong to — the import produces lectures with their sheets already
+	 * filled in, and the export is the day on screen — but neither is what a professor opens
+	 * the app to do every day, and they should not compete with it for space.
 	 */
 	private void setupImportMenu() {
 		requireActivity().addMenuProvider(new MenuProvider() {
@@ -128,9 +138,53 @@ public class FragmentAttendancePicker extends Fragment {
 							.navigate(R.id.action_attendancePicker_to_importAttendance);
 					return true;
 				}
+				if (item.getItemId() == R.id.action_export_day) {
+					exportDay();
+					return true;
+				}
 				return false;
 			}
 		}, getViewLifecycleOwner(), Lifecycle.State.RESUMED);
+	}
+
+	/**
+	 * Exports the marks of every lecture on the day being shown.
+	 * <p>
+	 * Refused up front when there is nothing to put in it, before the save dialog creates a
+	 * file: an empty export is a file someone has to open to learn it is empty. A day where
+	 * some lectures are marked and some are not is exported, with the unmarked ones named in
+	 * the sheet's heading and counted in the message afterwards.
+	 */
+	private void exportDay() {
+
+		List<LectureDetails> lectures = shownLectures;
+
+		if (lectures == null || lectures.isEmpty()) {
+			Toast.makeText(requireContext(), R.string.message_no_lectures_on_day,
+					Toast.LENGTH_LONG).show();
+			return;
+		}
+
+		boolean anyMarked = false;
+		for (LectureDetails lecture : lectures) {
+			if (lecture.markedCount > 0) {
+				anyMarked = true;
+				break;
+			}
+		}
+
+		if (!anyMarked) {
+			Toast.makeText(requireContext(), R.string.message_day_not_marked,
+					Toast.LENGTH_LONG).show();
+			return;
+		}
+
+		// Captured now: the arrows can move the screen to another day while the dialogs are
+		// up, and the export should be of the day it was asked for.
+		LocalDate day = selectedDate;
+
+		exportFlow.start(format -> MarkSheetExporter.dayFileName(day, format),
+				(format, highlight) -> MarkSheetExporter.Request.forDay(day, format, highlight));
 	}
 
 	private void shiftDate(int days) {
@@ -171,8 +225,14 @@ public class FragmentAttendancePicker extends Fragment {
 			currentSource.removeObservers(getViewLifecycleOwner());
 		}
 
+		// Until the new day's lectures arrive, the last list is another day's. An export asked
+		// for in that gap is then refused as having nothing, rather than checked against the
+		// wrong day.
+		shownLectures = null;
+
 		currentSource = viewModel.getLecturesOn(selectedDate);
 		currentSource.observe(getViewLifecycleOwner(), lectures -> {
+			shownLectures = lectures;
 			adapter.submitList(lectures);
 			boolean empty = lectures == null || lectures.isEmpty();
 			emptyState.setVisibility(empty ? View.VISIBLE : View.GONE);

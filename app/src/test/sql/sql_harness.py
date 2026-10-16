@@ -188,22 +188,55 @@ def build_fixture():
     return conn
 
 
+def generated_dao_source(dao: str) -> str:
+    """The Java Room generated for one DAO."""
+    return open(os.path.join(
+        PROJECT,
+        "app/build/generated/ap_generated_sources/debug/out/in/basulabs/siesattendance",
+        "backend", dao + "_Impl.java"), encoding="utf-8").read()
+
+
 def dao_sql(dao, method):
     """
     The SQL Room generated for one @Query method, read out of the generated DAO
     implementation. Reading it rather than copying it by hand is the same principle the
     schema follows: the harness should not contain its own idea of what the app runs.
     """
-    src = open(os.path.join(
-        PROJECT,
-        "app/build/generated/ap_generated_sources/debug/out/in/basulabs/siesattendance",
-        "backend", dao + "_Impl.java"), encoding="utf-8").read()
+    src = generated_dao_source(dao)
 
     at = src.index(" " + method + "(")
     literal = re.search(r'final String _sql = "((?:[^"\\]|\\.)*)";', src[at:])
     if literal is None:
         raise AssertionError("no SQL found for " + dao + "." + method)
     return literal.group(1).encode().decode("unicode_escape")
+
+
+def dao_sql_with_lists(dao: str, method: str, list_sizes: list[int]) -> str:
+    """
+    As dao_sql, for a @Query with a list parameter. Room cannot write that one out as a
+    literal, since the number of placeholders depends on the list, so it assembles the
+    statement in a StringBuilder at run time. This replays the assembly: each appended
+    literal in order, and for each list the number of placeholders given in list_sizes.
+    """
+    src = generated_dao_source(dao)
+
+    at = src.index(" " + method + "(")
+    end = src.index("final String _sql = _stringBuilder.toString();", at)
+
+    sizes = iter(list_sizes)
+    parts: list[str] = []
+
+    for m in re.finditer(r'_stringBuilder\.append\("((?:[^"\\]|\\.)*)"\)'
+                         r'|StringUtil\.appendPlaceholders\(_stringBuilder, \w+\)',
+                         src[at:end]):
+        if m.group(1) is not None:
+            parts.append(m.group(1).encode().decode("unicode_escape"))
+        else:
+            parts.append(", ".join("?" * next(sizes)))
+
+    if not parts:
+        raise AssertionError("no SQL found for " + dao + "." + method)
+    return "".join(parts)
 
 
 def read_statement(name):
@@ -425,6 +458,58 @@ def fixture_with_two_divisions():
     c.executemany("INSERT INTO attendance VALUES (?,?,?)", [(7, 4, 1), (7, 5, 0)])
     conn.commit()
     return conn
+
+
+def test_marks_export_reads_the_register_as_it_was_called() -> None:
+    """
+    DaoAttendance.getMarksSync, which the per-lecture and per-day exports are built from.
+
+    Its own fixture copy, since it adds marks: Meera is marked on a lecture in each of her two
+    sessions, and a student is marked on the lecture that falls outside every session.
+    """
+    conn = build_fixture()
+    c = conn.cursor()
+
+    # Meera held a different roll number each session: 2024PH07, then 2025PH01.
+    c.execute("INSERT INTO lectures VALUES (8,1,NULL,?,?,NULL)",
+              (ts(2024, 9, 2, 10, 0), ts(2024, 9, 2, 11, 0)))
+    c.execute("INSERT INTO lectures VALUES (9,1,NULL,?,?,NULL)",
+              (ts(2025, 9, 2, 10, 0), ts(2025, 9, 2, 11, 0)))
+    c.executemany("INSERT INTO attendance VALUES (?,?,?)",
+                  [(8, 4, 1), (9, 4, 0), (6, 1, 1)])
+    conn.commit()
+
+    def marks(lecture_ids: list[int]) -> list[dict]:
+        sql = dao_sql_with_lists("DaoAttendance", "getMarksSync", [len(lecture_ids)])
+        cur = conn.execute(sql, lecture_ids)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    one = marks([1])
+    check("marks export: one row per saved mark, in roll order",
+          [(r["rollNo"], r["present"]) for r in one]
+          == [("2025CS01", 1), ("2025CS02", 1), ("2025CS03", 0)], f"{one}")
+    check("marks export: the student's own name comes with each mark",
+          one[0]["name"] == "AARAV PATIL", f"{one[0]}")
+
+    # Lecture 2 has only two of the three on its sheet; the third has no row rather than a
+    # default, so the export can show a blank for them.
+    two = marks([2])
+    check("marks export: a student left off a sheet has no row",
+          {r["studentID"] for r in two} == {1, 2}, f"{two}")
+
+    by_lecture = {r["lectureID"]: r["rollNo"] for r in marks([8, 9]) if r["studentID"] == 4}
+    check("marks export: the roll number is the one held in that lecture's own session",
+          by_lecture == {8: "2024PH07", 9: "2025PH01"}, f"{by_lecture}")
+
+    orphan = marks([6])
+    check("marks export: a mark outside every session is kept, with a blank roll number",
+          [(r["studentID"], r["rollNo"]) for r in orphan] == [(1, "")], f"{orphan}")
+
+    check("marks export: a lecture with nothing saved returns nothing",
+          marks([999]) == [])
+
+    conn.close()
 
 
 def test_export_narrows_to_one_division():
@@ -1159,6 +1244,7 @@ def main():
     test_export_narrows_to_one_division()
     test_stats_class_grouping_splits_by_division()
     test_stats_enum_groupings_show_labels_not_stored_names(conn)
+    test_marks_export_reads_the_register_as_it_was_called()
     test_stats_batch_filter_reaches_subset_batches()
     test_stats_batch_and_course_together_narrow_to_one_roll()
     test_stats_lecture_counts_are_distinct(conn)

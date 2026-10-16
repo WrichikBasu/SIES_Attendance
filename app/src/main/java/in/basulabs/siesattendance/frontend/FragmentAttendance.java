@@ -38,7 +38,9 @@ import java.util.List;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.pojo.AttendanceRow;
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
+import in.basulabs.siesattendance.backend.util.MarkSheetExporter;
 import in.basulabs.siesattendance.frontend.adapter.AdapterAttendance;
+import in.basulabs.siesattendance.frontend.util.MarkExportFlow;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -63,6 +65,9 @@ public class FragmentAttendance extends Fragment {
 	private Chip chipPresent, chipAbsent;
 
 	private long lectureID;
+
+	/** Exporting this lecture's marks; a field so its save dialogs are registered in time. */
+	private final MarkExportFlow exportFlow = new MarkExportFlow(this);
 
 	@Nullable
 	@Override
@@ -137,6 +142,10 @@ public class FragmentAttendance extends Fragment {
 					askDuplicateSlot();
 					return true;
 				}
+				if (item.getItemId() == R.id.action_export_lecture) {
+					exportLecture();
+					return true;
+				}
 				if (item.getItemId() == R.id.action_delete_attendance) {
 					askHowToDelete();
 					return true;
@@ -144,6 +153,58 @@ public class FragmentAttendance extends Fragment {
 				return false;
 			}
 		}, getViewLifecycleOwner(), Lifecycle.State.RESUMED);
+	}
+
+	/**
+	 * Exports this lecture's saved marks.
+	 * <p>
+	 * The export is made from what is saved, not from the sheet on screen: a sheet that has
+	 * never been saved shows everyone present by default, and exporting that would file a
+	 * lecture nobody marked as a full house. So a sheet with nothing saved is refused, and one
+	 * whose marks on screen differ from the saved ones says so first and offers the saved one.
+	 */
+	private void exportLecture() {
+
+		if (lectureID <= 0) {
+			return;
+		}
+
+		viewModel.checkLectureExport(lectureID, check -> Ui.onMain(this, () -> {
+
+			LectureDetails lecture = check.lecture;
+
+			if (lecture == null) {
+				return;
+			}
+
+			if (lecture.markedCount == 0) {
+				new MaterialAlertDialogBuilder(requireContext())
+						.setTitle(R.string.dialog_lecture_not_saved_title)
+						.setMessage(R.string.message_lecture_not_saved)
+						.setPositiveButton(android.R.string.ok, null)
+						.show();
+				return;
+			}
+
+			if (check.unsavedChanges) {
+				new MaterialAlertDialogBuilder(requireContext())
+						.setTitle(R.string.dialog_unsaved_marks_title)
+						.setMessage(R.string.message_unsaved_marks)
+						.setNegativeButton(R.string.action_cancel, null)
+						.setPositiveButton(R.string.action_export_saved_sheet,
+								(d, w) -> startLectureExport(lecture))
+						.show();
+				return;
+			}
+
+			startLectureExport(lecture);
+		}));
+	}
+
+	private void startLectureExport(@NonNull LectureDetails lecture) {
+		exportFlow.start(format -> MarkSheetExporter.lectureFileName(lecture, format),
+				(format, highlight) -> MarkSheetExporter.Request.forLecture(
+						lecture.lectureID, format, highlight));
 	}
 
 	/**

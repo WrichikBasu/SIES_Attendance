@@ -28,6 +28,7 @@ import java.util.concurrent.Executors;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
+import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityAttendance;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
@@ -59,6 +60,7 @@ import in.basulabs.siesattendance.backend.util.ExportFilter;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
 import in.basulabs.siesattendance.backend.util.DatabaseBackup;
 import in.basulabs.siesattendance.backend.util.LectureFilter;
+import in.basulabs.siesattendance.backend.util.MarkSheetExporter;
 
 /**
  * The single ViewModel behind every screen.
@@ -424,6 +426,138 @@ public class AttendanceViewModel extends AndroidViewModel {
 			} finally {
 				busy.postValue(false);
 			}
+		});
+	}
+
+	// ── One lecture's or one day's marks ─────────────────────────────────
+
+	/**
+	 * The export chosen in the options dialog, held while the system's save dialog is open.
+	 * <p>
+	 * Held here rather than on the screen because the save dialog is another activity: rotating
+	 * the device while it is up rebuilds the screen, and a choice kept on it would be gone by
+	 * the time the file comes back. The ViewModel outlives that.
+	 */
+	@Nullable
+	private MarkSheetExporter.Request pendingMarkExport;
+
+	public void setPendingMarkExport(@NonNull MarkSheetExporter.Request request) {
+		pendingMarkExport = request;
+	}
+
+	/** The save dialog was cancelled. */
+	public void clearPendingMarkExport() {
+		pendingMarkExport = null;
+	}
+
+	/**
+	 * Writes the pending export to the file the user just chose, and says what went into it.
+	 * <p>
+	 * Nothing pending means the app was killed while the save dialog was open, and the
+	 * choice went with it. The file has been created by then and is left empty; saying so is
+	 * better than quietly leaving an empty file that looks like an export of nothing.
+	 */
+	public void runPendingMarkExport(@NonNull Uri destination) {
+
+		MarkSheetExporter.Request request = pendingMarkExport;
+		pendingMarkExport = null;
+
+		if (request == null) {
+			toastMessage.setValue(getApplication().getString(R.string.error_marks_export_lost));
+			return;
+		}
+
+		busy.setValue(true);
+
+		FILE_TASK_EXECUTOR.execute(() -> {
+			try {
+				MarkSheetExporter.Summary summary =
+						MarkSheetExporter.export(getApplication(), destination, request);
+				toastMessage.postValue(describeMarkExport(summary));
+			} catch (Exception e) {
+				toastMessage.postValue("Export failed: " + e.getMessage());
+			} finally {
+				busy.postValue(false);
+			}
+		});
+	}
+
+	@NonNull
+	private String describeMarkExport(@NonNull MarkSheetExporter.Summary summary) {
+
+		android.content.res.Resources res = getApplication().getResources();
+
+		String message = res.getString(R.string.message_marks_exported,
+				res.getQuantityString(R.plurals.count_export_students,
+						summary.students, summary.students),
+				res.getQuantityString(R.plurals.count_export_lectures,
+						summary.lectures, summary.lectures),
+				res.getQuantityString(R.plurals.count_export_absences,
+						summary.absences, summary.absences));
+
+		if (summary.unmarked > 0) {
+			message += " " + res.getQuantityString(R.plurals.message_unmarked_left_out,
+					summary.unmarked, summary.unmarked);
+		}
+		return message;
+	}
+
+	/** What the lecture screen needs to know before offering to export its sheet. */
+	public static final class LectureExportCheck {
+
+		/** Null when the lecture has gone. */
+		@Nullable
+		public final LectureDetails lecture;
+
+		/**
+		 * True when a mark on screen differs from the one saved. The export is made from the
+		 * saved sheet, so those changes would not be in it.
+		 */
+		public final boolean unsavedChanges;
+
+		LectureExportCheck(@Nullable LectureDetails lecture, boolean unsavedChanges) {
+			this.lecture = lecture;
+			this.unsavedChanges = unsavedChanges;
+		}
+	}
+
+	/**
+	 * Reads the lecture fresh and compares its saved marks with the sheet on screen.
+	 * <p>
+	 * Only a student who has a saved mark can differ. One on screen with none saved joined the
+	 * class after the lecture was filed and is showing the fresh-sheet default; that is not an
+	 * edit, and warning about it would warn on every lecture a new student ever joined.
+	 * <p>
+	 * The sheet is snapshotted here, on the main thread, since that is where it is edited.
+	 */
+	public void checkLectureExport(long lectureID,
+	                               @NonNull java.util.function.Consumer<LectureExportCheck> cb) {
+
+		Map<Long, Boolean> onScreen = new HashMap<>();
+		List<AttendanceRow> rows = attendanceRows.getValue();
+
+		// The rows belong to whichever sheet was loaded last, which is this one on the lecture
+		// screen, but a stale list from another lecture must not be compared against this one.
+		if (rows != null && currentLecture != null && currentLecture.lectureID == lectureID) {
+			for (AttendanceRow row : rows) {
+				onScreen.put(row.studentID, row.present);
+			}
+		}
+
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+
+			LectureDetails lecture = db.daoLecture().getDetailsByIdSync(lectureID);
+			boolean unsaved = false;
+
+			for (EntityAttendance stored : db.daoAttendance().getForLectureSync(lectureID)) {
+				Boolean shown = onScreen.get(stored.studentID);
+				if (shown != null && shown != stored.present) {
+					unsaved = true;
+					break;
+				}
+			}
+
+			cb.accept(new LectureExportCheck(lecture, unsaved));
 		});
 	}
 

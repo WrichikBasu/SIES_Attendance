@@ -11,9 +11,11 @@ import androidx.sqlite.db.SupportSQLiteQuery;
 import androidx.room.Transaction;
 
 import java.util.List;
+import in.basulabs.siesattendance.backend.stats.SqlBits;
 
 import in.basulabs.siesattendance.backend.pojo.CourseAttendanceStat;
 import in.basulabs.siesattendance.backend.pojo.ExportRow;
+import in.basulabs.siesattendance.backend.pojo.LectureMark;
 import in.basulabs.siesattendance.backend.pojo.StudentAttendanceStat;
 
 /**
@@ -104,6 +106,35 @@ public abstract class DaoAttendance {
 	@RawQuery
 	@NonNull
 	public abstract List<ExportRow> getExportRowsSync(@NonNull SupportSQLiteQuery query);
+
+	/**
+	 * Every stored mark for the given lectures, with the student's name and roll number, for
+	 * the per-lecture and per-day exports.
+	 * <p>
+	 * The roll number is the one held in the session the lecture falls in, resolved from the
+	 * lecture's own date by the same rule the statistics use — the latest session containing
+	 * it, so a merged backup with overlapping sessions cannot list a student twice. Exporting
+	 * last year's lecture therefore gives last year's roll numbers, which is what that
+	 * register was called by. The join is LEFT so a student with no row for that session is
+	 * still exported, with a blank roll number, rather than silently dropped along with their
+	 * mark.
+	 * <p>
+	 * Only saved marks are returned: a student never put on a sheet has no row, and the export
+	 * shows a blank for them rather than the "present" a fresh sheet would default to.
+	 */
+	@Query("SELECT a.lectureID AS lectureID, a.studentID AS studentID, s.name AS name, " +
+			"COALESCE(y.rollNo, '') AS rollNo, a.present AS present " +
+			"FROM attendance a " +
+			"INNER JOIN lectures l ON l.lectureID = a.lectureID " +
+			"INNER JOIN students s ON s.studentID = a.studentID " +
+			"LEFT JOIN student_year y ON y.studentID = a.studentID AND y.academicYear = (" +
+			"   SELECT ay.academicYear FROM academic_years ay " +
+			"   WHERE " + SqlBits.EPOCH_START + " BETWEEN ay.startEpoch AND ay.endEpoch " +
+			"   ORDER BY ay.academicYear DESC LIMIT 1) " +
+			"WHERE a.lectureID IN (:lectureIDs) " +
+			"ORDER BY rollNo ASC, s.name ASC")
+	@NonNull
+	public abstract List<LectureMark> getMarksSync(@NonNull List<Long> lectureIDs);
 
 	// ── Statistics ───────────────────────────────────────────────────────
 
