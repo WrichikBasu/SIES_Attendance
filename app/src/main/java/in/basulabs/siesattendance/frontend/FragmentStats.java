@@ -462,7 +462,7 @@ public class FragmentStats extends Fragment {
 			StatsFilter.DateRange range = StatsFilter.DateRange.values()[position];
 			// The half-session presets are worked out from the selected session's real dates,
 			// so the session has to be handed in rather than assumed.
-			viewModel.statsFilter().applyDateRange(range, selectedSession());
+			applyDateRange(viewModel.statsFilter(), range);
 			updateDateButtons();
 			rerun();
 		});
@@ -524,6 +524,22 @@ public class FragmentStats extends Fragment {
 	 * selected.
 	 */
 	@Nullable
+	/**
+	 * Applies a date preset, handing the selected session's bounds to the filter.
+	 * <p>
+	 * {@link StatsFilter} takes two dates rather than the session row, because it is compiled
+	 * into the server as well and a Room entity means nothing there. Unwrapping it is this
+	 * screen's job, and doing it in one place keeps the two call sites from disagreeing about
+	 * what no selected session means.
+	 */
+	private void applyDateRange(@NonNull StatsFilter filter,
+	                            @NonNull StatsFilter.DateRange range) {
+		EntityAcademicYear session = selectedSession();
+		filter.applyDateRange(range,
+				session == null ? null : session.startDate,
+				session == null ? null : session.endDate);
+	}
+
 	private EntityAcademicYear selectedSession() {
 		Integer year = viewModel.statsFilter().academicYear;
 		if (year == null) {
@@ -575,7 +591,7 @@ public class FragmentStats extends Fragment {
 			// A date window set for one session is meaningless in another, so switching
 			// sessions clears it rather than silently returning nothing.
 			if (filter.dateRange != StatsFilter.DateRange.ALL_TIME) {
-				filter.applyDateRange(StatsFilter.DateRange.ALL_TIME, selectedSession());
+				applyDateRange(filter, StatsFilter.DateRange.ALL_TIME);
 				actvRange.setText(StatsFilter.DateRange.ALL_TIME.label, false);
 				updateDateButtons();
 			}

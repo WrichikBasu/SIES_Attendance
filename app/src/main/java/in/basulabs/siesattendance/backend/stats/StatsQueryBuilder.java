@@ -73,17 +73,19 @@ public final class StatsQueryBuilder {
 
 		List<Object> args = new ArrayList<>();
 
-		String sql = "SELECT " + filter.groupBy.idExpr + " AS rowId, " +
-				filter.groupBy.primaryExpr + " AS primaryLabel, " +
-				filter.groupBy.secondaryExpr + " AS secondaryLabel, " +
+		SqliteStatsDialect.Fragments group = SqliteStatsDialect.of(filter.groupBy);
+
+		String sql = "SELECT " + group.idExpr + " AS rowId, " +
+				group.primaryExpr + " AS primaryLabel, " +
+				group.secondaryExpr + " AS secondaryLabel, " +
 				"SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) AS attended, " +
 				"COUNT(*) AS total, " +
 				"COUNT(DISTINCT l.lectureID) AS lectures, " +
 				"COUNT(DISTINCT a.studentID) AS students" +
 				FROM_CLAUSE +
 				whereClause(filter, args) +
-				" GROUP BY " + filter.groupBy.groupByExpr +
-				" ORDER BY " + orderByClause(filter);
+				" GROUP BY " + group.groupByExpr +
+				" ORDER BY " + orderByClause(filter, group);
 
 		return new SimpleSQLiteQuery(sql, args.toArray());
 	}
@@ -249,24 +251,41 @@ public final class StatsQueryBuilder {
 	 * The ORDER BY body. Built from the enum alone, with nothing bound, since sort order is a
 	 * fixed choice rather than a value.
 	 * <p>
-	 * Every branch falls back to the primary label as a tiebreak, so a report does not reshuffle
-	 * rows that compare equal each time it is refreshed.
+	 * Every branch falls back to the primary label, and then to the row's own id where it has
+	 * one, so that a report does not reshuffle rows that compare equal each time it is
+	 * refreshed.
+	 * <p>
+	 * The id tiebreak was added when the server's PostgreSQL translation was compared against
+	 * this query row for row and the two disagreed on exactly one case: the lecture grouping,
+	 * where two lectures of the same course on the same day carry the identical label
+	 * "CS202 · 12 07 2025". With nothing after the label the order between them was whatever
+	 * the engine happened to produce, so the same report could come back with the two swapped —
+	 * on one engine, or on the same engine after a plan change. The label alone was never
+	 * enough.
+	 * <p>
+	 * Only the groupings with a real key get the tiebreak. The rest use {@code "0"} as their id
+	 * expression, and SQLite reads a bare {@code 0} in ORDER BY as a column position rather
+	 * than a value; they need none anyway, since their label <em>is</em> the group key and
+	 * cannot repeat.
 	 */
 	@NonNull
-	private static String orderByClause(@NonNull StatsFilter filter) {
+	private static String orderByClause(@NonNull StatsFilter filter,
+	                                    @NonNull SqliteStatsDialect.Fragments group) {
 
 		// Percentage is recomputed here rather than referencing the alias, because SQLite will
 		// not accept an aggregate alias in ORDER BY on every version.
 		String percent = "(SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*))";
 
+		String tiebreak = group.idExpr.equals("0") ? "" : ", " + group.idExpr + " ASC";
+
 		return switch (filter.sortOrder) {
-			case PERCENT_DESC -> percent + " DESC, primaryLabel ASC";
-			case LABEL_ASC -> "primaryLabel ASC";
-			case TOTAL_DESC -> "COUNT(*) DESC, primaryLabel ASC";
+			case PERCENT_DESC -> percent + " DESC, primaryLabel ASC" + tiebreak;
+			case LABEL_ASC -> "primaryLabel ASC" + tiebreak;
+			case TOTAL_DESC -> "COUNT(*) DESC, primaryLabel ASC" + tiebreak;
 			case CHRONOLOGICAL ->
 				// Time-based groupings read wrong worst-first; they want oldest to newest.
-					"primaryLabel ASC";
-			default -> percent + " ASC, primaryLabel ASC";
+					"primaryLabel ASC" + tiebreak;
+			default -> percent + " ASC, primaryLabel ASC" + tiebreak;
 		};
 	}
 }

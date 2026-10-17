@@ -23,6 +23,7 @@ import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.Division;
+import in.basulabs.siesattendance.backend.PostgresEnumTypes;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 
@@ -56,17 +57,13 @@ import in.basulabs.siesattendance.backend.Year;
 public class PostgresSchemaDriftTest {
 
 	/** Java enum class to the PostgreSQL type name it is stored as. */
+	/*
+	 * The map moved to the shared module when the server arrived: the server needs the same
+	 * type names to cast its bound parameters with, and two copies of this would drift. This
+	 * test is what holds the shared map and the migration together.
+	 */
 	private static final Map<Class<? extends Enum<?>>, String> ENUM_TYPES =
-			new LinkedHashMap<>();
-
-	static {
-		ENUM_TYPES.put(Department.class, "department");
-		// Named degree_stream so a column declaration does not read "stream stream NOT NULL".
-		ENUM_TYPES.put(Stream.class, "degree_stream");
-		ENUM_TYPES.put(Year.class, "study_year");
-		ENUM_TYPES.put(Division.class, "class_division");
-		ENUM_TYPES.put(CourseType.class, "course_type");
-	}
+			PostgresEnumTypes.all();
 
 	private static final Pattern CREATE_TYPE = Pattern.compile(
 			"CREATE\\s+TYPE\\s+(\\w+)\\s+AS\\s+ENUM\\s*\\(([^)]*)\\)",

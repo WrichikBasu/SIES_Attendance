@@ -41,6 +41,10 @@ android {
 
 dependencies {
 
+    // The enums, AcademicRules and the filter objects, compiled once and used by both the
+    // app and the server. See settings.gradle.kts.
+    implementation(project(":shared"))
+
     implementation(libs.room.runtime)
     implementation(libs.lifecycle.livedata.ktx)
     implementation(libs.lifecycle.viewmodel.ktx)
@@ -53,6 +57,8 @@ dependencies {
     implementation(libs.navigation.ui)
 
     testImplementation(libs.junit)
+    // The named query cases the SQLite and PostgreSQL dumps are both generated from.
+    testImplementation(testFixtures(project(":shared")))
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)
 }

@@ -30,6 +30,20 @@ import in.basulabs.siesattendance.backend.util.ExportFilter;
  */
 public class StatsAndExportFilterTest {
 
+	/**
+	 * Applies a date preset from a session row.
+	 * <p>
+	 * {@link StatsFilter#applyDateRange} takes the two bounds rather than the row, because the
+	 * filter is compiled into the server too and {@code EntityAcademicYear} is a Room entity.
+	 * Unwrapping it here keeps these tests about the presets.
+	 */
+	private static void applyRange(StatsFilter filter, StatsFilter.DateRange range,
+	                               EntityAcademicYear session) {
+		filter.applyDateRange(range,
+				session == null ? null : session.startDate,
+				session == null ? null : session.endDate);
+	}
+
 	private static final EntityAcademicYear SESSION_2025 = EntityAcademicYear.of(2025,
 			LocalDate.of(2025, 6, 1), LocalDate.of(2026, 5, 31));
 
@@ -43,7 +57,7 @@ public class StatsAndExportFilterTest {
 		filter.from = LocalDate.of(2020, 1, 1);
 		filter.to = LocalDate.of(2020, 2, 1);
 
-		filter.applyDateRange(StatsFilter.DateRange.ALL_TIME, SESSION_2025);
+		applyRange(filter, StatsFilter.DateRange.ALL_TIME, SESSION_2025);
 
 		assertNull(filter.from);
 		assertNull(filter.to);
@@ -53,10 +67,10 @@ public class StatsAndExportFilterTest {
 	@Test
 	public void theTwoSessionHalvesPartitionTheSessionExactly() {
 		StatsFilter first = new StatsFilter(2025);
-		first.applyDateRange(StatsFilter.DateRange.SESSION_FIRST_HALF, SESSION_2025);
+		applyRange(first, StatsFilter.DateRange.SESSION_FIRST_HALF, SESSION_2025);
 
 		StatsFilter second = new StatsFilter(2025);
-		second.applyDateRange(StatsFilter.DateRange.SESSION_SECOND_HALF, SESSION_2025);
+		applyRange(second, StatsFilter.DateRange.SESSION_SECOND_HALF, SESSION_2025);
 
 		assertEquals(SESSION_2025.startDate, first.from);
 		assertEquals(SESSION_2025.endDate, second.to);
@@ -77,7 +91,7 @@ public class StatsAndExportFilterTest {
 				LocalDate.of(2025, 8, 1), LocalDate.of(2026, 5, 31));
 
 		StatsFilter filter = new StatsFilter(2025);
-		filter.applyDateRange(StatsFilter.DateRange.SESSION_FIRST_HALF, august);
+		applyRange(filter, StatsFilter.DateRange.SESSION_FIRST_HALF, august);
 
 		assertEquals(LocalDate.of(2025, 8, 1), filter.from);
 		assertTrue(filter.to.isAfter(LocalDate.of(2025, 11, 1)));
@@ -90,7 +104,7 @@ public class StatsAndExportFilterTest {
 		filter.from = LocalDate.of(2020, 1, 1);
 		filter.to = LocalDate.of(2020, 2, 1);
 
-		filter.applyDateRange(StatsFilter.DateRange.SESSION_FIRST_HALF, null);
+		filter.applyDateRange(StatsFilter.DateRange.SESSION_FIRST_HALF, null, null);
 
 		assertNull(filter.from);
 		assertNull(filter.to);
@@ -99,7 +113,7 @@ public class StatsAndExportFilterTest {
 	@Test
 	public void thisMonthSpansTheWholeCalendarMonth() {
 		StatsFilter filter = new StatsFilter(2025);
-		filter.applyDateRange(StatsFilter.DateRange.THIS_MONTH, SESSION_2025);
+		applyRange(filter, StatsFilter.DateRange.THIS_MONTH, SESSION_2025);
 
 		LocalDate today = LocalDate.now();
 		assertEquals(today.withDayOfMonth(1), filter.from);
@@ -111,7 +125,7 @@ public class StatsAndExportFilterTest {
 	@Test
 	public void lastMonthIsTheWholePreviousCalendarMonth() {
 		StatsFilter filter = new StatsFilter(2025);
-		filter.applyDateRange(StatsFilter.DateRange.LAST_MONTH, SESSION_2025);
+		applyRange(filter, StatsFilter.DateRange.LAST_MONTH, SESSION_2025);
 
 		LocalDate lastMonth = LocalDate.now().minusMonths(1);
 
@@ -126,10 +140,10 @@ public class StatsAndExportFilterTest {
 		// They are offered side by side and mean different things: one is a calendar month,
 		// the other a rolling window that usually straddles two.
 		StatsFilter calendar = new StatsFilter(2025);
-		calendar.applyDateRange(StatsFilter.DateRange.LAST_MONTH, SESSION_2025);
+		applyRange(calendar, StatsFilter.DateRange.LAST_MONTH, SESSION_2025);
 
 		StatsFilter rolling = new StatsFilter(2025);
-		rolling.applyDateRange(StatsFilter.DateRange.LAST_30_DAYS, SESSION_2025);
+		applyRange(rolling, StatsFilter.DateRange.LAST_30_DAYS, SESSION_2025);
 
 		assertNotEquals(calendar.from, rolling.from);
 		assertNotEquals(calendar.to, rolling.to);
@@ -150,7 +164,7 @@ public class StatsAndExportFilterTest {
 	@Test
 	public void lastThirtyDaysIsThirtyDaysInclusiveOfToday() {
 		StatsFilter filter = new StatsFilter(2025);
-		filter.applyDateRange(StatsFilter.DateRange.LAST_30_DAYS, SESSION_2025);
+		applyRange(filter, StatsFilter.DateRange.LAST_30_DAYS, SESSION_2025);
 
 		assertEquals(LocalDate.now(), filter.to);
 		assertEquals(30, ChronoUnit.DAYS.between(filter.from, filter.to) + 1);
@@ -162,7 +176,7 @@ public class StatsAndExportFilterTest {
 		filter.from = LocalDate.of(2025, 9, 3);
 		filter.to = LocalDate.of(2025, 9, 17);
 
-		filter.applyDateRange(StatsFilter.DateRange.CUSTOM, SESSION_2025);
+		applyRange(filter, StatsFilter.DateRange.CUSTOM, SESSION_2025);
 
 		assertEquals(LocalDate.of(2025, 9, 3), filter.from);
 		assertEquals(LocalDate.of(2025, 9, 17), filter.to);
@@ -253,7 +267,7 @@ public class StatsAndExportFilterTest {
 		filter.stream = Stream.BSc;
 		filter.department = Department.PHYSICS;
 		filter.division = Division.C;
-		filter.applyDateRange(StatsFilter.DateRange.THIS_MONTH, SESSION_2025);
+		applyRange(filter, StatsFilter.DateRange.THIS_MONTH, SESSION_2025);
 
 		filter.clearFilters();
 

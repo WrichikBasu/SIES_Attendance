@@ -9,6 +9,8 @@ constraintlayout = "2.2.2"
 navigationFragment = "2.10.1"
 navigationUi = "2.10.1"
 roomRuntime = "2.8.5"
+annotation = "1.11.0"
+springBoot = "4.1.1"
 lifecycleLivedataKtx = "2.11.0"
 lifecycleViewmodelKtx = "2.11.0"
 
@@ -26,6 +28,29 @@ room-runtime = { module = "androidx.room:room-runtime", version.ref = "roomRunti
 lifecycle-livedata-ktx = { group = "androidx.lifecycle", name = "lifecycle-livedata-ktx", version.ref = "lifecycleLivedataKtx" }
 lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "lifecycleViewmodelKtx" }
 
+# The JVM variant of androidx.annotation, so the shared module keeps the same
+# @NonNull / @Nullable imports the app already uses and the moved files need no
+# edits at all. compileOnly on both sides: the annotations are CLASS-retained and
+# nothing reads them at run time.
+annotation-jvm = { group = "androidx.annotation", name = "annotation-jvm", version.ref = "annotation" }
+
+# Server. The BOM is applied as a platform rather than through the
+# io.spring.dependency-management plugin, so the versions below come from one
+# place that is visible in this file.
+spring-boot-bom = { group = "org.springframework.boot", name = "spring-boot-dependencies", version.ref = "springBoot" }
+spring-boot-starter-web = { group = "org.springframework.boot", name = "spring-boot-starter-web" }
+spring-boot-starter-jdbc = { group = "org.springframework.boot", name = "spring-boot-starter-jdbc" }
+spring-boot-starter-actuator = { group = "org.springframework.boot", name = "spring-boot-starter-actuator" }
+spring-boot-starter-test = { group = "org.springframework.boot", name = "spring-boot-starter-test" }
+# Spring Boot 4 split its auto-configuration into a module per technology.
+# Without this one Flyway is on the classpath, is configured in
+# application.yml, and silently never runs.
+spring-boot-flyway = { group = "org.springframework.boot", name = "spring-boot-flyway" }
+flyway-core = { group = "org.flywaydb", name = "flyway-core" }
+flyway-postgresql = { group = "org.flywaydb", name = "flyway-database-postgresql" }
+postgresql = { group = "org.postgresql", name = "postgresql" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
 

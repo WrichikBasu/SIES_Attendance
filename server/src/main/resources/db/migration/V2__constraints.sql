@@ -286,6 +286,15 @@ ALTER TABLE lectures
 --
 -- STABLE, not IMMUTABLE, because it reads a table — so it cannot be used
 -- in an index or a CHECK constraint. Phase 4's HOD policy calls it.
+--
+-- The ORDER BY is load-bearing, not tidiness. academic_years_no_overlap
+-- above makes two containing sessions impossible from here on, but an
+-- imported backup can carry an overlap that predates the constraint, and
+-- then the answer has to be SOME ONE session rather than whichever row
+-- the planner reached first. The latest is the same tie-break
+-- DaoAcademicYear.findContainingSync applies on the device and the same
+-- one the statistics queries rely on, so a report built on this function
+-- agrees with the app rather than quietly disagreeing by one row.
 
 CREATE FUNCTION session_year_of(at timestamptz, zone text DEFAULT 'Asia/Kolkata')
     RETURNS integer
@@ -294,6 +303,7 @@ CREATE FUNCTION session_year_of(at timestamptz, zone text DEFAULT 'Asia/Kolkata'
         SELECT ay.academic_year
         FROM academic_years ay
         WHERE (at AT TIME ZONE zone)::date BETWEEN ay.start_date AND ay.end_date
+        ORDER BY ay.academic_year DESC
         LIMIT 1
     );
 

@@ -1,107 +1,153 @@
 # server
 
-The central PostgreSQL database for SIES Attendance, and in time the Spring Boot service in
-front of it. This directory currently holds **Phase 1 only**: the schema.
+The PostgreSQL schema and the Spring Boot service the attendance database is moving to.
 
-There is no build file yet. The migrations are plain SQL, laid out where Flyway will expect
-them, and applied by `tools/verify-schema.sh` until the Spring Boot module arrives in Phase 2.
+Nothing here touches the app's data. The migrations describe a database that does not exist
+yet; the service boots, applies them and answers a health check; the two query builders are
+translations of the app's own, checked by running both and comparing the rows.
 
 ```
 server/
-├── src/main/resources/db/migration/
-│   ├── V1__baseline.sql        the Room schema at version 10, translated
-│   └── V2__constraints.sql     what SQLite could not express
-├── src/test/sql/
-│   └── constraint_smoke_test.sql
-└── tools/
-    └── verify-schema.sh
+  build.gradle.kts                      Spring Boot 4.1 on Java 25
+  src/main/java/.../server/
+    SiesAttendanceServer.java           the application; no API yet, on purpose
+    sql/BoundStatement.java             a statement and its arguments, kept together
+    sql/PgSqlBits.java                  the fragments both builders share
+    sql/PostgresStatsDialect.java       the expressions behind each StatsGroupBy
+    sql/PgStatsQueryBuilder.java        StatsFilter  -> PostgreSQL
+    sql/PgExportQueryBuilder.java       ExportFilter -> PostgreSQL
+  src/main/resources/
+    application.yml                     every credential from the environment
+    db/migration/V1__baseline.sql       Room schema v10, translated faithfully
+    db/migration/V2__constraints.sql    the rules AcademicRules enforced in Java only
+  src/test/java/.../sql/SqlDumpTest.java    writes every statement for the differ
+  src/test/sql/constraint_smoke_test.sql    39 assertions, 25 of them rejections
+  tools/verify-schema.sh                a throwaway container, checked and removed
+  tools/dev-database.sh                 a local database that survives a restart
+  tools/roles.sql                       the three roles and what each may do
 ```
 
-## Verifying it
+The domain code the service shares with the app — the enums, `AcademicRules`, `ClassKey`,
+`NameFormat`, `BatchMatcher`, and the `StatsFilter` / `ExportFilter` / `LectureFilter`
+objects — lives in `:shared` at the repository root, compiled once and used by both.
+
+## Checking it
+
+Everything below needs only Docker and the Gradle wrapper. No database has to be installed
+and nothing is left running afterwards.
 
 ```sh
-./server/tools/verify-schema.sh            # apply, smoke-test, summarise
-./server/tools/verify-schema.sh --dump     # also print the resulting DDL
-```
+# The schema: apply both migrations to a throwaway postgres:18 container, run the
+# smoke test, print what landed, remove the container.
+./server/tools/verify-schema.sh
+./server/tools/verify-schema.sh --dump        # and print the DDL
 
-Needs `docker` and a local `postgres:18` image (override with `PG_IMAGE`). It starts a
-throwaway container, applies both migrations to an empty database, runs the smoke test, and
-removes the container. Nothing is left behind and no existing database is touched.
-
-The drift guard runs in the app's ordinary unit test suite, so it needs no database:
-
-```sh
+# The drift guard. No database at all: it compares the committed SQL against the Java
+# enums and AcademicRules, so it runs in the ordinary unit test suite.
 ./gradlew :app:testDebugUnitTest --tests '*PostgresSchemaDriftTest*'
+
+# Everything: the app, the shared domain module and the server.
+./gradlew test :app:testDebugUnitTest
+
+# The acceptance gate. Runs every statement on both engines and compares the rows.
+./gradlew :app:testDebugUnitTest :server:test
+python3 app/src/test/sql/sql_differ.py
 ```
 
-## The two migrations
+`PG_IMAGE` overrides the PostgreSQL version for both the verify script and the differ.
 
-**`V1__baseline.sql` is a translation, not a redesign.** Every table, column, index and foreign
-key in it exists in the device database today. The source of truth is the DDL Room generates
-into `app/build/generated/ap_generated_sources/debug/out/.../MainDatabase_Impl.java`, which is
-byte-for-byte what the app creates on a phone. Keeping V1 literal is what makes it reviewable
-against that file by eye, and what will make the Phase 3 import verifiable.
+## Running the service
 
-It deviates in three ways, each deliberate and each noted in the file:
+```sh
+./server/tools/dev-database.sh            # roles and an empty database, ~15 seconds
+eval "$(./server/tools/dev-database.sh --env)"
+./gradlew :server:bootRun                 # Flyway applies both migrations on first start
+curl -s localhost:8080/actuator/health
+./server/tools/dev-database.sh --reset    # throw it away
+```
 
-- **Identifiers are snake_case.** Unquoted identifiers fold to lower case in PostgreSQL, so
-  `studentID` would silently become `studentid`, and quoting every identifier forever is worse.
-  The column map at the foot of V1 is authoritative for the importer.
-- **Enum columns become native enum types**, with the Java `name()` strings as values, in
-  declaration order.
-- **Three of Room's indexes are omitted** because a primary key already provides them:
-  `index_professors_profID`, `index_professors_name_department_email` (implied by the unique
-  index on email alone) and `index_batch_desc_batchID_academicYear`.
+The database is left empty on purpose and Flyway fills it. `baseline-on-migrate` is false,
+so the service refuses a database that already has the schema but no Flyway history — which
+is what you get if you apply the SQL by hand. `MIGRATE=1 ./server/tools/dev-database.sh
+--reset` does exactly that, for poking at a schema in psql without running the service, and
+says so.
 
-**`V2__constraints.sql` is purely additive.** It drops and alters nothing from V1. It holds the
-invariants `AcademicRules.validate()` enforces in Java today — which hold only on the paths that
-remember to call it, and `CsvImporter`, `FragmentAddStudent` and `FragmentAddCourse` each call it
-separately — plus the guarantees SQLite had no way to state.
+Three roles, because the split is what will make the audit log in Phase 6 real rather than a
+convention. `sies_owner` owns every object and is used by Flyway and nothing else;
+`sies_app` is what the service connects as and cannot run DDL; `sies_auditor` reads. None is
+a superuser and none has `BYPASSRLS` — both of those bypass row-level security outright, and
+so does a table's owner unless the table is FORCEd, which is the other reason the service is
+not the owner. `tools/roles.sql` has the detail.
 
-## What changed from the device schema, and why
+## Two migrations, not one
 
-| Device | Server | Reason |
-| --- | --- | --- |
-| `ZonedDateTime` as `"epochSecond\|nano\|zone"` text | `timestamptz` + a `_zone` column | Every date filter had to slice the leading integer out (`SqlBits.EPOCH_START`) because the text sorts lexicographically. The zone is kept in its own column: `timestamptz` is an instant and renders in the *reader's* zone, so dropping it would move every lecture by hours for a report read from elsewhere. |
-| `academic_years.startEpoch` / `endEpoch` | dropped; replaced by a `daterange` exclusion constraint | They were derived from the dates at the **writing device's** time zone, so two phones in different zones produce different values for the same session and the stored number may be either. Recompute, never copy. |
-| `LocalDate` as epoch day | `date` | Unambiguous either way. |
-| `present` as `INTEGER` 0/1 | `boolean` | — |
-| enum columns as `TEXT` | native enum types | The database now rejects an unknown value at write time rather than `TypeConvertors.valueOf` throwing at read time, possibly a year later. |
-| `semester` as nullable `INTEGER`, validated in Java | `smallint` + `CHECK` | NULL stays valid on `student_year`: the column arrived at schema version 6 and older rows have no honest value. |
-| nothing | `created_at` / `created_by` / `updated_at` / `updated_by` / `row_version` | All nullable. Rows imported from device history must leave them NULL — see below. |
+`V1__baseline.sql` is a translation and nothing more. Every table, column, index and foreign
+key in it corresponds to something Room's generated `MainDatabase_Impl` creates, so the two
+can be read side by side and disagreements found by eye. It adds nothing except the
+provenance columns, which are nullable precisely so that an import can leave them unset.
 
-## Two things worth knowing before Phase 3
+`V2__constraints.sql` is where the rules go that `AcademicRules` enforced in Java and the
+SQLite schema could not express: no overlapping sessions, a department that actually offers
+the stream it teaches, a semester that belongs to the year, a division only on a stream that
+has them.
 
-**`batch_desc` had no uniqueness on `(batch_name, academic_year)`.** `index_batch_desc_batchID_academicYear`
-looks like it provides one, but `batchID` is already the primary key, so that index guarantees
-nothing. Meanwhile `DatabaseMerger` matches batches on exactly that pair. Two batches called
-"Batch A" in one session are therefore possible today, and the merge would fold one into the
-other, taking its membership and its lectures with it. V2 adds the constraint. It is the one most
-likely to reject real data; review any violation by hand rather than relaxing it.
+Keeping them apart means V1 stays diffable against the generated DDL for as long as the app
+exists, and V2 can be read as the list of things the database now refuses.
 
-**Nothing in `attendance` records who marked it.** The source table is three columns: lecture,
-student, present. Every row imported from history is genuinely unattributable, so it must be
-imported with `created_by` NULL. Attributing old marks to a plausible professor would be
-fabricating an audit record, which is worse than an honest gap.
+## What the device schema loses, and why
+
+| Room | Here | Why |
+|---|---|---|
+| `startEpoch`, `endEpoch` on `academic_years` | dropped | Derived at whichever device wrote the row. `session_year_of(at, zone)` takes the zone as a parameter instead. |
+| `"epochSecond\|nano\|zone"` text | `timestamptz` + a `_zone` column beside it | The instant is the instant; the zone is what it was recorded in, and both are needed. |
+| `present INTEGER` 0/1 | `boolean` | |
+| enum names in `TEXT` | native enum types | The values are the Java `name()` strings, in declaration order. |
+| epoch-day integers | `date` | |
+
+## Findings
+
+Four things the translation turned up, all of them about the app rather than the schema.
+
+**`batch_desc` has no uniqueness on the name.** Room's
+`index_batch_desc_batchID_academicYear` guarantees nothing, because `batchID` is already the
+primary key — while `DatabaseMerger` reconciles batches on `batchName + academicYear`. Two
+devices that each created a "Batch A" in the same session would merge into one batch,
+carrying their membership and their lectures together. V2 adds `UNIQUE (batch_name,
+academic_year)`. Collisions in real data have to be resolved by hand; relaxing the
+constraint would leave the merge ambiguous for good.
+
+**The statistics report was never deterministically ordered.** Found by the differ, which
+is the only reason anyone would find it: two lectures of the same course on the same day
+produce the identical label, and the ORDER BY stopped at the label. The row order between
+them was whatever the engine happened to produce — the two engines disagreed, and the same
+engine could disagree with itself after a plan change. Both builders now fall back to the
+row's own id. This is a change to the app's generated SQL, the only one in Phase 2.
+
+**A minor or open elective can only come from a department that runs the student's own
+stream.** `FragmentAddCourse` links the offering department to the stream — "a Mass Media
+course can only be BAMMC" — so a course's stream must be one its department offers, and V2
+enforces that as a foreign key. But the export's roster join handles a minor taught by
+another department, matching `c.stream = y.stream`. For a BSc_unaided Computer Science
+class, that branch can therefore only ever match a minor from another *unaided* BSc
+department. A Mathematics minor, Mathematics being aided, cannot be recorded at all. Either
+the course form is too strict for minors and electives or the roster join promises more than
+it can deliver; they cannot both be right. Worth deciding before Phase 3 imports real
+courses, because the importer will reject whatever the form would have.
+
+**Spring Boot 4 does not auto-configure Flyway from `flyway-core` alone.** Boot 4 split its
+auto-configuration into a module per technology. With `flyway-core` on the classpath and
+`spring.flyway.*` filled in, the service starts cleanly, reports healthy, and never applies
+a migration. `org.springframework.boot:spring-boot-flyway` is what makes it run.
 
 ## Expect the import to be rejected
 
-V1 and V2 are applied to an empty database, so every statement in them succeeds. The consequence
-lands in Phase 3 instead: the importer will be rejected by these constraints on any historical
-row that violates one. That is the intent — such a row is a real defect in the data, and the
-import report should surface it for review. Candidates to expect:
+The constraints go on an empty database, so nothing in them can damage existing data. They
+will, however, reject rows from the devices — that is their job. When Phase 3's importer
+stops on one, the thing to fix is the data, after looking at it. Relaxing a constraint to
+let a row in puts the contradiction back in the database where nobody will see it again.
 
-- two batches sharing a name within one academic year
-- two whole-class lectures in the same slot for one course (SQLite allowed this: NULLs are
-  distinct in a unique index, which is the gap `DaoLecture.findExisting` patches in Java)
-- a `student_year` row whose stream its major department does not offer
-- an `academic_year` referenced by a student or batch but with no row of its own
-- a student whose minor or open elective is their own major department
+## Not here yet
 
-## Deliberately not here yet
-
-`id_remap` (Phase 3), `app_user` / `role` / `user_role` / `device_registration` and the row-level
-security policies (Phase 4), and `audit_log` with its triggers (Phase 5). The three ID helper
-functions in V1 — `id_is_structured`, `id_node`, `id_created_at` — are a port of `IdGenerator`'s
-bit layout and are here early because Phase 4 needs `id_node()` to reject an uploaded row whose
-key claims a device other than the one presenting the token.
+No API, no authentication, no importer, no audit log. Those are Phases 3 to 6, and an
+endpoint written before there is anything to serve or anyone to authenticate would be an
+endpoint with no caller and no access control.

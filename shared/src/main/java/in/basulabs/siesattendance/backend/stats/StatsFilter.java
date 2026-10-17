@@ -9,8 +9,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-import in.basulabs.siesattendance.backend.EntityAcademicYear;
-
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.Division;
@@ -175,15 +173,18 @@ public class StatsFilter {
 	 * <p>
 	 * The half-session presets are derived from the selected session's own dates rather than
 	 * from a hardcoded month, so a college running August to May gets a sensible split without
-	 * any code change. {@code session} may be null when no session is selected, in which case
-	 * the half-session options fall back to leaving the window open.
+	 * any code change. The two bounds are passed as plain dates rather than as a session row,
+	 * because that row is a Room entity on the app side and a result set on the server, and
+	 * this class is compiled into both. Either may be null when no session is selected, in
+	 * which case the half-session options fall back to leaving the window open.
 	 * <p>
 	 * "Whole session" leaves the date window unset on purpose: the academic year filter already
 	 * bounds the query through the session join, so adding redundant date conditions would only
 	 * be another thing that could disagree with it.
 	 */
 	public void applyDateRange(@NonNull DateRange range,
-	                           @Nullable EntityAcademicYear session) {
+	                           @Nullable LocalDate sessionStart,
+	                           @Nullable LocalDate sessionEnd) {
 
 		dateRange = range;
 		LocalDate today = LocalDate.now();
@@ -216,21 +217,21 @@ public class StatsFilter {
 
 			case SESSION_FIRST_HALF:
 			case SESSION_SECOND_HALF:
-				if (session == null) {
+				if (sessionStart == null || sessionEnd == null) {
 					from = null;
 					to = null;
 					break;
 				}
 
-				long days = ChronoUnit.DAYS.between(session.startDate, session.endDate) + 1;
-				LocalDate midpoint = session.startDate.plusDays(days / 2);
+				long days = ChronoUnit.DAYS.between(sessionStart, sessionEnd) + 1;
+				LocalDate midpoint = sessionStart.plusDays(days / 2);
 
 				if (range == DateRange.SESSION_FIRST_HALF) {
-					from = session.startDate;
+					from = sessionStart;
 					to = midpoint.minusDays(1);
 				} else {
 					from = midpoint;
-					to = session.endDate;
+					to = sessionEnd;
 				}
 				break;
 
