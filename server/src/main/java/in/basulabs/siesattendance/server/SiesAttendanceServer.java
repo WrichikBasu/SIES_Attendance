@@ -6,16 +6,21 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 /**
  * The service.
  * <p>
- * Deliberately almost empty. Phase 2 is the skeleton: it boots, it applies the migrations, and
- * it says whether it can reach the database. There is no API yet, because there is nothing in
- * the database to serve — the importer is Phase 3 and authentication is Phase 5, and an
- * endpoint that returned attendance before either existed would be an endpoint with no caller
- * and no access control.
+ * Four endpoints, under {@code /api/v1}: signing in, registering a device, exporting a register,
+ * and loading a roster. Every one of them needs a bearer token except the first, and the token is
+ * the only way an actor is established — see {@code BearerTokenFilter} and {@code ActorDatabase},
+ * which together are the reason the policies written in Phase 4 and the audit entries written in
+ * Phase 5 are now reachable by something other than a test.
  * <p>
- * What does exist is the half that can be built and checked without a single row: the
- * PostgreSQL translations of the two query builders, in {@code in.basulabs.siesattendance
- * .server.sql}. They are exercised by dumping every statement they produce and running it
- * against a real PostgreSQL instance beside the SQLite one, row for row.
+ * What is deliberately still absent is the sync pair: the write path that drains a device's
+ * outbox and the pull that answers "everything since this watermark". Their shape is the
+ * outbox's shape, and the outbox is Phase 6's. An endpoint written before its caller exists is an
+ * endpoint whose shape is a guess.
+ * <p>
+ * The half that can be built and checked without a client at all is in
+ * {@code in.basulabs.siesattendance.server.sql}: the PostgreSQL translations of the two query
+ * builders, exercised by dumping every statement they produce and running it against a real
+ * PostgreSQL instance beside the SQLite one, row for row.
  */
 @SpringBootApplication
 public class SiesAttendanceServer {

@@ -34,6 +34,12 @@
 --     BackupImporter.Request takes one, and ImportCommand's
 --     --import.account is how it is supplied.
 --
+--   * THE SERVICE MAY NOT DELETE A SESSION OR A DEVICE. V8 revokes
+--     DELETE on app_session and device_registration from sies_app, for
+--     the same reason nothing deletes a role or a CR grant: a session
+--     is revoked and a device is revoked, because the node a device was
+--     given is in the primary key of every row it ever wrote.
+--
 --   * BOOTSTRAPPING USES sies_owner. user_role's policies let only an
 --     ADMIN grant the ADMIN role, and the first grant has nobody to make
 --     it, so BootstrapCommand connects as the migration role instead.
@@ -94,7 +100,12 @@ ALTER DEFAULT PRIVILEGES FOR ROLE sies_owner IN SCHEMA public
     GRANT USAGE, SELECT ON SEQUENCES TO sies_app;
 
 -- Functions: session_year_of is called by the statistics queries, and in
--- Phase 4 by the row-level security policies.
+-- Phase 4 by the row-level security policies. From Phase 5.5 this also
+-- covers the handful of SECURITY DEFINER functions the endpoints reach
+-- identity through -- node_for_install, device_session_binding,
+-- exportable_courses and the rest -- which exist precisely because
+-- verifying a token happens before there is an actor to apply a policy
+-- to.
 ALTER DEFAULT PRIVILEGES FOR ROLE sies_owner IN SCHEMA public
     GRANT EXECUTE ON FUNCTIONS TO sies_app, sies_auditor;
 

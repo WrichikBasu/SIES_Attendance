@@ -76,6 +76,40 @@ public final class Passwords {
 		return memory < MEMORY_KIB || iterations < ITERATIONS || parallelism < PARALLELISM;
 	}
 
+	/**
+	 * The shortest password that will be accepted when one is being set.
+	 * <p>
+	 * Twelve, and that is the only rule. No required digit, no required symbol, no forced
+	 * mixture of cases: composition rules push people towards {@code Password1!} and away from
+	 * the long, memorable, unguessable thing they would otherwise have chosen, which is the
+	 * opposite of the intended effect. Length is the property that actually costs an attacker
+	 * something.
+	 */
+	public static final int MINIMUM_LENGTH = 12;
+
+	/**
+	 * Why a password may not be set, or null when it may.
+	 * <p>
+	 * Checked when a password is <em>chosen</em>, never when one is checked: an account whose
+	 * existing password is shorter than this still signs in, because locking somebody out of
+	 * their own records to enforce a rule nobody told them about is worse than the short
+	 * password. {@code must_rotate} is how such an account gets moved along.
+	 */
+	@androidx.annotation.Nullable
+	public static String tooWeak(@NonNull char[] password) {
+
+		if (password.length < MINIMUM_LENGTH) {
+			return "A password must be at least " + MINIMUM_LENGTH + " characters long.";
+		}
+
+		for (char c : password) {
+			if (!Character.isWhitespace(c)) {
+				return null;
+			}
+		}
+		return "A password cannot be only spaces.";
+	}
+
 	/** One {@code key=value} out of the encoded parameters, or -1 when it is not there. */
 	private static int parameter(@NonNull String hash, @NonNull String key) {
 

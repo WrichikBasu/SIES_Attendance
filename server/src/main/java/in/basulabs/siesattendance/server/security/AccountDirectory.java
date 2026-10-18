@@ -124,6 +124,21 @@ public final class AccountDirectory {
 	@NonNull
 	public Attempt authenticate(@NonNull String email, @NonNull Door door,
 	                            @NonNull char[] password) throws SQLException {
+		return authenticate(email, door, password, null, null);
+	}
+
+	/**
+	 * The same, carrying what the request knows.
+	 * <p>
+	 * The address and the build go into the {@code LOGIN} and {@code LOGIN_FAILED} entries, and
+	 * they are most of the value in them: one refusal says somebody mistyped a password, a run
+	 * of refusals from one address says somebody is working through a list, and only the second
+	 * is visible if the entries carry where they came from.
+	 */
+	@NonNull
+	public Attempt authenticate(@NonNull String email, @NonNull Door door,
+	                            @NonNull char[] password, @Nullable String clientIp,
+	                            @Nullable String appVersion) throws SQLException {
 
 		try (Connection connection = dataSource.getConnection()) {
 
@@ -134,7 +149,8 @@ public final class AccountDirectory {
 			connection.setAutoCommit(false);
 
 			try {
-				Attempt attempt = authenticate(connection, email, door, password);
+				Attempt attempt = authenticate(connection, email, door, password, clientIp,
+						appVersion);
 				connection.commit();
 				return attempt;
 
@@ -152,7 +168,8 @@ public final class AccountDirectory {
 
 	@NonNull
 	private Attempt authenticate(@NonNull Connection connection, @NonNull String email,
-	                             @NonNull Door door, @NonNull char[] password)
+	                             @NonNull Door door, @NonNull char[] password,
+	                             @Nullable String clientIp, @Nullable String appVersion)
 			throws SQLException {
 
 		Stored stored = find(connection, email, door);
@@ -169,14 +186,19 @@ public final class AccountDirectory {
 			// failed logins is a list of valid addresses as soon as somebody reads it
 			// alongside the successes.
 			ActorSession.announceUnattributed(connection, "an unknown address, at the "
-					+ door.name().toLowerCase(java.util.Locale.ROOT) + " door");
+							+ door.name().toLowerCase(java.util.Locale.ROOT) + " door",
+					clientIp, appVersion);
 			AuditLog.record(connection, AuditAction.LOGIN_FAILED);
 
 			return new Attempt(null, Refusal.NO_SUCH_ACCOUNT, false);
 		}
 
-		ActorSession.announce(connection, ActorSession.Actor.ofAccount(
-				stored.accountId, stored.displayName));
+		ActorSession.announce(connection, ActorSession.Actor
+				.ofAccount(stored.accountId, stored.displayName)
+				.fromAddress(clientIp)
+				// No node: the session this attempt is about does not exist yet, so there is no
+				// device bound to it. The build is known from the request header either way.
+				.fromDevice(null, appVersion));
 
 		if (stored.disabledAt != null) {
 			AuditLog.record(connection, AuditAction.LOGIN_FAILED,
@@ -251,33 +273,70 @@ public final class AccountDirectory {
 	 */
 	public void setPassword(long accountId, @NonNull char[] password, @Nullable Long actedBy)
 			throws SQLException {
+		setPassword(accountId, password, actedBy, null);
+	}
+
+	/**
+	 * Whether this is the account's current password.
+	 * <p>
+	 * Writes nothing: no audit entry, no failure counted, no lock. That is right for the one
+	 * caller — somebody changing their own password on a session that has already been
+	 * authenticated — because the token in their hand can do everything the account can do
+	 * anyway, so there is nothing here for guessing to win. What requiring the old password does
+	 * buy is that a token lifted from an unlocked phone cannot be used to take the account over
+	 * by changing the password out from under its owner.
+	 * <p>
+	 * Not a login, and must not be used as one: {@link #authenticate} is the method that counts
+	 * failures and records what happened.
+	 */
+	public boolean matchesPassword(long accountId, @NonNull char[] password) throws SQLException {
+
+		try (Connection connection = dataSource.getConnection();
+		     PreparedStatement statement = connection.prepareStatement(
+				     "SELECT password_hash FROM app_account WHERE account_id = ?")) {
+
+			statement.setLong(1, accountId);
+
+			try (ResultSet results = statement.executeQuery()) {
+
+				if (!results.next()) {
+					return false;
+				}
+				return Passwords.encoder().matches(CharBuffer.wrap(password),
+						results.getString(1));
+			}
+
+		} finally {
+			Arrays.fill(password, '\0');
+		}
+	}
+
+	/**
+	 * The same again, with a name for the log rather than an account number.
+	 *
+	 * @param actorLabel what {@code audit_log.actor_label} should read. Null falls back to
+	 *                   "account N", which is worse than a name and better than "system"
+	 */
+	public void setPassword(long accountId, @NonNull char[] password, @Nullable Long actedBy,
+	                        @Nullable String actorLabel) throws SQLException {
 
 		try (Connection connection = dataSource.getConnection()) {
 
 			connection.setAutoCommit(false);
 
 			try {
-				writeHash(connection, accountId,
-						Passwords.encoder().encode(CharBuffer.wrap(password)), false);
-
-				try (PreparedStatement statement = connection.prepareStatement(
-						"UPDATE app_account SET failed_logins = 0, locked_until = NULL "
-								+ "WHERE account_id = ?")) {
-					statement.setLong(1, accountId);
-					statement.executeUpdate();
-				}
-
 				long actor = actedBy == null ? accountId : actedBy;
 
-				ActorSession.announce(connection, ActorSession.Actor.ofAccount(
-						actor, "account " + actor));
+				// FIRST, before either write. The audit trigger on app_account reads the actor
+				// from the session, so a statement issued before this one is recorded as
+				// "system" -- which is what the first draft of this method did: the
+				// PASSWORD_ROTATE entry named the person and the row entry beside it, for the
+				// same change in the same transaction, named nobody. Announcing an actor is
+				// not a thing to do on the way out.
+				ActorSession.announce(connection, ActorSession.Actor.ofAccount(actor,
+						actorLabel == null ? "account " + actor : actorLabel));
 
-				// Which account's password, since a reset by somebody else is the interesting
-				// case and the actor alone does not say whose it was.
-				AuditLog.record(connection, AuditAction.PASSWORD_ROTATE, "app_account",
-						AuditLog.detail("account_id", accountId),
-						AuditLog.detail("reset_by_another", actedBy != null));
-
+				setPassword(connection, accountId, password, actedBy);
 				connection.commit();
 
 			} catch (SQLException | RuntimeException e) {
@@ -286,6 +345,45 @@ public final class AccountDirectory {
 			} finally {
 				connection.setAutoCommit(true);
 			}
+
+		} finally {
+			Arrays.fill(password, '\0');
+		}
+	}
+
+	/**
+	 * The same again, on a caller's own transaction, which must already have had an actor
+	 * announced on it.
+	 * <p>
+	 * For a caller that has a request's actor in hand — the endpoint somebody changes their own
+	 * password at. Going through this rather than the method above is what makes the entries
+	 * carry the session, the device and the address the change was made from, instead of the
+	 * bare account id this class would have to make up on its own.
+	 *
+	 * @param actedBy the account performing the change when that is not the owner, for the
+	 *                detail. The <em>actor</em> is whoever the caller announced, which is not
+	 *                this method's business
+	 */
+	public static void setPassword(@NonNull Connection connection, long accountId,
+	                               @NonNull char[] password, @Nullable Long actedBy)
+			throws SQLException {
+
+		try {
+			writeHash(connection, accountId,
+					Passwords.encoder().encode(CharBuffer.wrap(password)), false);
+
+			try (PreparedStatement statement = connection.prepareStatement(
+					"UPDATE app_account SET failed_logins = 0, locked_until = NULL "
+							+ "WHERE account_id = ?")) {
+				statement.setLong(1, accountId);
+				statement.executeUpdate();
+			}
+
+			// Which account's password, since a reset by somebody else is the interesting case
+			// and the actor alone does not say whose it was.
+			AuditLog.record(connection, AuditAction.PASSWORD_ROTATE, "app_account",
+					AuditLog.detail("account_id", accountId),
+					AuditLog.detail("reset_by_another", actedBy != null));
 
 		} finally {
 			Arrays.fill(password, '\0');

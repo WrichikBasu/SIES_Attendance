@@ -357,6 +357,69 @@ SELECT assert_rejected($$DELETE FROM professors WHERE prof_id = 1001$$,
     'deleting a professor who coordinates a course');
 
 
+-- ── V8: sessions and devices ─────────────────────────────────────────
+\echo '-- the wire'
+
+-- An account to hang them off. STAFF, so it points at neither a
+-- professor nor a student, which is what app_account_exactly_one_person
+-- allows for office staff.
+INSERT INTO app_account (account_id, kind, display_name, login_email, password_hash)
+    VALUES (9001, 'STAFF', 'Smoke Clerk', 'smoke@sies.edu.in', '{argon2id}$not-a-real-hash');
+
+INSERT INTO device_registration (device_id, install_id, node, provisional_node, label,
+                                 registered_by)
+    VALUES (9101, '11111111-1111-1111-1111-111111111111', 7, 40000, 'Smoke phone', 9001);
+
+SELECT assert_equal(
+    (SELECT node_for_install('11111111-1111-1111-1111-111111111111')), 7,
+    'node_for_install answers for a live registration');
+
+-- Zero is the server's own node and is outside the assignable range, so
+-- no device may ever hold it.
+SELECT assert_rejected($$
+    INSERT INTO device_registration (install_id, node, label, registered_by)
+    VALUES ('22222222-2222-2222-2222-222222222222', 0, 'Zero', 9001)$$,
+    'a device claiming the server''s own node');
+
+-- The halves do not overlap in either direction: an assigned node may
+-- not come from the self-picked half, and a provisional node may not
+-- come from the assigned half.
+SELECT assert_rejected($$
+    INSERT INTO device_registration (install_id, node, label, registered_by)
+    VALUES ('22222222-2222-2222-2222-222222222222', 40001, 'Too high', 9001)$$,
+    'an assigned node from the half a device picks for itself');
+
+SELECT assert_rejected($$
+    INSERT INTO device_registration (install_id, provisional_node, label, registered_by)
+    VALUES ('22222222-2222-2222-2222-222222222222', 17, 'Wrong half', 9001)$$,
+    'a provisional node from the assignable half');
+
+SELECT assert_rejected($$
+    INSERT INTO device_registration (install_id, label, registered_by)
+    VALUES ('11111111-1111-1111-1111-111111111111', 'The same install twice', 9001)$$,
+    'registering one install twice');
+
+-- Not deleted, revoked: the node is in the key of every row that install
+-- ever wrote.
+SELECT assert_rejected($$
+    UPDATE device_registration SET revoked_at = now() WHERE device_id = 9101$$,
+    'revoking a device without saying who revoked it');
+
+INSERT INTO app_session (session_id, account_id, token_hash, device_id, expires_at)
+    VALUES ('33333333-3333-3333-3333-333333333333', 9001, '\x0001'::bytea, 9101,
+            now() + interval '14 days');
+
+SELECT assert_rejected($$
+    INSERT INTO app_session (account_id, token_hash, expires_at)
+    VALUES (9001, '\x0002'::bytea, now() - interval '1 day')$$,
+    'a session that expired before it was issued');
+
+SELECT assert_rejected($$
+    INSERT INTO app_session (account_id, token_hash, expires_at)
+    VALUES (9001, '\x0001'::bytea, now() + interval '1 day')$$,
+    'two sessions sharing a token');
+
+
 \o
 
 \echo '-- ALL ASSERTIONS PASSED'

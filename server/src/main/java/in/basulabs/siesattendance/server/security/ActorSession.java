@@ -195,6 +195,21 @@ public final class ActorSession {
 	 */
 	public static void announceUnattributed(@NonNull Connection connection,
 	                                        @NonNull String label) throws SQLException {
+		announceUnattributed(connection, label, null, null);
+	}
+
+	/**
+	 * The same, with the request context that is known even when the account is not.
+	 * <p>
+	 * There is one caller: a login attempt at an address nobody has. The account is genuinely
+	 * unknown, but where the attempt came from and which build made it are known and are the
+	 * most useful things in the entry — a run of refusals from one address is the shape of
+	 * somebody working through a list, and that cannot be seen in entries that record only that
+	 * a refusal happened.
+	 */
+	public static void announceUnattributed(@NonNull Connection connection, @NonNull String label,
+	                                        @Nullable String clientIp,
+	                                        @Nullable String appVersion) throws SQLException {
 
 		requireTransaction(connection);
 
@@ -207,9 +222,13 @@ public final class ActorSession {
 				"SELECT set_config('app.account_id',  '', true),"
 						+ "       set_config('app.prof_id',     '', true),"
 						+ "       set_config('app.student_id',  '', true),"
-						+ "       set_config('app.actor_label',  ?, true)")) {
+						+ "       set_config('app.actor_label',  ?, true),"
+						+ "       set_config('app.client_ip',    ?, true),"
+						+ "       set_config('app.app_version',  ?, true)")) {
 
 			statement.setString(1, label);
+			statement.setString(2, clientIp == null ? "" : clientIp);
+			statement.setString(3, appVersion == null ? "" : appVersion);
 			statement.execute();
 		}
 	}

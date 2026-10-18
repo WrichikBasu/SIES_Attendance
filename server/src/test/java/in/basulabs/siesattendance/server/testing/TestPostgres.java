@@ -163,6 +163,20 @@ public final class TestPostgres implements AutoCloseable {
 						+ "?user=" + APP_ROLE + "&password=" + APP_PASSWORD);
 	}
 
+	/** The JDBC url the service itself should connect on: as {@code sies_app}, like production. */
+	public String appJdbcUrl() {
+		return "jdbc:postgresql://localhost:" + PORT + "/" + DATABASE;
+	}
+
+	/** The role the service connects as. Not the owner, not a superuser, no BYPASSRLS. */
+	public static String appUsername() {
+		return APP_ROLE;
+	}
+
+	public static String appPassword() {
+		return APP_PASSWORD;
+	}
+
 	/**
 	 * A connection as the auditor: {@code SELECT} on everything including the audit log, and
 	 * nothing else anywhere.
@@ -290,11 +304,19 @@ public final class TestPostgres implements AutoCloseable {
 					// a grant or a role surviving into the next test would make a policy
 					// test pass for the wrong reason.
 					+ "app_account, user_role, attendance_delegate, "
+					// V8's. A session or a device surviving into the next test would make a
+					// token test pass for the wrong reason.
+					+ "app_session, device_registration, "
 					// Partitioned: truncating the parent empties every partition. Emptied
 					// between tests like anything else, because an audit entry from the
 					// previous test is indistinguishable from one this test caused.
 					+ "audit_log "
 					+ "RESTART IDENTITY CASCADE");
+
+			// Owned by no table, so RESTART IDENTITY does not reach it: device_node_seq is
+			// a sequence of its own, read by a column default. Restarted so that a failure
+			// message names node 1 rather than node 37.
+			statement.execute("ALTER SEQUENCE device_node_seq RESTART WITH 1");
 		}
 	}
 

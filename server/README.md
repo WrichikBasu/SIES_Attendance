@@ -3,16 +3,31 @@
 The PostgreSQL schema and the Spring Boot service the attendance database is moving to.
 
 Nothing here touches the app's data. The migrations describe a database that does not exist
-yet; the service boots, applies them and answers a health check; the two query builders are
-translations of the app's own, checked by running both and comparing the rows. The importer
-reads a device's own encrypted backup and folds it in, resolving every row before it writes
-one.
+yet; the two query builders are translations of the app's own, checked by running both and
+comparing the rows; the importer reads a device's own encrypted backup and folds it in,
+resolving every row before it writes one.
+
+The service now answers four endpoints under `/api/v1` — sign in, register a device, export a
+register, load a roster — and a bearer token is the only way to reach any of them. The sync pair
+that Phase 6's client will need, the outbox drain and the watermark pull, is deliberately still
+absent: its shape is the outbox's shape.
 
 ```
 server/
   build.gradle.kts                      Spring Boot 4.1 on Java 25
   src/main/java/.../server/
-    SiesAttendanceServer.java           the application; no API yet, on purpose
+    SiesAttendanceServer.java           the application
+    web/Api.java                        the versioned path, the headers, the error shape
+    web/BearerTokenFilter.java          the one way identity enters the server
+    web/RequestActor.java               who is making this request
+    web/ActorDatabase.java              one transaction, with the actor announced on it
+    web/AuthController.java             sign in, change a password, sign out
+    web/DeviceController.java           a node number per install, idempotently
+    web/ExportController.java           the register, narrowed to what you may export
+    web/RosterController.java           a CSV in, students and student_year out
+    web/LoginRateLimiter.java           attempts per address, in memory
+    web/ApiAdvice.java                  every error as one shape
+    web/WebBeans.java                   what the service is made of
     sql/BoundStatement.java             a statement and its arguments, kept together
     sql/PgSqlBits.java                  the fragments both builders share
     sql/PostgresStatsDialect.java       the expressions behind each StatsGroupBy
@@ -30,6 +45,9 @@ server/
     security/ActorSession.java          who is acting, for one transaction
     security/BootstrapCommand.java      the first administrator, once
     security/AuditLog.java              the events no trigger can see
+    security/Sessions.java              opaque bearer tokens, revocable
+    security/DeviceRegistry.java        which install is which
+    importer/RosterImporter.java        the shared CSV parser, into PostgreSQL
   src/main/resources/
     application.yml                     every credential from the environment
     application-import.yml              the importer is a command, not a service
@@ -41,6 +59,7 @@ server/
     db/migration/V5__identity.sql       accounts, roles, CR grants, the roster function
     db/migration/V6__row_level_security.sql   which rows each of them reaches
     db/migration/V7__audit_log.sql      append-only by privilege, not by convention
+    db/migration/V8__the_wire.sql       sessions, devices, and who may export what
   src/test/java/.../sql/SqlDumpTest.java         writes every statement for the differ
   src/test/java/.../importer/BackupImporterTest.java   14 tests, against a real database
   src/test/java/.../importer/DeviceBackup.java   builds a genuine .siesbak
@@ -48,12 +67,15 @@ server/
   src/test/java/.../security/RowLevelSecurityTest.java   20 tests, as a constrained role
   src/test/java/.../security/AccountDirectoryTest.java   15 tests, the credential layer
   src/test/java/.../audit/AuditLogTest.java      15 tests, as a role that may not tidy up
+  src/test/java/.../web/WireTest.java            35 tests, the whole service over HTTP
+  src/test/java/.../web/LoginRateLimiterTest.java   6 tests, no container needed
   src/test/java/.../testing/TestPostgres.java    the throwaway container, shared
-  src/test/sql/constraint_smoke_test.sql    39 assertions, 25 of them rejections
+  src/test/sql/constraint_smoke_test.sql    52 assertions, 35 of them rejections
   tools/verify-schema.sh                a throwaway container, checked and removed
   tools/verify-import.sh                the importer, against a real PostgreSQL
   tools/verify-rls.sh                   the policies, as a role they apply to
   tools/verify-audit.sh                 the trail, and that nobody can edit it
+  tools/verify-wire.sh                  the endpoints, over real HTTP
   tools/dev-database.sh                 a local database that survives a restart
   tools/roles.sql                       the three roles and what each may do
 ```
@@ -97,6 +119,15 @@ python3 app/src/test/sql/sql_differ.py
 # including one at schema v6, so the migration path and the legacy keys are both
 # exercised — imports them into a throwaway database, and looks at the rows.
 ./server/tools/verify-import.sh
+
+# The Phase 4 and 5 gates. Both connect as a role the policies apply to, because a
+# superuser would pass against a database with no policies in it at all.
+./server/tools/verify-rls.sh
+./server/tools/verify-audit.sh
+
+# The Phase 5.5 gate. Boots the whole service on a random port against a throwaway
+# database and talks to it over HTTP, as sies_app.
+./server/tools/verify-wire.sh
 ```
 
 `PG_IMAGE` overrides the PostgreSQL version for both the verify script and the differ.
@@ -117,7 +148,7 @@ is what you get if you apply the SQL by hand. `MIGRATE=1 ./server/tools/dev-data
 --reset` does exactly that, for poking at a schema in psql without running the service, and
 says so.
 
-Three roles, because the split is what will make the audit log in Phase 6 real rather than a
+Three roles, because the split is what makes the audit log real rather than a
 convention. `sies_owner` owns every object and is used by Flyway and nothing else;
 `sies_app` is what the service connects as and cannot run DDL; `sies_auditor` reads. None is
 a superuser and none has `BYPASSRLS` — both of those bypass row-level security outright, and
@@ -365,6 +396,143 @@ A real import of the sample device produces 58 entries — 57 row changes and on
 `BACKUP_IMPORT` carrying the per-table report — all labelled
 `pre-migration (import #1 from RaoPhone)` against the account that ran it.
 
+## The wire
+
+Four endpoints, all under `/api/v1`, and the version is in the path from the first response
+rather than from the first time two versions exist. An old build receiving an enum constant it
+has never heard of throws in `TypeConvertors`, by design — the device would rather fail than
+store a value it cannot read back — and that design only holds if the server can tell which
+client it is talking to.
+
+```
+POST /api/v1/auth/login       email, door, password, optionally an install
+POST /api/v1/auth/password    the current one and the new one
+POST /api/v1/auth/logout      revokes this session
+POST /api/v1/devices          an install id in, a node number out
+GET  /api/v1/export           the register, as JSON rows
+POST /api/v1/roster           a text/csv body in, counts out
+```
+
+`/actuator/health` is outside all of it: the token filter is registered for `/api/*` alone, so
+a health probe answers before anybody has signed in.
+
+### The token is a row, not a claim
+
+A signed self-contained token is a statement the server cannot withdraw, and the usual
+compensation is to make it expire in minutes. That trade is the wrong way round here. A
+professor in a basement laboratory marks a register with no signal and cannot refresh anything;
+a token that expires while they are out of range fails at exactly the moment the app is
+supposed to keep working.
+
+So `app_session` holds a row per token, the token is thirty-two random bytes with no claims in
+it at all, and what is stored is its SHA-256 — somebody who reads every row cannot sign in with
+any of them. Revoking is an `UPDATE` that takes effect on the next request, which is what lets
+the lifetime be a fortnight without that being the window a stolen token buys. There is also no
+signing key to hold or rotate, and no algorithm field for anybody to confuse.
+
+Changing a password revokes every *other* session of the account. Somebody who changes their
+password because they think somebody else has it has not finished until the other sign-ins are
+gone — and the one in their hand is the one to leave alone.
+
+### `must_rotate` is enforced at the filter
+
+A new account's password was typed by whoever created it, so until it is changed the session can
+reach `/auth/password` and `/auth/logout` and nothing else. Signing out is on the list because
+refusing to let somebody out of a session is not a security property.
+
+### Binding a session to a phone
+
+A session may carry a `device_id`, and when it does, every request has to present that install's
+identifier in `X-Device-Install` as well as the token. It is not a second password — it lives on
+the same phone — but it does mean a token lifted from a backup is useless without the install id
+beside it, and it is the hook Phase 6's write path hangs on, where a row's key has to carry the
+node of the device presenting it.
+
+A new install has no device to name when it signs in, so it signs in without one, calls
+`POST /devices` on the token it was given, and that call binds the session it arrived on. One
+login, not two.
+
+### Registration is the last chance to fix a node clash
+
+`device_node_seq` hands out 1 … 32767, one per install, and never reuses one: the node is in the
+bottom sixteen bits of every key that install ever issued, so giving the number to a second
+phone would make two devices' rows indistinguishable in precisely the place that distinction is
+load-bearing. `PostgresSchemaDriftTest` holds the sequence's bounds against
+`StructuredId.MAX_ASSIGNED_NODE_ID`.
+
+Two unregistered installs pick their own node at random from the upper half of the space, and
+two of them may pick the same one — each having already written rows under it. Nothing in those
+rows says which phone wrote them, which is what the node field was supposed to say.
+Registration is the one moment both facts are in the same place: the install's identifier, and
+the number it had been using. So a clash is **reported and not refused** — in the response and
+in the `DEVICE_REGISTER` entry. Refusing would leave the second phone unregistered and the
+collision unrecorded, which is the one outcome with no way back.
+
+Registration is idempotent on the install id, which is the whole reason that column exists: a
+retry after a lost response must not burn a second node and leave one phone owning two.
+
+### The export has two filters, and only one is the caller's
+
+`ExportFilter` is what was asked for. `exportable_courses(session_year)` is what the caller is
+allowed to have, and it is applied on top: an empty course list means "everything I may export"
+rather than "everything", and a course the caller named but may not have is a 403 naming it
+rather than a quietly shorter report.
+
+That second filter has to be applied by the endpoint, because `courses` and `student_year` still
+have no read policies — V6's header says why at length — and without it a professor's export
+would list every student in the college with zeroes against them. It is written in SQL anyway,
+in V8, so that it sits beside the policies doing the same job for `attendance` and can be read
+by somebody auditing what an export may contain.
+
+The numbers in the cells need no such help: held and attended are counted over `lectures` and
+`attendance`, both under `FORCE ROW LEVEL SECURITY`, so the policies decide them whatever the
+endpoint asks for. The audit entry carries the filter, the course count and the row count — and
+not the rows. An audit log holding a copy of every export would be the most valuable thing in
+the database to steal.
+
+### One parser for the roster, two writers
+
+`RosterCsv` moved into `:shared` in this phase, so the file the app reads and the file the server
+reads are read by the same code: the same optional cells, the same loose matching of "Computer
+Science" against the constant, the same refusals. What differs is the writing. The app commits
+row by row; the server runs each row inside a savepoint, so a row PostgreSQL refuses is rolled
+back on its own and the surviving rows still land as one transaction. A connection dropped half
+way through leaves the roster as it was rather than half rewritten.
+
+Loading a roster is for the office and an administrator, and `actor_may_manage_roster()` is the
+rule. A roll number is what every other session's records are matched by — the importer matches
+on it, the export sorts by it, a promotion is a new roll number for the same person — so
+rewriting a class's roll is a registry operation and not a teaching one, even for the professor
+who teaches that class.
+
+### Attempts per address
+
+`app_account` already locks an account after five consecutive failures, which is the defence for
+one person's password. It is no defence against somebody working through a list of addresses —
+each account's counter is its own — and it is itself a way to cause trouble, since an attacker
+who knows an address can spend five guesses to lock its owner out. `LoginRateLimiter` counts per
+source address instead: ten attempts every five minutes, counted whether or not the password was
+right, in memory, per instance. Two instances would mean two counters and twice the allowance;
+if this is ever run behind a load balancer, that is the thing to revisit, and the answer is
+probably the proxy rather than a table.
+
+`server.forward-headers-strategy` is how the caller's address is established behind a proxy.
+Parsing `X-Forwarded-For` in application code would mean trusting a header any client can send,
+which would let a caller choose which bucket they land in and which address their audit entries
+name.
+
+### Every refusal to sign in reads identically
+
+Unknown address, wrong password, locked, disabled: one status, one code, one sentence. The log
+records which it was, because that is where the difference is useful. A response that
+distinguishes them turns the login box into a way to ask whether somebody works here, and then
+into a way to find out when their account was locked.
+
+An attempt with an empty password is refused without a database lookup at all — hashing a blank
+password against Argon2id on every request is a way to make the server do expensive work for
+nothing — so it leaves no entry. Nothing reached an account, so there would be nothing to
+attribute it to.
+
 ## What the device schema loses, and why
 
 | Room | Here | Why |
@@ -377,10 +545,11 @@ A real import of the sample device produces 58 entries — 57 row changes and on
 
 ## Findings
 
-Twelve things. The first four came out of the translation in Phase 2, the next three out of
-building the importer, three more out of Phase 4 and two out of Phase 5. All but one of the
-first seven are about the app rather than the schema; the last five are about this schema,
-which is what happens once it starts making decisions of its own.
+Sixteen things. The first four came out of the translation in Phase 2, the next three out of
+building the importer, three more out of Phase 4, two out of Phase 5 and four out of
+Phase 5.5. All but one of the first seven are about the app rather than the schema; the rest are
+about this schema and this service, which is what happens once they start making decisions of
+their own.
 
 **`batch_desc` has no uniqueness on the name.** Room's
 `index_batch_desc_batchID_academicYear` guarantees nothing, because `batchID` is already the
@@ -507,6 +676,48 @@ of attendance obviously wants to. The constraint forbade exactly the case the co
 for. Same lesson as the `FOR ALL` finding one phase earlier: a condition written compactly
 constrains whatever the compact form happens to constrain.
 
+**A `LEFT JOIN` onto a table with policies is filtered, and silently.** Verifying a bearer token
+joins the session to its device, and that query runs *before* there is an actor — working out
+who the actor is, is what it is for. `device_registration` has policies, so the join matched
+nothing, every column came back NULL, and under a `LEFT JOIN` that reads as a session with no
+device at all: a device-bound session could never be verified, and `d.revoked_at IS NULL` was
+just as true of a revoked device as of a live one. The same shape had already bitten once in the
+same file, where an `UPDATE device_registration SET last_seen_at` would have matched no row and
+quietly never written the column for the life of the service. Both now go through
+`SECURITY DEFINER` functions — `device_session_binding()`, joined laterally, and `device_seen()`
+— which is the same answer V6 gave for the policies that have to ask about `user_role`. The
+lesson is narrower than "beware of RLS": a filtered join under an outer join does not look
+filtered, it looks like absence, and absence was a valid state here.
+`aTokenIsRefusedWhenReplayedFromAnotherDevice` caught it, because it asserted that the right
+phone still worked rather than only that the wrong one did not.
+
+**The roster CSV the app accepts is not quite the one the schema accepts.** Moving the parser
+into `:shared` for the server to use made the difference visible: V2 has
+`student_year_minor_not_major`, `_oe_not_major` and `_oe_not_minor`, and the app's importer never
+checked any of them, because the forms cannot offer the same department twice and a CSV is the
+only way to reach the case. A file naming Computer Science as both major and minor imported
+cleanly on a phone and would have been refused by the server. The three checks now live in
+`RosterCsv`, so both sides refuse the row for the same reason — and the app's message is the line
+number rather than a constraint name.
+
+**Announcing the actor on the way out attributes everything before it to nobody.**
+`AccountDirectory.setPassword` wrote the new hash, cleared the failure counter, and *then*
+announced the actor before recording `PASSWORD_ROTATE`. The event named the person and the
+`UPDATE` entry beside it — the same change, in the same transaction — said `system`, because the
+audit trigger reads the actor from the session at the moment the statement runs. Found by reading
+the log of a by-hand run rather than by a test, which is why there is a test now
+(`aPasswordChangeIsAttributedOnItsRowEntryToo`). Two fixes: the actor is announced before the
+writes rather than after, and the endpoint now changes the password on the *request's* own
+transaction through `ActorDatabase`, so both entries carry the session, the device and the
+address instead of a bare account id. The self-announcing version is still there for the caller
+that has no request — an office clerk resetting somebody's password from a command line.
+
+**`inet` renders as `127.0.0.1/32`.** Small, and the kind of thing to find out in a test rather
+than in a report: `client_ip::text` on an audit entry is not the address somebody would compare
+it to, and `host(client_ip)` is. Worth knowing before writing the first query over
+`audit_log.client_ip`, which is otherwise a query that returns nothing and looks like a logging
+bug.
+
 ## Where the importer deliberately differs from the merge
 
 Three places, each because the server knows something a phone does not. Each is a decision, not
@@ -572,24 +783,31 @@ where that is recorded.
 
 ## Not here yet
 
-No API and no audit log. There is now an identity to authenticate and policies to enforce,
-but still no endpoint, and that is on purpose: the thing that would call one is the Android
-client in Phase 6, and an endpoint written before its caller exists is an endpoint whose shape
-is a guess. So Phase 4 delivered the parts that can be finished and tested without it — the
-accounts, the lockout, the rotation, the grants, the policies — and stopped short of a token
-format and a filter chain with nothing behind them. `spring-security-crypto` is on the
-classpath rather than `spring-boot-starter-security` for the same reason: the starter installs
-a servlet filter chain, and there is nothing yet to filter.
+**The sync pair.** The write path that drains a device's outbox and the pull that answers
+"everything since this watermark" are not here, and that is the same reasoning that kept every
+endpoint out until Phase 5.5 — an endpoint written before its caller exists is an endpoint whose
+shape is a guess. The difference is that the four that do exist had their inputs settled already
+by what was built: `AccountDirectory` decided what a login takes, `StructuredId` decided what a
+device registration takes, and `PgExportQueryBuilder`'s columns were already being compared cell
+for cell by the differ. The outbox's shape is not settled by anything yet, so the sync pair waits
+for Phase 6.
 
-The audit log is now here, and its actor column points at `app_account` and not at
-`professors`, because a CR is a student and a log that cannot name the person who marked the
-register is not evidence.
+**No Spring Security.** Still `spring-security-crypto` and not the starter. There is one
+credential, checked in one place, and no authorization decision is taken in Java at all: V6's
+policies and V8's functions decide what an actor may see and do, inside the database, where a
+forgotten `WHERE` clause cannot get round them. A filter chain configured with matchers and
+roles would be a second, weaker statement of the same rules somewhere that does not enforce
+them.
 
-What is still missing on top of the API: nothing writes `EXPORT`, `CSV_IMPORT` or
-`DEVICE_REGISTER` entries yet, because nothing exports, imports a roster or registers a device
-over the wire — those are the endpoints. The vocabulary is in place so that adding them is a
-call to `AuditLog.record` and not a schema change, and `audit_event()` already refuses to be
-handed a row change, which is the one way that call could be misused.
+**The three audit actions that now have writers.** `EXPORT`, `CSV_IMPORT` and `DEVICE_REGISTER`
+were vocabulary with nothing to say them until this phase; the export, the roster and the device
+registration write them now. What is still unwritten is anything to do with sync, for the reason
+above.
+
+**`courses` and `student_year` still have no read policies.** The export and the roster both work
+around that gap in the service, through `exportable_courses()` and `actor_may_manage_roster()`,
+and both are written in SQL so that the day those tables get policies there is one rule to move
+rather than two to reconcile. The gap itself is unchanged and is described in V6's header.
 
 The part of Phase 3 that code cannot finish is the data. The gate asks for every device's
 backup to be imported, the reconciliation to pass, and the reference exports from Phase 0 to

@@ -415,6 +415,39 @@ public class PostgresSchemaDriftTest {
 	}
 
 	/**
+	 * The node numbers the server hands out have to come from the half of the space
+	 * {@link StructuredId} reserves for it, and the ones a device may report having picked for
+	 * itself from the other half.
+	 * <p>
+	 * Three literals in V8, and they are the whole of the agreement. Widen the sequence past
+	 * {@code MAX_ASSIGNED_NODE_ID} and the server starts issuing numbers an unregistered
+	 * install may already have chosen; narrow the provisional range and a phone reporting its
+	 * own node is refused for telling the truth.
+	 */
+	@Test
+	public void theDeviceNodeRangesMatchStructuredId() throws IOException {
+
+		String sql = read("V8__the_wire.sql");
+
+		assertTrue("device_node_seq must run from StructuredId.FIRST_ASSIGNABLE_NODE_ID ("
+						+ StructuredId.FIRST_ASSIGNABLE_NODE_ID + ") to MAX_ASSIGNED_NODE_ID ("
+						+ StructuredId.MAX_ASSIGNED_NODE_ID + ")",
+				sql.contains("MINVALUE " + StructuredId.FIRST_ASSIGNABLE_NODE_ID
+						+ " MAXVALUE " + StructuredId.MAX_ASSIGNED_NODE_ID));
+
+		assertTrue("device_registration.node must be constrained to the assignable half",
+				sql.contains("node BETWEEN " + StructuredId.FIRST_ASSIGNABLE_NODE_ID
+						+ " AND " + StructuredId.MAX_ASSIGNED_NODE_ID));
+
+		assertTrue("a provisional node must be from the half a device picks for itself, "
+						+ (StructuredId.MAX_ASSIGNED_NODE_ID + 1) + " to "
+						+ StructuredId.MAX_NODE_ID,
+				sql.contains("provisional_node BETWEEN "
+						+ (StructuredId.MAX_ASSIGNED_NODE_ID + 1) + " AND "
+						+ StructuredId.MAX_NODE_ID));
+	}
+
+	/**
 	 * The tables {@code id_remap} will accept are exactly the five whose keys the app issues.
 	 * <p>
 	 * A sixth such table added in Java would need an entry here too, and the failure without

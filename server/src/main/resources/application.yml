@@ -45,19 +45,39 @@ spring:
 server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
+  # With a reverse proxy in front, set this to "framework" (or "native" on a
+  # cloud platform) so X-Forwarded-For is applied by Tomcat under rules
+  # somebody configured. Left off by default because the alternative --
+  # reading the header in application code -- means trusting a header any
+  # client can send, which would let a caller choose which rate-limit bucket
+  # they land in and which address their audit entries name.
+  forward-headers-strategy: ${FORWARD_HEADERS:none}
 
 management:
   endpoints:
     web:
       exposure:
-        # Health only. The skeleton has no authentication yet, so nothing that
-        # describes the inside of the service is exposed.
+        # Health only, still. There is authentication now, but the actuator is
+        # not behind it -- the token filter is registered for /api/* alone, so
+        # that a health probe answers before anybody has signed in. Anything
+        # that describes the inside of the service therefore stays unexposed.
         include: health
   endpoint:
     health:
       show-details: never
       probes:
         enabled: true
+
+# This application's own settings, as opposed to the framework's.
+sies:
+  login:
+    # How many sign-in attempts one source address gets every five minutes.
+    # The per-account lock in app_account is the defence for one person's
+    # password; this is the one for somebody working through a list of
+    # addresses, and for the fact that the account lock is itself a way to
+    # inconvenience a person whose address is known. Counted in memory, per
+    # instance -- see LoginRateLimiter before running more than one.
+    attempts-per-window: ${LOGIN_ATTEMPTS:10}
 
 logging:
   level:
