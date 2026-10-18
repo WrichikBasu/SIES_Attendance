@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# A local PostgreSQL for working on the server: the three roles, both
-# migrations, and a database that survives a restart.
+# A local PostgreSQL for working on the server: the three roles, every
+# migration, and a database that survives a restart.
 #
 # Not for anything but development. The passwords below are fixed and
 # printed to the terminal; a real deployment takes them from somewhere
@@ -140,7 +140,7 @@ echo
 print_env | sed 's/^/  /'
 echo "  ./gradlew :server:bootRun"
 echo
-echo "Flyway applies both migrations on that first start."
+echo "Flyway applies every migration on that first start."
 echo
 echo "A shell on it:     docker exec -it $NAME psql -U postgres -d sies"
 echo "Schema, no server: MIGRATE=1 $0 --reset"

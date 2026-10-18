@@ -31,6 +31,14 @@ public final class PostgresEnumTypes {
 		types.put(Year.class, "study_year");
 		types.put(Division.class, "class_division");
 		types.put(CourseType.class, "course_type");
+
+		// Phase 4's identity types. They describe accounts and grants rather than teaching, so
+		// no device table stores them -- but they are enum columns the server casts bound
+		// parameters to and the drift test checks, which is what this map is for.
+		types.put(AccountKind.class, "account_kind");
+		types.put(AppRole.class, "app_role");
+		types.put(GrantAuthority.class, "grant_authority");
+
 		TYPES = Collections.unmodifiableMap(types);
 	}
 

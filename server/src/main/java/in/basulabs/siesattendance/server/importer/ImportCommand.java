@@ -29,8 +29,17 @@ import javax.sql.DataSource;
  *     --import.file=/backups/rao.siesbak \
  *     --import.label="Dr Rao's phone" \
  *     --import.node=41231 \
+ *     --import.account=1 \
  *     --import.dry-run=true'
  * </pre>
+ *
+ * <h3>Why it needs an account</h3>
+ * {@code attendance} and {@code lectures} are under {@code FORCE ROW LEVEL SECURITY} as of V6,
+ * which not even the migration role bypasses. So an import announces an actor like any other
+ * transaction, and that actor needs the {@code ADMIN} role. The rows themselves still carry no
+ * author — imported history has none, and inventing one would be worse than the gap — but
+ * somebody is accountable for having loaded them, and {@code import_run} is where that is
+ * recorded.
  *
  * <h3>The password is not an argument</h3>
  * Arguments are visible to every process on the machine through {@code /proc} and are kept in
@@ -86,6 +95,26 @@ public class ImportCommand implements ApplicationRunner {
 		boolean dryRun = Boolean.parseBoolean(
 				String.valueOf(option(arguments, "import.dry-run")));
 
+		// Required in anger, optional here. attendance and lectures are under FORCE ROW LEVEL
+		// SECURITY as of V6, so an import with no actor fails on the first lecture -- the
+		// resolution step cannot see the existing rows, so it inserts, and WITH CHECK refuses
+		// the insert. Loudly, and the whole transaction rolls back, which is the right failure.
+		// It stays optional because a connection that is exempt from the policies -- a
+		// superuser, which is what the tests use -- needs no actor, and refusing to run
+		// without one would make the importer untestable without an account.
+		String accountOption = option(arguments, "import.account");
+		Long actorAccount = accountOption == null
+				? null
+				: Long.parseLong(accountOption.trim());
+
+		if (actorAccount == null) {
+			System.err.println("Warning: no --import.account was given. attendance and "
+					+ "lectures are under row-level security, so unless this connection is "
+					+ "exempt from it, this import will fail on the first lecture with "
+					+ "\"new row violates row-level security policy\". Pass the account id "
+					+ "of an administrator.");
+		}
+
 		BackupImporter.Request request = new BackupImporter.Request(
 				backup,
 				readPassword(option(arguments, "import.password-env")),
@@ -93,7 +122,8 @@ public class ImportCommand implements ApplicationRunner {
 				Integer.parseInt(node.trim()),
 				ZoneId.of(zoneOption == null ? DEFAULT_ZONE : zoneOption),
 				Paths.get(workDirOption == null ? DEFAULT_WORK_DIR : workDirOption),
-				dryRun);
+				dryRun,
+				actorAccount);
 
 		report(new BackupImporter(dataSource).run(request), dryRun);
 	}
@@ -195,6 +225,10 @@ public class ImportCommand implements ApplicationRunner {
 				  --import.file=PATH          the .siesbak to import
 				  --import.label=TEXT         what to call this device in the report
 				  --import.node=N             the device's node number, 1..65535
+
+				  --import.account=N          the app_account this import is performed as.
+				                              Needed now that row-level security is on: the
+				                              account must hold the ADMIN role
 
 				  --import.dry-run=true       roll back at the end, but still report
 				  --import.zone=ZONE          the zone the device recorded dates at

@@ -25,20 +25,31 @@ server/
     importer/BackupImporter.java        one run, one transaction, one report
     importer/ImportReport.java          what it did, per table
     importer/ImportCommand.java         the command line
+    security/Passwords.java             Argon2id, parameters inside the hash
+    security/AccountDirectory.java      accounts, lockout, rotation, two doors
+    security/ActorSession.java          who is acting, for one transaction
+    security/BootstrapCommand.java      the first administrator, once
   src/main/resources/
     application.yml                     every credential from the environment
     application-import.yml              the importer is a command, not a service
+    application-bootstrap.yml           so is creating the first admin
     db/migration/V1__baseline.sql       Room schema v10, translated faithfully
     db/migration/V2__constraints.sql    the rules AcademicRules enforced in Java only
     db/migration/V3__import_bookkeeping.sql   id_remap and import_run
     db/migration/V4__cross_department_courses.sql   V2's course/stream key, corrected
+    db/migration/V5__identity.sql       accounts, roles, CR grants, the roster function
+    db/migration/V6__row_level_security.sql   which rows each of them reaches
   src/test/java/.../sql/SqlDumpTest.java         writes every statement for the differ
-  src/test/java/.../importer/BackupImporterTest.java   13 tests, against a real database
+  src/test/java/.../importer/BackupImporterTest.java   14 tests, against a real database
   src/test/java/.../importer/DeviceBackup.java   builds a genuine .siesbak
   src/test/java/.../importer/SampleBackup.java   one to try the importer on
+  src/test/java/.../security/RowLevelSecurityTest.java   20 tests, as a constrained role
+  src/test/java/.../security/AccountDirectoryTest.java   15 tests, the credential layer
+  src/test/java/.../testing/TestPostgres.java    the throwaway container, shared
   src/test/sql/constraint_smoke_test.sql    39 assertions, 25 of them rejections
   tools/verify-schema.sh                a throwaway container, checked and removed
   tools/verify-import.sh                the importer, against a real PostgreSQL
+  tools/verify-rls.sh                   the policies, as a role they apply to
   tools/dev-database.sh                 a local database that survives a restart
   tools/roles.sql                       the three roles and what each may do
 ```
@@ -200,6 +211,93 @@ Keeping them apart means V1 stays diffable against the generated DDL for as long
 exists, V2 can be read as the list of things the database now refuses, V3 as the list of things
 the import has to remember, and V4 as the one thing V2 got wrong.
 
+## Identity and row-level security
+
+Two migrations, for the same reason V1 and V2 are two: V5 says who exists, V6 says what they
+reach.
+
+### Who exists
+
+`app_account` is one row per principal. It points at a professor **or** a student **or**
+neither — `STAFF`, for office and registry people, who are not professors and would corrupt
+every "count the teaching staff" query if they were given a `professors` row to hang an account
+on. A CHECK enforces that the row points at whatever its `kind` says it does.
+
+Accounts exist only where there is something to sign in for, which for a student means a CR
+grant. `login_email` is `NOT NULL` on the account although `students.email` is nullable: the
+requirement belongs to the account, not to the person, so it lands on the few students who need
+one rather than on the roster.
+
+Uniqueness is `(student_login, lower(login_email))` — per door, not global. Professors and
+students sign in on separate screens, so the app knows which door before it looks anybody up,
+and one address can hold both a staff account and a student one. A research assistant finishing
+an MSc is the case, and it is commoner than it sounds. `student_login` is generated from `kind`,
+the same trick V4 used, so the two can never disagree.
+
+`user_role` carries the roles granted *on top* of what an account already is: `HOD`, `OFFICE`,
+`AUDITOR`, `ADMIN`. There is no `PROFESSOR` role — that is `kind` plus the `course_instructor`
+rows that say which courses are yours, and a role saying the same thing would be a second
+answer to one question. There is no `CR` role either, for the reason below. It keys on
+`account_id` and not on `prof_id`, because an admin or an office clerk need not be a professor
+at all.
+
+### A class representative is a set of grants
+
+`attendance_delegate`: one row per student per course per session, naming who designated them
+and in what capacity. Several rows for one student is a CR of several courses; several rows for
+one course is several CRs of it, which is how a class with a lecture CR and a lab CR works
+without a second table. Nothing is ever deleted — revoking sets `revoked_at`, because "who was
+allowed to do this in March" is the question a dispute asks.
+
+Two rules the table cannot state, both in `attendance_delegate_authorised()`:
+
+- **The designator held the authority they claimed.** A professor who teaches the course, the
+  head of the offering department for that session, or an admin. Three different joins, so not
+  a foreign key: a constraint covering only the instructor branch would read as a guarantee
+  while being a third of one.
+- **The CR is on the course's roll.** A CR of CS-101 who does not take CS-101 is a mistake, not
+  a configuration.
+
+`granted_as` is stored rather than recomputed, so an HOD who stops being one in 2027 does not
+retroactively change the authority a 2025 grant was made under.
+
+### `roll_for_course`, written once
+
+The second rule needs the roster, which until now existed only as the `@Query` on
+`DaoStudent.getRollForCourseSync`. It is a SQL function now, and `PostgresSchemaDriftTest`
+holds the two together: one test fails if any `CourseType` is missing from it, another if its
+major-department branch stops matching `CourseType.followingOfferingDepartment()`. A second
+hand-written roster is how a CR ends up allowed on a course the app would never have put them
+on.
+
+### What V6 forces, and what it only enables
+
+| Table | Row-level security | Why |
+|---|---|---|
+| `attendance`, `lectures` | enabled **and forced** | What the gate is about. Not even the role that ran the migration reads them unfiltered. |
+| `attendance_delegate`, `user_role` | enabled, **not** forced | The `actor_*` helper functions are `SECURITY DEFINER` and run as the owner. Forcing these would make a definer function see only its caller's rows, and the answer would be wrong rather than merely slow. |
+| `app_account` | none at all | Authentication happens before there is an actor, so a policy keyed on the current account would deny the one lookup that establishes it. Privilege and the service's own code protect it, and saying so beats a policy that looks like protection. |
+
+The policies name no role. `FOR ALL TO sies_app` would make every migration fail on a database
+where `tools/roles.sql` has not run, and `verify-schema.sh` deliberately applies them to a bare
+container. Unqualified policies apply to every role that is not a superuser and not the owner,
+which is exactly the set that must be constrained.
+
+Each `SECURITY DEFINER` function carries `SET search_path = pg_catalog, public`. Without it a
+caller could create a schema earlier in their own path, put a `user_role` table in it, and have
+these functions answer from that instead.
+
+### Testing it means not being a superuser
+
+A superuser bypasses every policy even under `FORCE`, and an owner bypasses its own unless
+forced. So `TestPostgres` creates `sies_app_test` — not a superuser, not an owner, no
+`BYPASSRLS` — with deliberately wide grants on every table. The point is to prove the
+*policies* stop a read the *grants* allow; a test that passed because of a missing `GRANT`
+would prove nothing.
+
+`tools/verify-rls.sh` runs the two classes and then insists they ran: a security test that
+skips itself because Docker is missing is a green build that proves nothing.
+
 ## What the device schema loses, and why
 
 | Room | Here | Why |
@@ -212,9 +310,10 @@ the import has to remember, and V4 as the one thing V2 got wrong.
 
 ## Findings
 
-Seven things. The first four came out of the translation in Phase 2, the last three out of
-building the importer, and all but one are about the app rather than the schema — the exception
-being the second, where this schema was itself wrong and `V4` corrects it.
+Ten things. The first four came out of the translation in Phase 2, the next three out of
+building the importer, and the last three out of Phase 4. All but one of the first seven are
+about the app rather than the schema; all three of the last are about this schema, which is
+what happens once it starts making decisions of its own.
 
 **`batch_desc` has no uniqueness on the name.** Room's
 `index_batch_desc_batchID_academicYear` guarantees nothing, because `batchID` is already the
@@ -301,6 +400,32 @@ five and a half hours — measured, by dumping the migration's own SQL before an
 and the date are now parameters (`MigrationContext`), the importer passes the zone the data was
 recorded at, and the app passes its own, so nothing about the app changed.
 
+**`FOR ALL` quietly includes `DELETE`.** The first draft of V6 gave `attendance_delegate` and
+`user_role` a `FOR ALL` policy for the HOD and the admin, directly below a comment claiming
+that nothing could delete a grant because no `DELETE` policy existed. Both statements were in
+the same file and only one was true. `RowLevelSecurityTest.aGrantIsNeverDeleted` caught it on
+the first run. Every policy on those two tables now names its verbs, and the comment explaining
+why points at the test. The general lesson is narrower than "read your SQL": a permission
+written as a shorthand covers whatever the shorthand covers, and a comment is not a constraint.
+
+**A professor reaches their course's whole history, not just this session.** `course_instructor`
+carries no academic year, so the instructor policy matches every lecture of a course the actor
+teaches, in any session. That is almost certainly right — a professor answering a query about
+last year's register needs to see last year's register — but it is worth stating because the
+HOD policy next to it *is* session-scoped, and the asymmetry looks like an oversight until you
+know it is not. The first version of the test asserted one row and got two; the test was wrong,
+not the policy.
+
+**`courses` and `student_year` have no policies, so any authenticated connection reads them.**
+This is a real gap and it is left open deliberately rather than filled badly. "Which students
+may this professor see" is not a department comparison: a minor or an open elective puts a
+student from another department on the roll, which is the whole point of V4. The correct policy
+is "students reachable through `roll_for_course` over the courses I instruct", which is a
+set-returning function per row and will not survive a roster screen without a materialised
+reachability table. Designing that is its own piece of work; guessing at it would either leak
+the college's roster or break the roll. The gap is stated in V6's header as well, so it cannot
+be discovered by surprise.
+
 ## Where the importer deliberately differs from the merge
 
 Three places, each because the server knows something a phone does not. Each is a decision, not
@@ -319,13 +444,65 @@ will, however, reject rows from the devices — that is their job. When Phase 3'
 stops on one, the thing to fix is the data, after looking at it. Relaxing a constraint to
 let a row in puts the contradiction back in the database where nobody will see it again.
 
+## The first administrator
+
+Nothing else can create one. A migration cannot, because a migration is a committed file and a
+committed file with a password in it is a password everybody with the repository has. The
+service cannot, because granting `ADMIN` needs `ADMIN` and the first grant has nobody to make
+it. So it is a command, run by somebody on the machine, connecting as the migration role:
+
+```bash
+SIES_ADMIN_PASSWORD=... ./gradlew :server:bootRun \
+    --args='--spring.profiles.active=bootstrap \
+            --bootstrap.email=admin@sies.edu.in \
+            --bootstrap.name="A Administrator"'
+```
+
+It refuses to run a second time. A second administrator is granted by the first, through the
+ordinary path, where the grant has an author. The account starts with `must_rotate` set, so
+whoever typed the first password is not also the person who ends up knowing it.
+
+The password is never an argument — arguments are readable by every process on the machine
+through `/proc` and are kept in shell history — so it comes from the environment or from a
+terminal prompt, exactly as the importer's does.
+
+## The importer now needs an account
+
+`attendance` and `lectures` are forced, which not even `sies_owner` bypasses, so an import with
+no actor fails on its first lecture:
+
+```
+lectures: the row with natural key (courseID=…, startDateTime=…) was refused by the
+database: ERROR: new row violates row-level security policy for table "lectures"
+```
+
+The resolution step cannot see what is already there, so it inserts, and `WITH CHECK` refuses
+the insert. The whole transaction rolls back and `import_run` records the reason — which is the
+right failure, and better than the silent one an earlier draft of this file predicted.
+
+Pass `--import.account=N` with the id of an account holding `ADMIN`. The command warns when it
+is missing rather than refusing to start, because a connection that is exempt from the policies
+— a superuser, which is what the tests use — legitimately needs no actor.
+
+The imported rows still carry no author. That gap is deliberate and does not change: the device
+schema records none, and inventing plausible ones would be worse than an honest hole. What the
+account establishes is that somebody is accountable for having loaded them, and `import_run` is
+where that is recorded.
+
 ## Not here yet
 
-No API, no authentication, no audit log. Those are Phases 4 to 6, and an endpoint written
-before there is anything to serve or anyone to authenticate would be an endpoint with no caller
-and no access control. The importer is deliberately a command and not an endpoint for the same
-reason: until Phase 5 there is nobody to authenticate, and importing a device is an operation
-somebody should have to be on the machine to perform.
+No API and no audit log. There is now an identity to authenticate and policies to enforce,
+but still no endpoint, and that is on purpose: the thing that would call one is the Android
+client in Phase 6, and an endpoint written before its caller exists is an endpoint whose shape
+is a guess. So Phase 4 delivered the parts that can be finished and tested without it — the
+accounts, the lockout, the rotation, the grants, the policies — and stopped short of a token
+format and a filter chain with nothing behind them. `spring-security-crypto` is on the
+classpath rather than `spring-boot-starter-security` for the same reason: the starter installs
+a servlet filter chain, and there is nothing yet to filter.
+
+The audit log is Phase 5. Note one thing it inherits from here: its actor column has to point
+at `app_account` and not at `professors`, because a CR is a student and a log that cannot name
+the person who marked the register is not evidence.
 
 The part of Phase 3 that code cannot finish is the data. The gate asks for every device's
 backup to be imported, the reconciliation to pass, and the reference exports from Phase 0 to

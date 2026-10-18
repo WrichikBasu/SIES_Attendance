@@ -24,6 +24,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 
 import in.basulabs.siesattendance.backend.StructuredId;
+import in.basulabs.siesattendance.server.testing.TestPostgres;
 
 /**
  * The importer, against a real PostgreSQL with the real migrations applied.
@@ -439,9 +440,6 @@ class BackupImporterTest {
 				() -> importIt(backup, "a liar", StructuredId.SERVER_NODE, false));
 	}
 
-	// ── Building devices ─────────────────────────────────────────────────
-
-	/** A key this device would have issued: structured, carrying its node. */
 	/**
 	 * A minor and an open elective taught by departments that do not run the students' stream.
 	 * <p>
@@ -509,6 +507,9 @@ class BackupImporterTest {
 		assertEquals(before, snapshot(), "re-importing must change nothing");
 	}
 
+	// ── Building devices ─────────────────────────────────────────────────
+
+	/** A key this device would have issued: structured, carrying its node. */
 	private static long structured(int node, int sequence) {
 		return StructuredId.compose(StructuredId.MIN_COUNTER + sequence, node);
 	}

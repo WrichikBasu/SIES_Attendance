@@ -86,7 +86,7 @@ public class PostgresSchemaDriftTest {
 	@Test
 	public void everyEnumTypeExistsWithExactlyTheJavaConstants() throws IOException {
 
-		Map<String, List<String>> declared = enumTypesIn(read("V1__baseline.sql"));
+		Map<String, List<String>> declared = everyEnumType();
 
 		for (Map.Entry<Class<? extends Enum<?>>, String> entry : ENUM_TYPES.entrySet()) {
 
@@ -95,7 +95,7 @@ public class PostgresSchemaDriftTest {
 			List<String> actual = declared.get(typeName);
 
 			if (actual == null) {
-				fail("V1__baseline.sql declares no enum type '" + typeName + "' for "
+				fail("no migration declares an enum type '" + typeName + "' for "
 						+ entry.getKey().getSimpleName() + ". It should read:\n\n"
 						+ createTypeSql(typeName, expected));
 			}
@@ -112,11 +112,11 @@ public class PostgresSchemaDriftTest {
 	@Test
 	public void theMigrationDeclaresNoEnumTypeTheAppDoesNotHave() throws IOException {
 
-		Map<String, List<String>> declared = enumTypesIn(read("V1__baseline.sql"));
+		Map<String, List<String>> declared = everyEnumType();
 		List<String> known = new ArrayList<>(ENUM_TYPES.values());
 
 		for (String typeName : declared.keySet()) {
-			assertTrue("V1__baseline.sql declares enum type '" + typeName
+			assertTrue("the migrations declare enum type '" + typeName
 							+ "', which no Java enum maps to. Either map it in ENUM_TYPES or "
 							+ "remove it.",
 					known.contains(typeName));
@@ -128,7 +128,7 @@ public class PostgresSchemaDriftTest {
 
 		// The labels are display text and change freely; Stream.BSc and Stream.BSc_unaided
 		// both read "BSc", so a schema built from labels could not tell them apart at all.
-		Map<String, List<String>> declared = enumTypesIn(read("V1__baseline.sql"));
+		Map<String, List<String>> declared = everyEnumType();
 
 		assertTrue("degree_stream must distinguish the aided and unaided BSc",
 				declared.get("degree_stream").contains("BSc_unaided"));
@@ -195,6 +195,58 @@ public class PostgresSchemaDriftTest {
 			assertTrue("the department_stream seed never mentions " + department.name(),
 					insert.contains("'" + department.name() + "'"));
 		}
+	}
+
+	// ── The roster, translated into SQL in V5 ────────────────────────────
+
+	/*
+	 * roll_for_course() is a translation of DaoStudent.getRollForCourseSync, and the thing that
+	 * can go wrong is a course type that neither branch mentions: it matches nobody, so the
+	 * course has an empty roll, no CR can be designated for it, and nothing fails loudly. These
+	 * two tests make it fail here instead.
+	 */
+
+	@Test
+	public void theRosterFunctionAccountsForEveryCourseType() throws IOException {
+
+		String body = normalise(statementContaining(read("V5__identity.sql"),
+				"CREATE FUNCTION roll_for_course"));
+
+		for (CourseType type : CourseType.values()) {
+			assertTrue("roll_for_course in V5__identity.sql never mentions "
+							+ type.name() + ", so a course of that type would have an empty "
+							+ "roll and no CR could be designated for it",
+					body.contains("'" + type.name() + "'"));
+		}
+	}
+
+	@Test
+	public void theRosterFunctionMatchesTheDepartmentTheAppDoes() throws IOException {
+
+		String body = normalise(statementContaining(read("V5__identity.sql"),
+				"CREATE FUNCTION roll_for_course"));
+
+		// The types that follow the offering department are matched on the student's major,
+		// and V4's exemption list is the same list. If these ever disagree, one of the two is
+		// describing a college that does not exist.
+		List<String> quoted = new ArrayList<>();
+		for (CourseType type : CourseType.followingOfferingDepartment()) {
+			quoted.add("'" + type.name() + "'");
+		}
+
+		assertTrue("the major-department branch of roll_for_course should match "
+						+ "CourseType.followingOfferingDepartment(), which reads "
+						+ String.join(", ", quoted) + "\nThe function reads: " + body,
+				body.contains("c.course_type IN (" + String.join(", ", quoted) + ")"));
+
+		// The two cross-department branches match the other two department columns, and the
+		// minor branch deliberately admits the major as well — see the roster query's javadoc.
+		assertTrue("the minor branch must admit the student's major department too, because "
+						+ "the minor field on the student form is optional and often blank",
+				body.contains("y.minor_dept = c.offering_department")
+						&& body.contains("y.major_dept = c.offering_department"));
+		assertTrue("the open-elective branch must match oe_dept",
+				body.contains("y.oe_dept = c.offering_department"));
 	}
 
 	// ── The cross-department exemption in V4 ─────────────────────────────
@@ -648,6 +700,60 @@ public class PostgresSchemaDriftTest {
 	}
 
 	/** Every {@code CREATE TYPE ... AS ENUM} in the file, with its values in order. */
+	/**
+	 * Every enum type any migration declares, merged.
+	 * <p>
+	 * V1 held all of them until V5 added the identity types, and a test that reads one file by
+	 * name would simply stop covering whatever a later migration adds — failing open, which is
+	 * the one way a drift test must not fail.
+	 */
+	private static Map<String, List<String>> everyEnumType() throws IOException {
+
+		Map<String, List<String>> all = new LinkedHashMap<>();
+
+		for (String file : migrationFileNames()) {
+			for (Map.Entry<String, List<String>> entry : enumTypesIn(read(file)).entrySet()) {
+				List<String> clash = all.put(entry.getKey(), entry.getValue());
+				assertTrue("enum type '" + entry.getKey() + "' is declared by more than one "
+						+ "migration", clash == null);
+			}
+		}
+		return all;
+	}
+
+	/** The committed migrations, in the order Flyway applies them. */
+	private static List<String> migrationFileNames() throws IOException {
+
+		File directory = new File("").getAbsoluteFile();
+
+		for (int depth = 0; depth < 5 && directory != null; depth++) {
+
+			File candidate = new File(directory, "server/src/main/resources/db/migration");
+
+			if (candidate.isDirectory()) {
+
+				String[] names = candidate.list((dir, name) ->
+						name.startsWith("V") && name.endsWith(".sql"));
+
+				assertTrue("no migrations in " + candidate, names != null && names.length > 0);
+
+				List<String> sorted = new ArrayList<>(Arrays.asList(names));
+				// V10 would sort before V2 as text, so compare the version numbers.
+				sorted.sort((a, b) -> Integer.compare(versionOf(a), versionOf(b)));
+				return sorted;
+			}
+			directory = directory.getParentFile();
+		}
+		throw new IOException("no server/src/main/resources/db/migration above "
+				+ new File("").getAbsolutePath());
+	}
+
+	private static int versionOf(String fileName) {
+		Matcher matcher = Pattern.compile("^V(\\d+)__").matcher(fileName);
+		assertTrue(fileName + " is not named V<n>__<name>.sql", matcher.find());
+		return Integer.parseInt(matcher.group(1));
+	}
+
 	private static Map<String, List<String>> enumTypesIn(String sql) {
 
 		Map<String, List<String>> types = new LinkedHashMap<>();

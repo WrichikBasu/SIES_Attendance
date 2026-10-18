@@ -66,6 +66,11 @@ dependencies {
     // the phone would have used.
     implementation(libs.sqlite.jdbc)
 
+    // Passwords. See the note in libs.versions.toml for why this is the crypto
+    // module rather than the security starter.
+    implementation(libs.spring.security.crypto)
+    runtimeOnly(libs.bouncycastle)
+
     testImplementation(libs.spring.boot.starter.test)
     // The named query cases, shared with the app's dump test so that both sides really do
     // generate a statement for the same filter.

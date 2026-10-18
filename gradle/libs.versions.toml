@@ -11,6 +11,9 @@ navigationUi = "2.10.1"
 roomRuntime = "2.8.5"
 annotation = "1.11.0"
 springBoot = "4.1.1"
+# Pinned, unlike every other server dependency: the Spring Boot BOM does not
+# manage BouncyCastle, so leaving the version off fails to resolve.
+bouncycastle = "1.79"
 lifecycleLivedataKtx = "2.11.0"
 lifecycleViewmodelKtx = "2.11.0"
 
@@ -54,6 +57,15 @@ postgresql = { group = "org.postgresql", name = "postgresql" }
 # which exists here. Used only by the importer, never for the server's own data.
 # Version from the Spring Boot BOM, like everything else the server resolves.
 sqlite-jdbc = { group = "org.xerial", name = "sqlite-jdbc" }
+
+# Argon2id, for the password hashes the server now has to hold itself. The
+# crypto module alone and not spring-boot-starter-security: the starter
+# installs a servlet filter chain, and there is no endpoint to protect until
+# Phase 6 brings a client to call one. Adding it early would mean configuring
+# a filter chain around nothing. Argon2PasswordEncoder delegates to
+# BouncyCastle's generator, which is why bcprov is here beside it.
+spring-security-crypto = { group = "org.springframework.security", name = "spring-security-crypto" }
+bouncycastle = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -17,10 +17,28 @@
 --
 -- None of these is a superuser, and none has BYPASSRLS. A superuser
 -- ignores row-level security even when the table is FORCEd, so a service
--- connecting as one would quietly have every policy in Phase 4 turned off.
--- The service must also not be the owner of the tables: an owner bypasses
--- its own policies unless the table is FORCEd, and relying on remembering
--- to FORCE every table is a worse rule than simply not being the owner.
+-- connecting as one would quietly have every policy turned off. The
+-- service must also not be the owner of the tables: an owner bypasses its
+-- own policies unless the table is FORCEd, and relying on remembering to
+-- FORCE every table is a worse rule than simply not being the owner.
+--
+-- Those policies now exist -- V6 added them -- so this split has stopped
+-- being a precaution and become load-bearing. Two consequences worth
+-- knowing before anything goes wrong:
+--
+--   * THE IMPORTER NEEDS AN ACTOR. attendance and lectures are under
+--     FORCE ROW LEVEL SECURITY, so sies_owner does not bypass them
+--     either. An import run with no actor fails on its first lecture
+--     with "new row violates row-level security policy" and rolls the
+--     whole thing back. Pass the account id of an administrator:
+--     BackupImporter.Request takes one, and ImportCommand's
+--     --import.account is how it is supplied.
+--
+--   * BOOTSTRAPPING USES sies_owner. user_role's policies let only an
+--     ADMIN grant the ADMIN role, and the first grant has nobody to make
+--     it, so BootstrapCommand connects as the migration role instead.
+--     That is the one legitimate use of that connection, which is why it
+--     is a command run by hand and not an endpoint.
 
 \set ON_ERROR_STOP on
 
@@ -43,10 +61,18 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 -- as sies_owner, so these defaults are what grant the service access to a
 -- table added by a future migration without anyone remembering to.
 --
--- audit_log arrives in Phase 6 and is the exception: it will be granted
+-- audit_log arrives in Phase 5 and is the exception: it will be granted
 -- INSERT alone, explicitly, after the default below has been revoked for
 -- it. A grant is easier to add than to take away, so the comment is here
 -- now rather than in the migration that needs it.
+--
+-- Note what these wide grants do NOT do. sies_app has every verb on every
+-- table, and sees almost none of it: what it may read and change is
+-- decided by V6's policies, not by these privileges. That is on purpose.
+-- A grant answers "may this role touch this table at all"; a policy
+-- answers "which rows". Narrowing the grants as well would mean two
+-- places to look when a query comes back empty, and the policies are the
+-- place the answer should be.
 ALTER DEFAULT PRIVILEGES FOR ROLE sies_owner IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO sies_app;
 

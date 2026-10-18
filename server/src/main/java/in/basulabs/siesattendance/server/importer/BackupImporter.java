@@ -63,10 +63,29 @@ public final class BackupImporter {
 	 * @param workDir     where the decrypted copy is written
 	 * @param dryRun      when true the transaction is rolled back at the end and the report is
 	 *                    produced anyway. This is how a device is looked at before it is let in
+	 * @param actorAccount the {@code app_account} this import is performed as, or null.
+	 *                    Required once V6's policies are in place and the connection is not
+	 *                    exempt from them: {@code attendance} and {@code lectures} are under
+	 *                    {@code FORCE ROW LEVEL SECURITY}, so not even {@code sies_owner}
+	 *                    bypasses them, and an import with no actor fails on the first
+	 *                    lecture: the resolution step cannot see what is already there, so it
+	 *                    inserts, and {@code WITH CHECK} refuses the insert. The account needs the {@code ADMIN} role, which
+	 *                    is the policy that lets it reach every department — and that is the
+	 *                    honest shape, because somebody is accountable for loading a device's
+	 *                    history whether the rows themselves name an author or not. Null is
+	 *                    for a connection that is exempt anyway, which is what the tests use
 	 */
 	public record Request(@NonNull Path backup, @Nullable char[] password,
 	                      @NonNull String sourceLabel, int sourceNode, @NonNull ZoneId zone,
-	                      @NonNull Path workDir, boolean dryRun) {
+	                      @NonNull Path workDir, boolean dryRun,
+	                      @Nullable Long actorAccount) {
+
+		/** The six-argument form, for a connection that bypasses row-level security. */
+		public Request(@NonNull Path backup, @Nullable char[] password,
+		               @NonNull String sourceLabel, int sourceNode, @NonNull ZoneId zone,
+		               @NonNull Path workDir, boolean dryRun) {
+			this(backup, password, sourceLabel, sourceNode, zone, workDir, dryRun, null);
+		}
 	}
 
 	/** What happened. */
@@ -122,6 +141,11 @@ public final class BackupImporter {
 				server.setAutoCommit(false);
 
 				try {
+					// Inside the transaction, because set_config(..., true) is
+					// transaction-scoped: set before the BEGIN it would be discarded, and
+					// every policy would then see a null actor and match nothing.
+					setActor(server, request.actorAccount());
+
 					new ImportSession(backup.connection(), server, ids, request.sourceNode(),
 							report).importAll();
 
@@ -152,6 +176,36 @@ public final class BackupImporter {
 							backup.digest(), backup.schemaVersionAsFound());
 				}
 			}
+		}
+	}
+
+	/**
+	 * Announces who is importing, for the row-level security policies.
+	 * <p>
+	 * All three settings are written, two of them empty, for the same reason the service
+	 * writes all three: a policy must never have to ask which of them is populated. The
+	 * importer is neither a professor nor a student, so both of those are empty and the
+	 * {@code ADMIN} role on the account is what the policies match.
+	 * <p>
+	 * A null account sets nothing at all, which is correct for a connection that is exempt
+	 * from the policies — a superuser, as the tests use. It is not correct for production, and
+	 * the symptom there is the whole import failing on its first lecture with "new row
+	 * violates row-level security policy", which is at least unambiguous.
+	 */
+	private static void setActor(@NonNull Connection server, @Nullable Long account)
+			throws SQLException {
+
+		if (account == null) {
+			return;
+		}
+
+		try (PreparedStatement statement = server.prepareStatement(
+				"SELECT set_config('app.account_id', ?, true),"
+						+ "       set_config('app.prof_id',    '', true),"
+						+ "       set_config('app.student_id', '', true)")) {
+
+			statement.setString(1, Long.toString(account));
+			statement.execute();
 		}
 	}
 

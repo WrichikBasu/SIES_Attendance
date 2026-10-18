@@ -1,0 +1,590 @@
+package in.basulabs.siesattendance.server.security;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+import in.basulabs.siesattendance.server.testing.TestPostgres;
+
+/**
+ * Phase 4's gate: that the policies in {@code V6__row_level_security.sql} actually stop a read
+ * the grants would have allowed.
+ * <p>
+ * Every test here connects as {@code sies_app_test} — not a superuser, not the owner of any
+ * table, no {@code BYPASSRLS} — because those are the three ways to be exempt from row-level
+ * security and a test that was any of them would pass against a database with no policies in it
+ * at all. {@link TestPostgres#actingAs} sets the three actor settings exactly as the service
+ * will, and the fixture is built as the superuser, which is the only thing here that sidesteps
+ * the policies.
+ * <p>
+ * The queries are deliberately unfiltered. {@code SELECT count(*) FROM attendance} with no WHERE
+ * clause is the shape of the mistake this phase exists to survive: a report written in a hurry,
+ * an admin script at 11pm, a join somebody forgot to constrain. If the answer is still only the
+ * caller's own rows, the policy is doing the work and not the query.
+ *
+ * @see TestPostgres for how the container and the application role are made
+ */
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class RowLevelSecurityTest {
+
+	/** 2025-26, the session almost everything below is in. */
+	private static final int SESSION = 2025;
+
+	/** The following session, for the test that a grant does not outlive its own. */
+	private static final int NEXT_SESSION = 2026;
+
+	// Fixture ids, fixed so a failure message names something recognisable.
+	private static final long PROF_CS = 1001;
+	private static final long PROF_CHEM = 1002;
+	private static final long PROF_HEAD_CS = 1003;
+
+	private static final long STUDENT_CR = 2001;
+	private static final long STUDENT_OTHER = 2002;
+
+	private static final long COURSE_CS = 3001;
+	private static final long COURSE_CHEM = 3002;
+
+	private static final long LECTURE_CS = 4001;
+	private static final long LECTURE_CHEM = 4002;
+	private static final long LECTURE_CS_NEXT = 4003;
+
+	private static TestPostgres postgres;
+
+	/** Account ids, assigned by the sequence, so read back after the fixture is built. */
+	private long accountProfCs;
+	private long accountProfChem;
+	private long accountHeadCs;
+	private long accountCr;
+	private long accountOffice;
+	private long accountAuditor;
+	private long accountAdmin;
+
+	@BeforeAll
+	void startDatabase() throws Exception {
+
+		assumeTrue(TestPostgres.isAvailable(),
+				"Docker is not available, so the policies cannot be tested against a real "
+						+ "PostgreSQL. tools/verify-rls.sh fails rather than skips.");
+
+		postgres = TestPostgres.start();
+	}
+
+	@AfterAll
+	void stopDatabase() {
+		if (postgres != null) {
+			postgres.close();
+		}
+	}
+
+	@BeforeEach
+	void buildFixture() throws Exception {
+
+		assumeTrue(postgres != null, "no database");
+
+		postgres.reset();
+
+		// Two departments, two professors who each teach one course, a head of Computer
+		// Science, and a student who is the CR of the Computer Science course only.
+		postgres.asSuperuser("""
+				INSERT INTO academic_years (academic_year, start_date, end_date) VALUES
+				    (2025, '2025-06-01', '2026-05-31'),
+				    (2026, '2026-06-01', '2027-05-31');
+
+				INSERT INTO professors (prof_id, name, email, department, designation) VALUES
+				    (1001, 'A CS',   'a.cs@sies.edu.in',   'COMPUTER_SCIENCE', 'Assistant Professor'),
+				    (1002, 'B CHEM', 'b.chem@sies.edu.in', 'CHEMISTRY',        'Assistant Professor'),
+				    (1003, 'C HEAD', 'c.head@sies.edu.in', 'COMPUTER_SCIENCE', 'Professor');
+
+				INSERT INTO students (student_id, name, pronouns, email) VALUES
+				    (2001, 'R RAO',  'she/her',   'r.rao@sies.edu.in'),
+				    (2002, 'S SHAH', 'they/them', 's.shah@sies.edu.in');
+
+				INSERT INTO student_year
+				    (student_id, academic_year, roll_no, year, stream, major_dept, semester) VALUES
+				    (2001, 2025, 'CS-FY-001', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 1),
+				    (2002, 2025, 'CH-FY-001', 'FY', 'BSc',         'CHEMISTRY',        1),
+				    (2001, 2026, 'CS-SY-001', 'SY', 'BSc_unaided', 'COMPUTER_SCIENCE', 3);
+
+				INSERT INTO courses
+				    (course_id, prof_id, course_code, course_topic, stream,
+				     offering_department, year, semester, course_type) VALUES
+				    (3001, 1001, 'CS-101', 'Programming', 'BSc_unaided',
+				     'COMPUTER_SCIENCE', 'FY', 1, 'MAJOR'),
+				    (3002, 1002, 'CH-101', 'Inorganic',   'BSc',
+				     'CHEMISTRY',        'FY', 1, 'MAJOR');
+
+				INSERT INTO course_instructor (course_id, prof_id) VALUES
+				    (3001, 1001), (3002, 1002);
+
+				INSERT INTO lectures
+				    (lecture_id, course_id, batch_id, start_at, start_zone, end_at, end_zone) VALUES
+				    (4001, 3001, NULL, '2025-07-14 09:00:00+05:30', 'Asia/Kolkata',
+				                       '2025-07-14 10:00:00+05:30', 'Asia/Kolkata'),
+				    (4002, 3002, NULL, '2025-07-14 11:00:00+05:30', 'Asia/Kolkata',
+				                       '2025-07-14 12:00:00+05:30', 'Asia/Kolkata'),
+				    (4003, 3001, NULL, '2026-07-14 09:00:00+05:30', 'Asia/Kolkata',
+				                       '2026-07-14 10:00:00+05:30', 'Asia/Kolkata');
+
+				INSERT INTO attendance (lecture_id, student_id, present) VALUES
+				    (4001, 2001, true),
+				    (4002, 2002, true),
+				    (4003, 2001, false);
+				""");
+
+		accountProfCs = createAccount("PROFESSOR", PROF_CS, null, "a.cs@sies.edu.in");
+		accountProfChem = createAccount("PROFESSOR", PROF_CHEM, null, "b.chem@sies.edu.in");
+		accountHeadCs = createAccount("PROFESSOR", PROF_HEAD_CS, null, "c.head@sies.edu.in");
+		accountCr = createAccount("STUDENT", null, STUDENT_CR, "r.rao@sies.edu.in");
+		accountOffice = createAccount("STAFF", null, null, "office@sies.edu.in");
+		accountAuditor = createAccount("STAFF", null, null, "auditor@sies.edu.in");
+		accountAdmin = createAccount("STAFF", null, null, "admin@sies.edu.in");
+
+		// The admin grants itself, which is how the first one has to come into being.
+		grantRole(accountAdmin, "ADMIN", null, null, accountAdmin);
+		grantRole(accountOffice, "OFFICE", null, null, accountAdmin);
+		grantRole(accountAuditor, "AUDITOR", null, null, accountAdmin);
+		grantRole(accountHeadCs, "HOD", "COMPUTER_SCIENCE", SESSION, accountAdmin);
+
+		// The CR of CS-101 for 2025-26, and nothing else.
+		postgres.asSuperuser(
+				"INSERT INTO attendance_delegate (student_id, course_id, academic_year, "
+						+ "granted_by, granted_as) VALUES ("
+						+ STUDENT_CR + ", " + COURSE_CS + ", " + SESSION + ", "
+						+ accountProfCs + ", 'INSTRUCTOR')");
+	}
+
+	// ── The gate ─────────────────────────────────────────────────────────
+
+	@Test
+	void aProfessorCannotReadAnotherDepartmentsAttendance() throws Exception {
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+
+			// Unfiltered on purpose: this is the query somebody writes by accident.
+			// Two rows, not one: both are CS-101's, in two different sessions.
+			// course_instructor names no session, so a professor keeps reach over their
+			// own course's history -- which is what they need to answer a query about last
+			// year's register. The boundary this test is about is the department.
+			assertEquals(2, count(as, "SELECT count(*) FROM attendance"),
+					"a professor should see their own course's attendance and no other");
+
+			assertEquals(0, count(as,
+					"SELECT count(*) FROM attendance WHERE lecture_id = " + LECTURE_CHEM),
+					"Chemistry's attendance must be invisible to a Computer Science professor");
+
+			// And through a join, which is the other way a report leaks.
+			assertEquals(2, count(as,
+					"SELECT count(*) FROM attendance a JOIN lectures l "
+							+ "ON l.lecture_id = a.lecture_id"),
+					"joining through lectures must not widen what is visible");
+		}
+	}
+
+	@Test
+	void aProfessorCannotWriteAnotherDepartmentsAttendance() throws Exception {
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+
+			// An UPDATE that matches no visible row changes nothing. It does not error,
+			// which is the point worth knowing: RLS filters, it does not complain.
+			assertEquals(0, update(as,
+					"UPDATE attendance SET present = false WHERE lecture_id = " + LECTURE_CHEM),
+					"a professor must not be able to edit another department's register");
+
+			// Inserting into it is refused outright, because WITH CHECK is not a filter.
+			assertThrows(SQLException.class, () -> execute(as,
+					"INSERT INTO attendance (lecture_id, student_id, present) VALUES ("
+							+ LECTURE_CHEM + ", " + STUDENT_CR + ", true)"),
+					"a row-level security violation on INSERT must be an error, not a no-op");
+		}
+	}
+
+	@Test
+	void aCrCannotTouchACourseTheyHoldNoGrantFor() throws Exception {
+
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+
+			assertEquals(1, count(as, "SELECT count(*) FROM attendance"),
+					"the CR of CS-101 should see exactly its one 2025-26 attendance row");
+
+			assertEquals(0, count(as,
+					"SELECT count(*) FROM lectures WHERE course_id = " + COURSE_CHEM),
+					"a CR has no reach into a course they were not designated for");
+
+			assertEquals(0, update(as,
+					"UPDATE attendance SET present = false WHERE lecture_id = " + LECTURE_CHEM),
+					"a CR must not be able to edit a course they hold no grant for");
+		}
+	}
+
+	@Test
+	void aCrsGrantDoesNotReachTheFollowingSession() throws Exception {
+
+		// The same course, a lecture in 2026-27, and a grant that names 2025-26. Nobody has
+		// revoked anything; the grant simply does not describe that register.
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+
+			assertEquals(0, count(as,
+					"SELECT count(*) FROM lectures WHERE lecture_id = " + LECTURE_CS_NEXT),
+					"a 2025-26 grant must not reach a 2026-27 lecture of the same course");
+
+			assertEquals(0, update(as,
+					"UPDATE attendance SET present = true WHERE lecture_id = "
+							+ LECTURE_CS_NEXT),
+					"last year's CR must not be able to amend this year's register");
+
+			// And the grant still works for its own session, so the test above is about the
+			// session and not about the grant being broken.
+			assertEquals(1, update(as,
+					"UPDATE attendance SET present = false WHERE lecture_id = " + LECTURE_CS),
+					"the grant must still work for the session it names");
+		}
+	}
+
+	// ── The rest of the policy surface ───────────────────────────────────
+
+	@Test
+	void anUnauthenticatedConnectionSeesNothing() throws Exception {
+
+		// No actor set at all: current_account_id() is NULL, which matches no policy.
+		try (Connection as = postgres.appConnection()) {
+			assertEquals(0, count(as, "SELECT count(*) FROM attendance"));
+			assertEquals(0, count(as, "SELECT count(*) FROM lectures"));
+		}
+	}
+
+	@Test
+	void aRevokedGrantStopsWorkingAtOnce() throws Exception {
+
+		postgres.asSuperuser(
+				"UPDATE attendance_delegate SET revoked_at = now(), revoked_by = "
+						+ accountAdmin + " WHERE student_id = " + STUDENT_CR);
+
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+			assertEquals(0, count(as, "SELECT count(*) FROM attendance"),
+					"revoking takes effect on the next statement, not the next login");
+		}
+	}
+
+	@Test
+	void anExpiredGrantStopsWorking() throws Exception {
+
+		// granted_at moves back too. attendance_delegate_expiry_after_grant refuses a
+		// grant that expired before it was issued, so a spent grant is a backdated one and
+		// not merely one with a past expiry.
+		postgres.asSuperuser(
+				"UPDATE attendance_delegate SET granted_at = now() - interval '2 days', "
+						+ "expires_at = now() - interval '1 day' "
+						+ "WHERE student_id = " + STUDENT_CR);
+
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+			assertEquals(0, count(as, "SELECT count(*) FROM attendance"));
+		}
+	}
+
+	@Test
+	void aCrMayMarkTheirOwnAttendance() throws Exception {
+
+		// Asserted rather than left implicit: this was decided with the alternative in hand,
+		// and the audit log is the only control over it. A policy change that quietly closed
+		// it would break this test, which is the point of writing it down.
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+			assertEquals(1, update(as,
+					"UPDATE attendance SET present = true WHERE lecture_id = " + LECTURE_CS
+							+ " AND student_id = " + STUDENT_CR),
+					"a CR may mark themselves present; the audit row is the only trace");
+		}
+	}
+
+	@Test
+	void aCrCannotDeleteALectureOrAnAttendanceRow() throws Exception {
+
+		// Deleting a lecture destroys its attendance, which is not what "take attendance on
+		// behalf of the professor" means. There is no DELETE policy for a delegate, and an
+		// absent policy denies.
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+
+			assertEquals(0, update(as,
+					"DELETE FROM attendance WHERE lecture_id = " + LECTURE_CS));
+			assertEquals(0, update(as,
+					"DELETE FROM lectures WHERE lecture_id = " + LECTURE_CS));
+		}
+
+		// Still there.
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals(1, count(as,
+					"SELECT count(*) FROM lectures WHERE lecture_id = " + LECTURE_CS));
+		}
+	}
+
+	@Test
+	void aHeadOfDepartmentSeesTheirOwnDepartmentAndNoOther() throws Exception {
+
+		try (Connection as = postgres.actingAs(accountHeadCs, PROF_HEAD_CS, null)) {
+
+			// Both Computer Science lectures: the 2025-26 one through the HOD grant, and the
+			// 2026-27 one not at all, because the headship names a session too.
+			assertEquals(1, count(as,
+					"SELECT count(*) FROM lectures WHERE course_id = " + COURSE_CS
+							+ " AND lecture_id = " + LECTURE_CS));
+			assertEquals(0, count(as,
+					"SELECT count(*) FROM lectures WHERE lecture_id = " + LECTURE_CS_NEXT),
+					"a headship for 2025-26 does not extend into 2026-27");
+
+			assertEquals(0, count(as,
+					"SELECT count(*) FROM attendance WHERE lecture_id = " + LECTURE_CHEM),
+					"the head of Computer Science is nobody in Chemistry");
+		}
+	}
+
+	@Test
+	void anAuditorReadsEverythingAndChangesNothing() throws Exception {
+
+		try (Connection as = postgres.actingAs(accountAuditor, null, null)) {
+
+			assertEquals(3, count(as, "SELECT count(*) FROM attendance"),
+					"an auditor reads across every department");
+
+			assertEquals(0, update(as, "UPDATE attendance SET present = false"),
+					"an auditor has a FOR SELECT policy and nothing else");
+			assertEquals(0, update(as, "DELETE FROM attendance"));
+		}
+	}
+
+	@Test
+	void theOfficeReadsAttendanceAndDoesNotEditIt() throws Exception {
+
+		try (Connection as = postgres.actingAs(accountOffice, null, null)) {
+			assertEquals(3, count(as, "SELECT count(*) FROM attendance"),
+					"the office exports attendance, so it reads all of it");
+			assertEquals(0, update(as, "UPDATE attendance SET present = false"),
+					"the permission matrix gives the office no attendance edit");
+		}
+	}
+
+	@Test
+	void anAdminReachesEverything() throws Exception {
+
+		try (Connection as = postgres.actingAs(accountAdmin, null, null)) {
+			assertEquals(3, count(as, "SELECT count(*) FROM attendance"));
+			assertEquals(3, update(as, "UPDATE attendance SET present = true"));
+		}
+	}
+
+	// ── Designating a CR ─────────────────────────────────────────────────
+
+	@Test
+	void aProfessorCannotDesignateACrForSomebodyElsesCourse() throws Exception {
+
+		// The Chemistry professor, reaching at the Computer Science course. The policy denies
+		// the attempt before the trigger is ever consulted.
+		try (Connection as = postgres.actingAs(accountProfChem, PROF_CHEM, null)) {
+			assertThrows(SQLException.class, () -> execute(as,
+					"INSERT INTO attendance_delegate (student_id, course_id, academic_year, "
+							+ "granted_by, granted_as) VALUES (" + STUDENT_OTHER + ", "
+							+ COURSE_CS + ", " + SESSION + ", " + accountProfChem
+							+ ", 'INSTRUCTOR')"));
+		}
+	}
+
+	@Test
+	void claimingAnAuthorityYouDoNotHoldIsRefused() throws Exception {
+
+		// The admin may designate, so the policy lets this through — and the trigger then
+		// catches that the claimed capacity is INSTRUCTOR, which the admin is not.
+		try (Connection as = postgres.actingAs(accountAdmin, null, null)) {
+
+			SQLException refused = assertThrows(SQLException.class, () -> execute(as,
+					"INSERT INTO attendance_delegate (student_id, course_id, academic_year, "
+							+ "granted_by, granted_as) VALUES (" + STUDENT_CR + ", "
+							+ COURSE_CHEM + ", " + SESSION + ", " + accountAdmin
+							+ ", 'INSTRUCTOR')"));
+
+			assertTrue(refused.getMessage().contains("cannot designate"),
+					"the trigger should say what was wrong, not just fail: "
+							+ refused.getMessage());
+		}
+	}
+
+	@Test
+	void aCrWhoIsNotOnTheRollIsRefused() throws Exception {
+
+		// Student 2002 is a Chemistry major, so they are not on CS-101's roll at all.
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+
+			SQLException refused = assertThrows(SQLException.class, () -> execute(as,
+					"INSERT INTO attendance_delegate (student_id, course_id, academic_year, "
+							+ "granted_by, granted_as) VALUES (" + STUDENT_OTHER + ", "
+							+ COURSE_CS + ", " + SESSION + ", " + accountProfCs
+							+ ", 'INSTRUCTOR')"));
+
+			assertTrue(refused.getMessage().contains("not on the roll"),
+					"the roster check should name the problem: " + refused.getMessage());
+		}
+	}
+
+	@Test
+	void aGrantIsNeverDeleted() throws Exception {
+
+		// Not even by an admin. Revoking is an UPDATE; there is no DELETE policy on the table
+		// for anybody, and an absent policy denies.
+		try (Connection as = postgres.actingAs(accountAdmin, null, null)) {
+			assertEquals(0, update(as, "DELETE FROM attendance_delegate"));
+			assertEquals(1, update(as,
+					"UPDATE attendance_delegate SET revoked_at = now(), revoked_by = "
+							+ accountAdmin));
+		}
+	}
+
+	@Test
+	void aCrSeesTheirOwnGrantsAndNobodyElsesRoles() throws Exception {
+
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+
+			assertEquals(1, count(as, "SELECT count(*) FROM attendance_delegate"),
+					"a CR may see what they have been given");
+
+			// Four roles exist; a student holds none and may see none of them.
+			assertEquals(0, count(as, "SELECT count(*) FROM user_role"),
+					"a student has no business reading the college's role grants");
+		}
+	}
+
+	// ── roll_for_course ──────────────────────────────────────────────────
+
+	@Test
+	void theRosterFunctionPutsACrossDepartmentMinorOnTheRoll() throws Exception {
+
+		// V4's case, now load-bearing for the grant trigger: a Mathematics minor read to a
+		// BSc_unaided class. If roll_for_course got this wrong, no CR could be designated for
+		// a minor at all.
+		postgres.asSuperuser("""
+				INSERT INTO professors (prof_id, name, email, department, designation)
+				    VALUES (1004, 'D MATH', 'd.math@sies.edu.in', 'MATHEMATICS', 'Professor');
+
+				UPDATE student_year SET minor_dept = 'MATHEMATICS'
+				    WHERE student_id = 2001 AND academic_year = 2025;
+
+				INSERT INTO courses
+				    (course_id, prof_id, course_code, course_topic, stream,
+				     offering_department, year, semester, course_type)
+				    VALUES (3003, 1004, 'MATH-MIN-1', 'Discrete', 'BSc_unaided',
+				            'MATHEMATICS', 'FY', 1, 'MINOR');
+				""");
+
+		try (Connection as = postgres.connection()) {
+			assertEquals(1, count(as,
+					"SELECT count(*) FROM roll_for_course(3003, 2025) WHERE student_id = 2001"),
+					"a BSc_unaided student minoring in Mathematics is on that minor's roll");
+			assertEquals(0, count(as,
+					"SELECT count(*) FROM roll_for_course(3003, 2025) WHERE student_id = 2002"),
+					"a Chemistry major is not");
+		}
+	}
+
+	// ── Fixture helpers ──────────────────────────────────────────────────
+
+	/** Creates an account as the superuser and returns the id the sequence gave it. */
+	private long createAccount(String kind, Long prof, Long student, String email)
+			throws SQLException {
+
+		try (Connection connection = postgres.connection();
+		     PreparedStatement statement = connection.prepareStatement(
+				     "INSERT INTO app_account (kind, prof_id, student_id, display_name, "
+						     + "login_email, password_hash) "
+						     + "VALUES (?::account_kind, ?, ?, ?, ?, 'not-a-real-hash') "
+						     + "RETURNING account_id")) {
+
+			statement.setString(1, kind);
+			if (prof == null) {
+				statement.setNull(2, java.sql.Types.BIGINT);
+			} else {
+				statement.setLong(2, prof);
+			}
+			if (student == null) {
+				statement.setNull(3, java.sql.Types.BIGINT);
+			} else {
+				statement.setLong(3, student);
+			}
+			statement.setString(4, email);
+			statement.setString(5, email);
+
+			try (ResultSet results = statement.executeQuery()) {
+				assertTrue(results.next(), "no account id came back");
+				return results.getLong(1);
+			}
+		}
+	}
+
+	private void grantRole(long account, String role, String department, Integer session,
+	                       long grantedBy) throws SQLException {
+
+		try (Connection connection = postgres.connection();
+		     PreparedStatement statement = connection.prepareStatement(
+				     "INSERT INTO user_role (account_id, role, department, academic_year, "
+						     + "granted_by) VALUES (?, ?::app_role, ?::department, ?, ?)")) {
+
+			statement.setLong(1, account);
+			statement.setString(2, role);
+			statement.setString(3, department);
+			if (session == null) {
+				statement.setNull(4, java.sql.Types.INTEGER);
+			} else {
+				statement.setInt(4, session);
+			}
+			statement.setLong(5, grantedBy);
+			statement.execute();
+		}
+	}
+
+	// ── Query helpers ────────────────────────────────────────────────────
+
+	private static long count(Connection connection, String sql) throws SQLException {
+
+		try (Statement statement = connection.createStatement();
+		     ResultSet results = statement.executeQuery(sql)) {
+
+			assertTrue(results.next(), () -> "no row from: " + sql);
+			return results.getLong(1);
+		}
+	}
+
+	/** The number of rows a write touched, which is what a policy filter reduces to zero. */
+	private static int update(Connection connection, String sql) throws SQLException {
+
+		try (Statement statement = connection.createStatement()) {
+			return statement.executeUpdate(sql);
+		}
+	}
+
+	private static void execute(Connection connection, String sql) throws SQLException {
+
+		try (Statement statement = connection.createStatement()) {
+			statement.execute(sql);
+		}
+	}
+
+	/** Kept so an unused-import warning cannot hide a test that stopped asserting. */
+	@Test
+	void theFixtureItselfIsVisibleToTheSuperuser() throws Exception {
+		try (Connection as = postgres.connection()) {
+			assertEquals(3, count(as, "SELECT count(*) FROM attendance"));
+			assertFalse(count(as, "SELECT count(*) FROM app_account") < 7,
+					"seven accounts should have been created");
+		}
+	}
+}
