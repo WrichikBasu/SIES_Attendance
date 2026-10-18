@@ -570,4 +570,119 @@ public class DomainRulesTest {
 		assertNull(Division.fromAny("E"));
 		assertNull(Division.fromAny("Div"));
 	}
+
+	// ── Which course types follow the offering department ────────────────
+
+	@Test
+	public void theTypesFollowingTheOfferingDepartmentAreTheOnesMatchedOnTheMajor() {
+
+		// Golden, and deliberately so: this list is what the server's
+		// courses -> department_stream foreign key applies to, and it has to be read against
+		// the roster query in DaoStudent, which is the only place that says which of a
+		// student's three departments each type is matched on. Changing it changes which
+		// courses the server will accept.
+		assertEquals(Arrays.asList(CourseType.MAJOR, CourseType.MAJOR_PRACTICALS,
+						CourseType.DSE, CourseType.DSE_PRACTICALS),
+				CourseType.followingOfferingDepartment());
+
+		// A minor and an open elective are taught by another department by definition.
+		assertFalse(CourseType.MINOR.followsOfferingDepartment());
+		assertFalse(CourseType.MINOR_PRACTICALS.followsOfferingDepartment());
+		assertFalse(CourseType.OE.followsOfferingDepartment());
+
+		// These carry no department condition at all, so their offering department records
+		// only who teaches them.
+		for (CourseType type : Arrays.asList(CourseType.VSC, CourseType.VSC_PRACTICALS,
+				CourseType.SEC, CourseType.SEC_PRACTICALS, CourseType.AEC, CourseType.IKS)) {
+			assertFalse(type + " takes a whole year and stream, so it cannot be tied to the "
+					+ "offering department", type.followsOfferingDepartment());
+		}
+	}
+
+	@Test
+	public void aLaboratoryTypeFollowsWhateverItsTheoryHalfFollows() {
+
+		// The flag is declared per constant, which leaves room for a laboratory type to
+		// disagree with the subject it is the laboratory half of. It cannot: the two are one
+		// subject, taught by one department, to one roll.
+		for (CourseType practical : CourseType.practicals()) {
+
+			String theoryName = practical.name().replace("_PRACTICALS", "");
+			CourseType theory = CourseType.fromAny(theoryName);
+
+			if (theory == null) {
+				continue;   // a laboratory type with no theory half of its own
+			}
+
+			assertEquals(practical + " must follow the offering department exactly as "
+							+ theory + " does",
+					theory.followsOfferingDepartment(),
+					practical.followsOfferingDepartment());
+		}
+	}
+
+	// ── validateCourse ───────────────────────────────────────────────────
+
+	@Test
+	public void aCrossDepartmentCourseIsNotRejectedForItsStream() {
+
+		// Mathematics is studied as BSc and MSc, never BSc_unaided. A Mathematics minor read
+		// to a BSc_unaided Computer Science class is nonetheless ordinary: the stream is the
+		// class being taught, and the roster query matches it against the student's own.
+		assertNull(AcademicRules.validateCourse(Department.MATHEMATICS, Stream.BSc_unaided,
+				Year.FY, 1, CourseType.MINOR));
+		assertNull(AcademicRules.validateCourse(Department.MATHEMATICS, Stream.BSc_unaided,
+				Year.FY, 1, CourseType.MINOR_PRACTICALS));
+
+		// An open elective crossing the aided/unaided line, and one crossing to another
+		// faculty altogether: a BCom student's open elective is the case the restriction made
+		// impossible, Commerce being the only department offering BCom.
+		assertNull(AcademicRules.validateCourse(Department.ECONOMICS, Stream.BSc,
+				Year.SY, 3, CourseType.OE));
+		assertNull(AcademicRules.validateCourse(Department.PHYSICS, Stream.BCom,
+				Year.FY, 1, CourseType.OE));
+
+		// The types a whole year takes regardless of department: the offering department
+		// records who reads it, and that is all.
+		assertNull(AcademicRules.validateCourse(Department.ENGLISH, Stream.BSc_unaided,
+				Year.FY, 1, CourseType.AEC));
+		assertNull(AcademicRules.validateCourse(Department.ENGLISH, Stream.BSc_unaided,
+				Year.TY, 5, CourseType.IKS));
+
+		// The plain check, which every other screen uses, still refuses all of them. That is
+		// the whole reason the course screen needs its own.
+		assertNotNull(AcademicRules.validate(Department.MATHEMATICS, Stream.BSc_unaided,
+				Year.FY, 1));
+	}
+
+	@Test
+	public void aMajorIsStillHeldToItsDepartmentsStreams() {
+
+		// Nothing is relaxed for the types whose roll is the students majoring in the offering
+		// department: for them the stream really cannot be one the department does not run.
+		for (CourseType type : CourseType.followingOfferingDepartment()) {
+			assertNotNull(type + " is read to the offering department's own majors, so "
+							+ "BSc_unaided Mathematics has no students and must be refused",
+					AcademicRules.validateCourse(Department.MATHEMATICS, Stream.BSc_unaided,
+							Year.FY, 1, type));
+		}
+
+		// And a type not yet chosen is held to the strict reading, there being nothing to
+		// relax it on.
+		assertNotNull(AcademicRules.validateCourse(Department.MATHEMATICS, Stream.BSc_unaided,
+				Year.FY, 1, null));
+	}
+
+	@Test
+	public void validateCourseStillChecksEverythingElse() {
+
+		// Only the department-against-stream condition is dropped. The year has to belong to
+		// the stream's level and the semester to the year, whatever the course type.
+		assertNotNull(AcademicRules.validateCourse(Department.MATHEMATICS, Stream.BSc_unaided,
+				Year.Masters_P1, null, CourseType.OE));
+		assertNotNull(AcademicRules.validateCourse(Department.MATHEMATICS, Stream.BSc_unaided,
+				Year.FY, 5, CourseType.OE));
+		assertNotNull(AcademicRules.validateCourse(Department.MATHEMATICS, Stream.BSc_unaided,
+				Year.FY, 5, CourseType.MINOR_PRACTICALS));
+	}
 }

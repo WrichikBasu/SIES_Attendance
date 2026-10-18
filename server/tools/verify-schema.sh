@@ -90,4 +90,4 @@ if [[ "${1:-}" == "--dump" ]]; then
 fi
 
 echo
-echo "==> OK: both migrations applied to an empty database"
+echo "==> OK: every migration applied to an empty database"

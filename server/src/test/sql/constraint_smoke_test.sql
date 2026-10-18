@@ -33,6 +33,9 @@ BEGIN
           OR unique_violation
           OR exclusion_violation
           OR invalid_text_representation
+          -- Writing a GENERATED ALWAYS column raises generated_always
+          -- (428C9), which is none of the above.
+          OR generated_always
         THEN
             RAISE NOTICE '  ok   rejected: %', what;
             RETURN;
@@ -77,6 +80,33 @@ INSERT INTO courses
      year, semester, course_type)
     VALUES (3001, 1001, 'PHYS101', 'Mechanics', 'BSc', 'PHYSICS', 'FY', 1, 'MAJOR'),
            (3002, 1001, 'PHYS101P', 'Mechanics Lab', 'BSc', 'PHYSICS', 'FY', 1, 'MAJOR_PRACTICALS');
+
+-- Courses taught by a department other than the students' own. V2 forbade
+-- every one of these, because it required a course's stream to be one its
+-- offering department offers; V4 exempts the types whose offering
+-- department is not the students' major. Mathematics is studied as BSc and
+-- never BSc_unaided, Economics and English are BA/MA departments, and all
+-- three rows below are ordinary teaching.
+INSERT INTO courses
+    (course_id, prof_id, course_code, course_topic, stream, offering_department,
+     year, semester, course_type)
+    VALUES (3011, 1001, 'MATH-MIN-1', 'Discrete Mathematics', 'BSc_unaided', 'MATHEMATICS',
+            'FY', 1, 'MINOR'),
+           (3012, 1001, 'ECO-OE-1',   'Basic Economics',      'BSc',         'ECONOMICS',
+            'FY', 1, 'OE'),
+           (3013, 1001, 'ENG-AEC-1',  'Communication Skills', 'BSc_unaided', 'ENGLISH',
+            'FY', 1, 'AEC');
+
+SELECT assert_equal(
+    (SELECT count(*) FROM courses
+      WHERE course_id IN (3011, 3012, 3013) AND own_department_stream IS NULL),
+    3::bigint,
+    'a cross-department course has no own_department_stream to be constrained on');
+
+SELECT assert_equal(
+    (SELECT own_department_stream FROM courses WHERE course_id = 3001),
+    'BSc'::degree_stream,
+    'a major carries its stream into the generated column');
 
 INSERT INTO course_instructor (course_id, prof_id) VALUES (3001, 1001), (3002, 1001);
 
@@ -183,6 +213,33 @@ SELECT assert_rejected($$
                          offering_department, year, semester, course_type)
     VALUES (3099, 1001, 'COM999', 'Nonsense', 'BSc', 'COMMERCE', 'FY', 1, 'MAJOR')$$,
     'Commerce taught as a BSc (department does not offer the stream)');
+
+-- The same impossible pairing as a MAJOR is still refused. A major's roll
+-- IS the offering department's own majors, and BSc_unaided Mathematics has
+-- none, so the row describes a class that cannot exist.
+SELECT assert_rejected($$
+    INSERT INTO courses (course_id, prof_id, course_code, course_topic, stream,
+                         offering_department, year, semester, course_type)
+    VALUES (3094, 1001, 'MATH-MAJ-X', 'Impossible major', 'BSc_unaided', 'MATHEMATICS',
+            'FY', 1, 'MAJOR')$$,
+    'a major in a stream its own department does not offer');
+
+SELECT assert_rejected($$
+    INSERT INTO courses (course_id, prof_id, course_code, course_topic, stream,
+                         offering_department, year, semester, course_type)
+    VALUES (3093, 1001, 'MATH-DSEP-X', 'Impossible DSE lab', 'BSc_unaided', 'MATHEMATICS',
+            'TY', 5, 'DSE_PRACTICALS')$$,
+    'a DSE practical in a stream its own department does not offer');
+
+-- Nobody may write the generated column, which is what keeps the importer
+-- from ever being able to supply it.
+SELECT assert_rejected($$
+    INSERT INTO courses (course_id, prof_id, course_code, course_topic, stream,
+                         offering_department, year, semester, course_type,
+                         own_department_stream)
+    VALUES (3092, 1001, 'PHYS-GEN-X', 'Generated written', 'BSc', 'PHYSICS',
+            'FY', 1, 'MAJOR', 'BSc')$$,
+    'an explicit value for the generated own_department_stream column');
 
 SELECT assert_rejected($$
     INSERT INTO student_year (student_id, academic_year, roll_no, year, stream, major_dept)

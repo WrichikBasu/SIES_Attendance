@@ -18,52 +18,56 @@ import java.util.List;
 public enum CourseType {
 
 	/** Taken by students majoring in the offering department. */
-	MAJOR("Major"),
+	MAJOR("Major", true),
 
 	/**
 	 * Taken as a secondary subject. The roll for a minor course also admits students whose
 	 * major is the offering department, because the minor field on the student form is
 	 * optional and often left blank; see the roster query in {@code DaoStudent} for why.
 	 */
-	MINOR("Minor"),
+	MINOR("Minor", false),
 
 	/** The laboratory half of a major course, following the same department condition. */
-	MAJOR_PRACTICALS("Major practicals"),
+	MAJOR_PRACTICALS("Major practicals", true),
 
 	/** The laboratory half of a minor course, following the same department condition. */
-	MINOR_PRACTICALS("Minor practicals"),
+	MINOR_PRACTICALS("Minor practicals", false),
 
 	/**
 	 * Discipline specific elective. Chosen from the basket the student's own discipline offers,
 	 * so it carries the same department condition as a major course: the roll is the students
 	 * majoring in the offering department.
 	 */
-	DSE("DSE"),
+	DSE("DSE", true),
 
 	/** The laboratory half of a DSE, following the same department condition. */
-	DSE_PRACTICALS("DSE practicals"),
+	DSE_PRACTICALS("DSE practicals", true),
 
 	/** Open elective, matched against the student's declared OE department. */
-	OE("OE"),
+	OE("OE", false),
 
 	/*
 	 * The types below are taken by a whole year and stream regardless of department, so no
 	 * department condition applies to them at all. They are the ones that have to be listed
-	 * explicitly in the roster query.
+	 * explicitly in the roster query. Their offering department records who teaches them and is
+	 * not the students' own, which is why none of them follows it.
 	 */
 
-	VSC("VSC"),
-	VSC_PRACTICALS("VSC practicals"),
-	SEC("SEC"),
-	SEC_PRACTICALS("SEC practicals"),
-	AEC("AEC"),
-	IKS("IKS");
+	VSC("VSC", false),
+	VSC_PRACTICALS("VSC practicals", false),
+	SEC("SEC", false),
+	SEC_PRACTICALS("SEC practicals", false),
+	AEC("AEC", false),
+	IKS("IKS", false);
 
 	@NonNull
 	private final String label;
 
-	CourseType(@NonNull String label) {
+	private final boolean ownDepartment;
+
+	CourseType(@NonNull String label, boolean ownDepartment) {
 		this.label = label;
+		this.ownDepartment = ownDepartment;
 	}
 
 	@NonNull
@@ -110,6 +114,54 @@ public enum CourseType {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Whether the offering department is necessarily the student's own major department.
+	 * <p>
+	 * True for a major, a DSE and the laboratory halves of both: the roster query in
+	 * {@code DaoStudent} admits a student only when {@code majorDept = offeringDepartment}, so
+	 * the department teaching the course is by definition one the student's own stream is
+	 * studied under.
+	 * <p>
+	 * False for everything else, for two different reasons. A minor and an open elective are
+	 * deliberately taught by another department, matched on {@code minorDept} and
+	 * {@code oeDept}. AEC, IKS, VSC and SEC carry no department condition at all, the whole
+	 * year and stream taking them, so their offering department only records who teaches them.
+	 * <p>
+	 * What this decides is whether a course's stream has to be one its offering department
+	 * offers. For a type that follows the department it does, and the server enforces that as a
+	 * composite foreign key onto {@code department_stream}. For a type that does not, the
+	 * requirement is simply untrue: Mathematics is studied as BSc, so a Mathematics minor taken
+	 * by a BSc_unaided Computer Science class is a course whose stream its own department does
+	 * not offer, and refusing it would make that minor unrecordable. The server exempts those
+	 * types through a generated column that is null for them; see
+	 * {@code V4__cross_department_courses.sql}.
+	 * <p>
+	 * Declared per constant rather than read off the name, because it is a fact about how the
+	 * college teaches the type. A laboratory type does have to agree with the type it is the
+	 * laboratory half of, which {@code DomainRulesTest} checks.
+	 */
+	public boolean followsOfferingDepartment() {
+		return ownDepartment;
+	}
+
+	/**
+	 * The types whose offering department is the student's own, in declaration order: exactly
+	 * the types the server's {@code courses} to {@code department_stream} foreign key applies
+	 * to. {@code PostgresSchemaDriftTest} compares this list against the committed SQL.
+	 */
+	@NonNull
+	public static List<CourseType> followingOfferingDepartment() {
+
+		List<CourseType> out = new ArrayList<>();
+
+		for (CourseType type : values()) {
+			if (type.followsOfferingDepartment()) {
+				out.add(type);
+			}
+		}
+		return Collections.unmodifiableList(out);
 	}
 
 	/**

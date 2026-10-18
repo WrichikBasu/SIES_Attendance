@@ -13,8 +13,6 @@ import androidx.annotation.Nullable;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.File;
@@ -24,16 +22,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.security.GeneralSecurityException;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.zip.GZIPInputStream;
-import java.util.zip.GZIPOutputStream;
 
 import javax.crypto.AEADBadTagException;
-import javax.crypto.Cipher;
-import javax.crypto.CipherOutputStream;
-import javax.crypto.SecretKey;
 
 import in.basulabs.siesattendance.backend.ConstantsAndStatics;
 import in.basulabs.siesattendance.backend.MainDatabase;
@@ -47,23 +39,11 @@ import in.basulabs.siesattendance.backend.MainDatabase;
  * instead of replaying inserts that would renumber primary keys and break the attendance records
  * pointing at them.
  *
- * <h3>File layout</h3>
- * <pre>
- * magic          8 bytes   "SIESBAK1"
- * format         1 byte    container revision, currently 1
- * encrypted      1 byte    0 or 1
- * schema         4 bytes   Room user_version at export time
- * createdAt      8 bytes   epoch millis
- * appVersion     4 bytes   versionCode that wrote the file
- * iterations     4 bytes   ) present only when encrypted
- * salt          16 bytes   )
- * iv            12 bytes   )
- * payload        rest      gzip(sqlite), then AES-GCM if encrypted
- * </pre>
- * Compression runs before encryption: ciphertext is incompressible, so the other order would
- * save nothing. The header is deliberately readable without the password, which is what lets
- * the UI ask for one only when the file actually needs it, and lets a backup from a newer
- * app version be rejected with a clear message instead of a decryption failure.
+ * <h3>Where the format itself is</h3>
+ * In {@link BackupContainer}, which describes the header and wraps the payload, and which the
+ * server's importer reads the very same files through. What is left here is everything that
+ * only makes sense on a phone: the content URIs, the checkpoint before a copy, staging in the
+ * cache directory, and swapping the live file out from under Room.
  *
  * <h3>Safety of the restore</h3>
  * A restore replaces live data, so the candidate file is fully decrypted, decompressed and
@@ -74,22 +54,6 @@ import in.basulabs.siesattendance.backend.MainDatabase;
  * Every method here blocks and must be called off the main thread.
  */
 public final class DatabaseBackup {
-
-	private static final byte[] MAGIC = {'S', 'I', 'E', 'S', 'B', 'A', 'K', '1'};
-
-	private static final byte FORMAT_VERSION = 1;
-
-	/**
-	 * A ceiling on the encrypted payload, which is buffered whole (see
-	 * {@link #readPayload}). Far above any realistic roster and attendance history, and only
-	 * here so an absurd or hostile file fails with a message instead of an OutOfMemoryError.
-	 */
-	private static final long MAX_ENCRYPTED_PAYLOAD = 256L * 1024 * 1024;
-
-	/** Tables that must exist for the file to be one of ours rather than some other database. */
-	private static final Set<String> EXPECTED_TABLES = new HashSet<>(Arrays.asList(
-			"students", "student_year", "courses", "lectures", "attendance",
-			"professors", "academic_years", "batch_desc"));
 
 	private DatabaseBackup() {
 	}
@@ -177,36 +141,6 @@ public final class DatabaseBackup {
 		}
 	}
 
-	/**
-	 * What the header says about a file, read without needing the password. This is what lets
-	 * the UI ask for a password only when the file actually has one, and reject an unreadable
-	 * file with a clear message rather than a decryption error.
-	 */
-	public static class Info {
-
-		public final boolean encrypted;
-
-		/**
-		 * The Room {@code user_version} the file was written at. A negative value is the signal
-		 * that the container format itself is too new to read, in which case nothing else here
-		 * is meaningful.
-		 */
-		public final int schemaVersion;
-
-		/** When the backup was written, as epoch milliseconds. */
-		public final long createdAt;
-
-		/** The app version that wrote it. Zero when it could not be determined. */
-		public final int appVersionCode;
-
-		Info(boolean encrypted, int schemaVersion, long createdAt, int appVersionCode) {
-			this.encrypted = encrypted;
-			this.schemaVersion = schemaVersion;
-			this.createdAt = createdAt;
-			this.appVersionCode = appVersionCode;
-		}
-	}
-
 	// ── Export ───────────────────────────────────────────────────────────
 
 	/**
@@ -219,8 +153,6 @@ public final class DatabaseBackup {
 	@NonNull
 	public static Result export(@NonNull Context context, @NonNull Uri destination,
 	                            @Nullable char[] password) {
-
-		boolean encrypted = password != null && password.length > 0;
 
 		try {
 			// Room keeps recent writes in the -wal sidecar. Without this the copied file
@@ -252,37 +184,15 @@ public final class DatabaseBackup {
 
 				DataOutputStream header = new DataOutputStream(new BufferedOutputStream(raw));
 
-				header.write(MAGIC);
-				header.writeByte(FORMAT_VERSION);
-				header.writeBoolean(encrypted);
-				header.writeInt(schemaVersion);
-				header.writeLong(System.currentTimeMillis());
-				header.writeInt(appVersionCode(context));
-
-				OutputStream payload = header;
-
-				if (encrypted) {
-					byte[] salt = BackupCrypto.randomBytes(BackupCrypto.SALT_BYTES);
-					byte[] iv = BackupCrypto.randomBytes(BackupCrypto.IV_BYTES);
-					int iterations = BackupCrypto.DEFAULT_ITERATIONS;
-
-					header.writeInt(iterations);
-					header.write(salt);
-					header.write(iv);
-					header.flush();
-
-					SecretKey key = BackupCrypto.deriveKey(password, salt, iterations);
-					Cipher cipher = BackupCrypto.encryptCipher(key, iv);
-					payload = new CipherOutputStream(header, cipher);
-				}
-
-				// Closing the gzip stream flushes its trailer and then closes the cipher
-				// stream underneath, which is what writes the GCM authentication tag. The
-				// order matters: leaving either unclosed produces a file that will not
-				// verify on restore.
-				try (GZIPOutputStream gzip = new GZIPOutputStream(payload);
+				// Closing the payload stream is what finishes the file: it flushes the gzip
+				// trailer and then closes the cipher stream underneath, which writes the GCM
+				// authentication tag. Leaving either unclosed produces a file that will not
+				// verify on restore, so both are inside the try-with-resources.
+				try (OutputStream payload = BackupContainer.openForWriting(header,
+						schemaVersion, System.currentTimeMillis(), appVersionCode(context),
+						password);
 				     InputStream in = new FileInputStream(dbFile)) {
-					copy(in, gzip);
+					copy(in, payload);
 				}
 			}
 
@@ -302,58 +212,23 @@ public final class DatabaseBackup {
 	/**
 	 * Reads the header so the UI knows whether to ask for a password. Returns {@code null} if
 	 * the file is not a backup this build understands.
+	 * <p>
+	 * The header's layout is {@link BackupContainer}'s; this only opens the file.
 	 */
 	@Nullable
-	public static Info inspect(@NonNull Context context, @NonNull Uri source) {
+	public static BackupContainer.Info inspect(@NonNull Context context, @NonNull Uri source) {
 
 		try (InputStream raw = context.getContentResolver().openInputStream(source)) {
 
 			if (raw == null) {
 				return null;
 			}
-			return readHeader(new DataInputStream(new BufferedInputStream(raw)));
+			return BackupContainer.readHeader(
+					new DataInputStream(new BufferedInputStream(raw)));
 
 		} catch (IOException e) {
 			return null;
 		}
-	}
-
-	/**
-	 * Reads and checks the fixed header, leaving the stream positioned at the encryption
-	 * parameters if there are any, and at the payload otherwise.
-	 *
-	 * @return null when the file is not one of ours at all, or an {@link Info} with a negative
-	 *         schema version when the container format is newer than this build reads
-	 */
-	@Nullable
-	private static Info readHeader(@NonNull DataInputStream in) throws IOException {
-
-		byte[] magic = new byte[MAGIC.length];
-
-		try {
-			in.readFully(magic);
-		} catch (IOException e) {
-			return null;
-		}
-
-		if (!Arrays.equals(magic, MAGIC)) {
-			return null;
-		}
-
-		int format = in.readUnsignedByte();
-
-		if (format > FORMAT_VERSION) {
-			// Signalled by the caller comparing against FORMAT_VERSION; a negative schema
-			// marks the file as unreadable by this build.
-			return new Info(false, -1, 0L, 0);
-		}
-
-		boolean encrypted = in.readBoolean();
-		int schemaVersion = in.readInt();
-		long createdAt = in.readLong();
-		int appVersionCode = in.readInt();
-
-		return new Info(encrypted, schemaVersion, createdAt, appVersionCode);
 	}
 
 	// ── Import ───────────────────────────────────────────────────────────
@@ -384,13 +259,13 @@ public final class DatabaseBackup {
 			}
 
 			DataInputStream in = new DataInputStream(new BufferedInputStream(raw));
-			Info info = readHeader(in);
+			BackupContainer.Info info = BackupContainer.readHeader(in);
 
 			if (info == null) {
 				return Result.failed(Failure.NOT_A_BACKUP, null);
 			}
 
-			if (info.schemaVersion < 0) {
+			if (info.formatTooNew()) {
 				return Result.failed(Failure.FORMAT_TOO_NEW, null);
 			}
 
@@ -444,86 +319,28 @@ public final class DatabaseBackup {
 
 	/**
 	 * Decrypts if needed, decompresses, and writes the result to {@code staged}.
+	 * <p>
+	 * The unpacking itself is {@link BackupContainer}'s, since the server reads the same files;
+	 * what is left here is turning its exceptions into the {@link Failure} the UI shows. A
+	 * cipher failure on a file that passed the header check is far more likely a wrong password
+	 * than a broken device, so it is reported as one.
 	 */
 	@NonNull
-	private static Result unpack(@NonNull DataInputStream in, @NonNull Info info,
+	private static Result unpack(@NonNull DataInputStream in,
+	                             @NonNull BackupContainer.Info info,
 	                             @Nullable char[] password, @NonNull File staged) {
 
-		try {
-			InputStream compressed;
-
-			if (info.encrypted) {
-				int iterations = in.readInt();
-				byte[] salt = new byte[BackupCrypto.SALT_BYTES];
-				byte[] iv = new byte[BackupCrypto.IV_BYTES];
-				in.readFully(salt);
-				in.readFully(iv);
-
-				if (iterations <= 0) {
-					return Result.failed(Failure.DAMAGED, null);
-				}
-
-				byte[] ciphertext = readPayload(in);
-
-				if (ciphertext == null) {
-					return Result.failed(Failure.DAMAGED, "The file is unexpectedly large.");
-				}
-
-				SecretKey key = BackupCrypto.deriveKey(password, salt, iterations);
-				Cipher cipher = BackupCrypto.decryptCipher(key, iv);
-
-				// doFinal on the whole payload rather than a CipherInputStream. GCM only
-				// knows the data was untampered once it reaches the tag at the very end, and
-				// a streaming reader tends to report that as a plain end-of-stream. That
-				// would look like a short but valid file and get written over the live
-				// database. Buffering costs memory but turns a wrong password into a thrown
-				// exception, which is the whole point of using an authenticated mode.
-				byte[] plaintext = cipher.doFinal(ciphertext);
-				Arrays.fill(ciphertext, (byte) 0);
-				compressed = new ByteArrayInputStream(plaintext);
-			} else {
-				compressed = in;
-			}
-
-			try (GZIPInputStream gzip = new GZIPInputStream(compressed);
-			     OutputStream out = new BufferedOutputStream(new FileOutputStream(staged))) {
-				copy(gzip, out);
-			}
-
+		try (OutputStream out = new BufferedOutputStream(new FileOutputStream(staged))) {
+			BackupContainer.unpack(in, info, password, out);
 			return Result.ok();
 
 		} catch (AEADBadTagException e) {
 			return Result.failed(Failure.BAD_PASSWORD, null);
 		} catch (GeneralSecurityException e) {
-			// Any other cipher failure on a file that passed the header check is far more
-			// likely a wrong password than a broken device, so it is reported as such.
 			return Result.failed(Failure.BAD_PASSWORD, null);
 		} catch (IOException e) {
 			return Result.failed(Failure.DAMAGED, e.getMessage());
 		}
-	}
-
-	/**
-	 * Reads the rest of the stream, or {@code null} if it exceeds
-	 * {@link #MAX_ENCRYPTED_PAYLOAD}.
-	 */
-	@Nullable
-	private static byte[] readPayload(@NonNull InputStream in) throws IOException {
-
-		ByteArrayOutputStream buffer = new ByteArrayOutputStream(1 << 16);
-		byte[] chunk = new byte[8192];
-		long total = 0;
-		int read;
-
-		while ((read = in.read(chunk)) != -1) {
-			total += read;
-
-			if (total > MAX_ENCRYPTED_PAYLOAD) {
-				return null;
-			}
-			buffer.write(chunk, 0, read);
-		}
-		return buffer.toByteArray();
 	}
 
 	/**
@@ -555,7 +372,7 @@ public final class DatabaseBackup {
 				}
 			}
 
-			if (!tables.containsAll(EXPECTED_TABLES)) {
+			if (!tables.containsAll(BackupContainer.EXPECTED_TABLES)) {
 				return Result.failed(Failure.NOT_A_BACKUP,
 						"That file is a database, but not one from this app.");
 			}

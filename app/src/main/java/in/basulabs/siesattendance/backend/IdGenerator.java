@@ -22,6 +22,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * on one phone must never mean a different row on another, because the two will meet.
  *
  * <h3>What an ID is made of</h3>
+ * The layout itself is {@link StructuredId}, in the shared module, because the server needs it
+ * too: the importer reads the node out of a device's key and mints keys of its own under
+ * {@link StructuredId#SERVER_NODE} for rows whose keys cannot be carried across. What stays
+ * here is everything that is only true of a phone — where the node number is stored, and the
+ * counter that stops one being issued twice.
+ * <p>
  * A 63-bit positive {@code long}, in three fields, most significant first:
  * <pre>
  *   [ 41 bits: milliseconds since 2024-01-01Z ][ 6 bits: sequence ][ 16 bits: node ]
@@ -74,52 +80,32 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class IdGenerator {
 
-	/**
-	 * The zero point for the time field: 2024-01-01T00:00:00Z, comfortably before this app
-	 * existed. Counting from here rather than from 1970 buys back the 54 years that would
-	 * otherwise be spent on time nothing happened in, and is what leaves room for the node and
-	 * sequence fields inside a positive {@code long}.
-	 * <p>
-	 * Changing this value re-dates every ID issued afterwards and is not a thing that can be
-	 * done to a database in the field.
-	 */
-	private static final long EPOCH_MILLIS = 1_704_067_200_000L;
+	/** @see StructuredId#EPOCH_MILLIS */
+	private static final long EPOCH_MILLIS = StructuredId.EPOCH_MILLIS;
 
-	/** Width of the node field, at the bottom of the ID. */
-	private static final int NODE_BITS = 16;
+	/** @see StructuredId#NODE_BITS */
+	private static final int NODE_BITS = StructuredId.NODE_BITS;
 
-	/** Width of the sequence field, immediately above the node. */
-	private static final int SEQUENCE_BITS = 6;
+	/** @see StructuredId#SEQUENCE_BITS */
+	private static final int SEQUENCE_BITS = StructuredId.SEQUENCE_BITS;
 
-	/** Width of the time field, filling the rest of the 63 usable bits: 41, so, until 2093. */
-	private static final int TIME_BITS = 63 - NODE_BITS - SEQUENCE_BITS;
+	/** @see StructuredId#TIME_BITS */
+	private static final int TIME_BITS = StructuredId.TIME_BITS;
 
-	/** The largest node number, and the mask that picks the node out of an ID. */
-	public static final int MAX_NODE_ID = (1 << NODE_BITS) - 1;
+	/** @see StructuredId#MAX_NODE_ID */
+	public static final int MAX_NODE_ID = StructuredId.MAX_NODE_ID;
 
-	/**
-	 * The highest node number the central database may assign. Above it is the range an install
-	 * draws from for itself; see the class notes.
-	 */
-	public static final int MAX_ASSIGNED_NODE_ID = MAX_NODE_ID >>> 1;
+	/** @see StructuredId#MAX_ASSIGNED_NODE_ID */
+	public static final int MAX_ASSIGNED_NODE_ID = StructuredId.MAX_ASSIGNED_NODE_ID;
 
-	/** Time and sequence together, which is what the running counter actually holds. */
-	private static final long MAX_COUNTER = (1L << (TIME_BITS + SEQUENCE_BITS)) - 1;
+	/** @see StructuredId#MAX_COUNTER */
+	private static final long MAX_COUNTER = StructuredId.MAX_COUNTER;
 
-	/**
-	 * The smallest ID this scheme will ever produce, and so the line between a structured ID
-	 * and one inherited from an older database.
-	 * <p>
-	 * It is not a free choice: it is the floor the counter is clamped to, which corresponds to
-	 * about a hundred days past the epoch — early 2024, long before any device running this
-	 * code will legitimately think it is. Clamping is what makes the line reliable, because a
-	 * phone whose clock has been reset to 1970 would otherwise compute a tiny ID and land it
-	 * squarely among the legacy keys.
-	 */
-	public static final long FIRST_STRUCTURED_ID = 1L << 55;
+	/** @see StructuredId#FIRST_STRUCTURED_ID */
+	public static final long FIRST_STRUCTURED_ID = StructuredId.FIRST_STRUCTURED_ID;
 
-	/** The counter value {@link #FIRST_STRUCTURED_ID} corresponds to. */
-	private static final long MIN_COUNTER = FIRST_STRUCTURED_ID >>> NODE_BITS;
+	/** @see StructuredId#MIN_COUNTER */
+	private static final long MIN_COUNTER = StructuredId.MIN_COUNTER;
 
 	/**
 	 * The tables that get their keys from here, each with the column the key lives in. Used by
@@ -239,7 +225,7 @@ public final class IdGenerator {
 					"IdGenerator.init() must run before any ID is issued.");
 		}
 
-		return (nextCounter() << NODE_BITS) | node;
+		return StructuredId.compose(nextCounter(), node);
 	}
 
 	/**
@@ -258,7 +244,7 @@ public final class IdGenerator {
 	 * database old enough to have let SQLite count, or to have used the raw clock.
 	 */
 	public static boolean isStructured(long id) {
-		return id >= FIRST_STRUCTURED_ID;
+		return StructuredId.isStructured(id);
 	}
 
 	/**
@@ -268,7 +254,7 @@ public final class IdGenerator {
 	 * one this install created, whoever else has since edited it.
 	 */
 	public static int nodeOf(long id) {
-		return isStructured(id) ? (int) (id & MAX_NODE_ID) : UNASSIGNED;
+		return StructuredId.nodeOf(id);
 	}
 
 	/**
@@ -280,7 +266,7 @@ public final class IdGenerator {
 	 * indication of when a row appeared, not a timestamp to store.
 	 */
 	public static long createdAtMillis(long id) {
-		return isStructured(id) ? ((id >>> NODE_BITS) >>> SEQUENCE_BITS) + EPOCH_MILLIS : -1L;
+		return StructuredId.createdAtMillis(id);
 	}
 
 	/**

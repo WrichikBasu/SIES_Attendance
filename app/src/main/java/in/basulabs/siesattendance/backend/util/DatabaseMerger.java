@@ -25,6 +25,7 @@ import java.util.Set;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.IdGenerator;
 import in.basulabs.siesattendance.backend.MainDatabase;
+import in.basulabs.siesattendance.backend.sync.DeviceTables;
 
 /**
  * Merges a backup into the existing database instead of replacing it.
@@ -202,62 +203,35 @@ public final class DatabaseMerger {
 		}
 	}
 
-	/**
-	 * A small builder for the foreign-key tables. {@code Map.of} would read better but is a
-	 * Java 9 API that only reaches Android directly on API 30, and this app runs from 26.
-	 */
-	@NonNull
-	private static Map<String, String> fks(@NonNull String... pairs) {
-
-		Map<String, String> map = new HashMap<>();
-
-		for (int i = 0; i + 1 < pairs.length; i += 2) {
-			map.put(pairs[i], pairs[i + 1]);
-		}
-		return map;
-	}
 
 	/**
 	 * In dependency order: a table is merged only once every table it points at has been, so
-	 * its rewritten foreign keys always refer to rows that already exist. {@code students} and
-	 * {@code professors} are absent because they are matched by hand; see {@link #mergeStudents}
-	 * and {@link #mergeProfessors}.
+	 * its rewritten foreign keys always refer to rows that already exist.
+	 * <p>
+	 * Read off {@link DeviceTables}, which is where the natural keys live now, because the
+	 * server's importer resolves rows against the very same ones. Two lists would be two ideas
+	 * of what makes a row the same row, and the symptom of their disagreeing would be a
+	 * student's attendance split across two records rather than an error.
+	 * <p>
+	 * {@code students} and {@code professors} are skipped because they cannot be matched from
+	 * their own columns; see {@link #mergeStudents} and {@link #mergeProfessors}.
 	 */
 	@NonNull
 	private static List<Spec> specs() {
 
 		List<Spec> specs = new ArrayList<>();
 
-		specs.add(new Spec("academic_years", new String[]{"academicYear"}, null,
-				new HashMap<>()));
+		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
 
-		specs.add(new Spec("student_year", new String[]{"rollNo", "academicYear"}, null,
-				fks("studentID", "students")));
+			if (table.isMatchedByHand()) {
+				continue;
+			}
 
-		specs.add(new Spec("courses", new String[]{"courseCode"}, "courseID",
-				fks("profID", "professors")));
-
-		specs.add(new Spec("batch_desc", new String[]{"batchName", "academicYear"}, "batchID",
-				new HashMap<>()));
-
-		specs.add(new Spec("batch_student_map",
-				new String[]{"batchID", "studentID", "academicYear"}, null,
-				fks("batchID", "batch_desc", "studentID", "students")));
-
-		specs.add(new Spec("course_batch_map", new String[]{"courseID", "batchID"}, null,
-				fks("courseID", "courses", "batchID", "batch_desc")));
-
-		specs.add(new Spec("course_instructor", new String[]{"courseID", "profID"}, null,
-				fks("courseID", "courses", "profID", "professors")));
-
-		specs.add(new Spec("lectures",
-				new String[]{"courseID", "batchID", "startDateTime", "endDateTime"},
-				"lectureID",
-				fks("courseID", "courses", "batchID", "batch_desc")));
-
-		specs.add(new Spec("attendance", new String[]{"lectureID", "studentID"}, null,
-				fks("lectureID", "lectures", "studentID", "students")));
-
+			specs.add(new Spec(table.name(),
+					table.naturalKey().toArray(new String[0]),
+					table.surrogate(),
+					table.foreignKeys()));
+		}
 		return specs;
 	}
 

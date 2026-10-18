@@ -3,9 +3,7 @@ package in.basulabs.siesattendance.backend;
 import androidx.annotation.Nullable;
 import androidx.room.TypeConverter;
 
-import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.time.ZonedDateTime;
 
 /**
@@ -18,34 +16,21 @@ import java.time.ZonedDateTime;
  */
 public final class TypeConvertors {
 
-	private static final String SEPARATOR = "|";
-
 	// ── ZonedDateTime ────────────────────────────────────────────────────
 	// Stored as "epochSecond|nanoAdjustment|zoneId", e.g. "1719043800|0|Asia/Kolkata".
-	// Avoids DateTimeFormatter and ZonedDateTime.parse(), which can be
-	// unreliable under core-library desugaring on pre-API-26 devices.
+	// The format and the parsing are StoredTimes', in the shared module, because the
+	// server reads these columns too when it imports a backup.
 
 	@TypeConverter
 	@Nullable
 	public static String fromZonedDateTime(@Nullable ZonedDateTime zdt) {
-		if (zdt == null) {
-			return null;
-		}
-		return zdt.toEpochSecond() + SEPARATOR + zdt.getNano() + SEPARATOR
-				+ zdt.getZone().getId();
+		return StoredTimes.format(zdt);
 	}
 
 	@TypeConverter
 	@Nullable
 	public static ZonedDateTime toZonedDateTime(@Nullable String value) {
-		if (value == null) {
-			return null;
-		}
-		String[] parts = value.split("\\|", 3);
-		long epochSecond = Long.parseLong(parts[0]);
-		int nano = Integer.parseInt(parts[1]);
-		ZoneId zone = ZoneId.of(parts[2]);
-		return ZonedDateTime.ofInstant(Instant.ofEpochSecond(epochSecond, nano), zone);
+		return StoredTimes.parse(value);
 	}
 
 	// ── LocalDate ────────────────────────────────────────────────────────
@@ -56,13 +41,13 @@ public final class TypeConvertors {
 	@TypeConverter
 	@Nullable
 	public static Long fromLocalDate(@Nullable LocalDate date) {
-		return date == null ? null : date.toEpochDay();
+		return StoredTimes.formatDate(date);
 	}
 
 	@TypeConverter
 	@Nullable
 	public static LocalDate toLocalDate(@Nullable Long epochDay) {
-		return epochDay == null ? null : LocalDate.ofEpochDay(epochDay);
+		return StoredTimes.parseDate(epochDay);
 	}
 
 	// ── Enums ────────────────────────────────────────────────────────────

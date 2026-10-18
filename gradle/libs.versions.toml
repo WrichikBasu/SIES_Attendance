@@ -49,6 +49,11 @@ spring-boot-flyway = { group = "org.springframework.boot", name = "spring-boot-f
 flyway-core = { group = "org.flywaydb", name = "flyway-core" }
 flyway-postgresql = { group = "org.flywaydb", name = "flyway-database-postgresql" }
 postgresql = { group = "org.postgresql", name = "postgresql" }
+# The server reads a device's backup, which is a SQLite file, so it needs a SQLite
+# driver of its own: the app reaches SQLite through Room and Android, neither of
+# which exists here. Used only by the importer, never for the server's own data.
+# Version from the Spring Boot BOM, like everything else the server resolves.
+sqlite-jdbc = { group = "org.xerial", name = "sqlite-jdbc" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

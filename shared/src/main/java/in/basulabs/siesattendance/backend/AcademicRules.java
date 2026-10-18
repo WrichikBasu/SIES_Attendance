@@ -170,6 +170,36 @@ public final class AcademicRules {
 		return null;
 	}
 
+	/**
+	 * The course screen's check, which is {@link #validate} with one condition dropped for the
+	 * types it does not hold for.
+	 * <p>
+	 * "This department is not offered as that stream" is the right thing to say about a major:
+	 * its offering department is the students' own, so a stream that department does not run
+	 * cannot be the stream of anyone on the roll. It is the wrong thing to say about a minor, an
+	 * open elective, or any of the types a whole year takes regardless of department. Those are
+	 * taught by somebody else, and the course still carries the stream of the class being
+	 * taught, so a Mathematics minor read by a BSc_unaided class is correct data that the plain
+	 * check would reject. See {@link CourseType#followsOfferingDepartment()}.
+	 * <p>
+	 * Everything else {@link #validate} looks at still applies. The year and semester are
+	 * checked against the stream either way, and with a stream chosen the department has no
+	 * further say in which years are available, so dropping it costs no other check.
+	 *
+	 * @param type the course type; a null type is treated as the strict case, since the screen
+	 * 		has nothing to relax the check on until one is chosen
+	 */
+	@Nullable
+	public static String validateCourse(@Nullable Department department,
+	                                    @Nullable Stream stream,
+	                                    @Nullable Year year,
+	                                    @Nullable Integer semester,
+	                                    @Nullable CourseType type) {
+
+		boolean ownDepartment = type == null || type.followsOfferingDepartment();
+		return validate(ownDepartment ? department : null, stream, year, semester);
+	}
+
 	@Nullable
 	private static String validateWithoutDivision(@Nullable Department department,
 	                                              @Nullable Stream stream,

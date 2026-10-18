@@ -31,6 +31,7 @@ import java.util.Map;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.ConstantsAndStatics;
 import in.basulabs.siesattendance.backend.util.BackupCrypto;
+import in.basulabs.siesattendance.backend.util.BackupContainer;
 import in.basulabs.siesattendance.backend.util.DatabaseBackup;
 import in.basulabs.siesattendance.backend.util.DatabaseMerger;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
@@ -251,7 +252,7 @@ public class FragmentBackup extends Fragment {
 	 * Last confirmation, showing when the backup was made so the user can catch an accidental
 	 * restore of a stale file before it overwrites current work.
 	 */
-	private void confirmRestoreOf(@NonNull DatabaseBackup.Info info, @NonNull Runnable onGo) {
+	private void confirmRestoreOf(@NonNull BackupContainer.Info info, @NonNull Runnable onGo) {
 
 		boolean merging = pendingMode == DatabaseBackup.Mode.MERGE;
 
@@ -337,7 +338,7 @@ public class FragmentBackup extends Fragment {
 	 * attempting the decryption, so a wrong one comes back through {@link #onRestoreFailed} and
 	 * returns here for another try.
 	 */
-	private void askForExistingPassword(@NonNull DatabaseBackup.Info info,
+	private void askForExistingPassword(@NonNull BackupContainer.Info info,
 	                                    @NonNull PasswordCallback callback) {
 
 		View content = getLayoutInflater().inflate(R.layout.dialog_backup_password, null);

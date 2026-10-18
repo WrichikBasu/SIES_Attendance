@@ -333,14 +333,28 @@ public class FragmentAddCourse extends Fragment {
 	}
 
 	/**
-	 * The offering department decides the stream, so the two are linked here exactly as they
-	 * are on the student form: a Mass Media course can only be BAMMC.
+	 * Links the academic fields, with one difference from the student form: whether the offering
+	 * department decides the stream depends on the course type.
+	 * <p>
+	 * For a major or a DSE it does, exactly as on the student form — a Mass Media course can
+	 * only be BAMMC, because the roll is the students majoring in Mass Media and BAMMC is the
+	 * only stream they can be in. For a minor, an open elective, or any of the types a whole
+	 * year takes regardless of department, the offering department is somebody else's and the
+	 * stream is the class being taught, so every stream stays on offer. Mathematics is studied
+	 * as BSc; narrowing on it would make a Mathematics minor read to a BSc_unaided Computer
+	 * Science class impossible to enter. See
+	 * {@link CourseType#followsOfferingDepartment()}.
+	 * <p>
+	 * Because the answer hangs on a field of its own, the type dropdown has to rebuild the
+	 * linkage when it changes, which also reconciles a now-impossible stream back out.
 	 */
 	private void bindDropdowns() {
 
-		DropdownBinder.linkAcademicFields(actvDept, actvStream, actvYear, actvSemester,
+		DropdownBinder.Rebuildable academicFields = DropdownBinder.linkAcademicFields(
+				actvDept, actvStream, actvYear, actvSemester,
 				Arrays.asList(Department.values()), null,
 				chosenDept, chosenStream, chosenYear, chosenSemester,
+				() -> chosenType == null || chosenType.followsOfferingDepartment(),
 				(department, stream, year, semester) -> {
 					chosenDept = department;
 					chosenStream = stream;
@@ -349,7 +363,10 @@ public class FragmentAddCourse extends Fragment {
 				});
 
 		DropdownBinder.bind(actvType, Arrays.asList(CourseType.values()), null,
-				chosenType, value -> chosenType = value);
+				chosenType, value -> {
+					chosenType = value;
+					academicFields.rebuild();
+				});
 
 		// Professors are loaded off the main thread, then the dropdown is populated back on it.
 		viewModel.loadProfessorsSync(list -> Ui.onMain(this, () -> {
@@ -373,9 +390,11 @@ public class FragmentAddCourse extends Fragment {
 	/**
 	 * Validates and saves.
 	 * <p>
-	 * {@link AcademicRules#validate} runs here even though the dropdowns already steer towards
-	 * valid combinations. Narrowing is one-directional, so a value chosen before the field above
-	 * it was changed can survive as a contradiction, and this is the only place that catches it.
+	 * {@link AcademicRules#validateCourse} runs here even though the dropdowns already steer
+	 * towards valid combinations. Narrowing is one-directional, so a value chosen before the
+	 * field above it was changed can survive as a contradiction, and this is the only place that
+	 * catches it. The course form uses the course-type-aware check rather than the plain
+	 * {@link AcademicRules#validate}, for the reason given on {@link #bindDropdowns()}.
 	 */
 	private void onSave(@NonNull View button) {
 
@@ -412,7 +431,7 @@ public class FragmentAddCourse extends Fragment {
 
 		int semester = chosenSemester;
 
-		String problem = AcademicRules.validate(dept, stream, year, semester);
+		String problem = AcademicRules.validateCourse(dept, stream, year, semester, type);
 		if (problem != null) {
 			new MaterialAlertDialogBuilder(requireContext())
 					.setTitle(R.string.dialog_invalid_combination)

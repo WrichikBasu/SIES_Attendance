@@ -380,6 +380,15 @@ public abstract class DaoStudent {
 	 * cannot be taken at all, which is worse than a roll that is slightly too wide. The
 	 * department still has to match, so this never reaches across departments.
 	 * <p>
+	 * Note what the stream join does and does not say. {@code y.stream = c.stream} compares the
+	 * course's stream to the STUDENT'S, not to anything about the offering department, which is
+	 * what lets a department teach a class in a stream it does not itself run: a Mathematics
+	 * minor read to a BSc_unaided Computer Science class carries stream BSc_unaided, although
+	 * Mathematics is studied only as BSc. That is correct, and it is only the types matching
+	 * {@code majorDept} that can be sure the offering department runs the stream. The server
+	 * constrained all of them to begin with and had to be corrected; see
+	 * {@link CourseType#followsOfferingDepartment()}.
+	 * <p>
 	 * Enum columns are stored as their constant names, which is why the course type is compared
 	 * against string literals here.
 	 */

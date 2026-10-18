@@ -7,7 +7,6 @@ import androidx.room.PrimaryKey;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.util.Locale;
 
 /**
  * One academic session, with the dates that bound it.
@@ -87,9 +86,12 @@ public class EntityAcademicYear {
 	/**
 	 * Which session a calendar date falls in under the default June rule. Used only where no
 	 * session has been defined yet.
+	 * <p>
+	 * The rule itself lives in {@link SessionYears}, because the schema migrations need it and
+	 * they now run on the server as well, where this class cannot go.
 	 */
 	public static int defaultYearFor(@NonNull LocalDate date) {
-		return date.getMonthValue() >= 6 ? date.getYear() : date.getYear() - 1;
+		return SessionYears.defaultYearFor(date);
 	}
 
 	@Ignore
@@ -120,8 +122,7 @@ public class EntityAcademicYear {
 	 */
 	@NonNull
 	public static String labelFor(int academicYear) {
-		return academicYear + "-"
-				+ String.format(Locale.ROOT, "%02d", (academicYear + 1) % 100);
+		return SessionYears.labelFor(academicYear);
 	}
 
 	public boolean contains(@NonNull LocalDate date) {

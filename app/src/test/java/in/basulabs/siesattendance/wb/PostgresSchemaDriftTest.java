@@ -13,9 +13,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -24,6 +27,9 @@ import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.PostgresEnumTypes;
+import in.basulabs.siesattendance.backend.StructuredId;
+import in.basulabs.siesattendance.backend.migration.SchemaMigrations;
+import in.basulabs.siesattendance.backend.sync.DeviceTables;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 
@@ -191,6 +197,77 @@ public class PostgresSchemaDriftTest {
 		}
 	}
 
+	// ── The cross-department exemption in V4 ─────────────────────────────
+
+	/*
+	 * V2 required every course's stream to be one its offering department offers. That holds
+	 * only for the types whose roll is the offering department's own majors; for a minor, an
+	 * open elective, or the types a whole year takes, the offering department is somebody
+	 * else's and the stream is the class being taught. V4 narrows the foreign key to the four
+	 * types it is true of, through a generated column that is null for the rest.
+	 *
+	 * These three tests are what stop the four drifting away from the enum, which is the one
+	 * way this could go wrong quietly: a course type added to CourseType and not thought about
+	 * here would keep the lenient behaviour, and a type whose flag was flipped without the SQL
+	 * following would be enforced on the wrong rows.
+	 */
+
+	@Test
+	public void theGeneratedStreamColumnCoversExactlyTheTypesFollowingTheDepartment()
+			throws IOException {
+
+		String add = statementContaining(normalise(read("V4__cross_department_courses.sql")),
+				"ALTER TABLE courses ADD COLUMN own_department_stream");
+
+		List<String> quoted = new ArrayList<>();
+		for (CourseType type : CourseType.followingOfferingDepartment()) {
+			quoted.add("'" + type.name() + "'");
+		}
+		String wanted = "course_type IN (" + String.join(", ", quoted) + ")";
+
+		assertTrue("V4__cross_department_courses.sql exempts a different set of course types "
+						+ "from courses_department_offers_stream_fkey than "
+						+ "CourseType.followingOfferingDepartment() does.\nIt should read: "
+						+ wanted + "\nThe statement is: " + add,
+				add.contains(wanted));
+	}
+
+	@Test
+	public void theDepartmentStreamForeignKeyIsOnTheGeneratedColumn() throws IOException {
+
+		String v2 = normalise(read("V2__constraints.sql"));
+		String v4 = normalise(read("V4__cross_department_courses.sql"));
+
+		// V2 is left as it was written. A migration already applied somewhere is a fixed
+		// artefact, so the correction is a new file rather than an edit to that one.
+		assertTrue("V2__constraints.sql should still add the strict form that V4 corrects",
+				v2.contains("FOREIGN KEY (offering_department, stream) "
+						+ "REFERENCES department_stream (department, stream)"));
+
+		assertTrue("V4 must drop V2's constraint before putting the corrected one in its place",
+				v4.contains("DROP CONSTRAINT courses_department_offers_stream_fkey"));
+
+		// On the generated column, not on stream: PostgreSQL has no partial foreign key, and a
+		// key whose column is null is not checked at all, which is what exempts the other
+		// nine types.
+		assertTrue("the replacement foreign key must reference own_department_stream",
+				v4.contains("FOREIGN KEY (offering_department, own_department_stream) "
+						+ "REFERENCES department_stream (department, stream)"));
+	}
+
+	@Test
+	public void theImporterNeverWritesTheGeneratedColumn() {
+
+		// GENERATED ALWAYS rejects an explicit value, so a column named in DeviceTables would
+		// fail every course INSERT the importer builds. It is derived and belongs to nobody.
+		for (DeviceTables.Column column : DeviceTables.of("courses").columns()) {
+			assertFalse("DeviceTables must not carry courses.own_department_stream: it is a "
+							+ "generated column, and naming it would make the importer supply "
+							+ "a value PostgreSQL refuses",
+					"own_department_stream".equals(column.postgres()));
+		}
+	}
+
 	// ── CHECK constraints derived from Java ──────────────────────────────
 
 	@Test
@@ -283,6 +360,212 @@ public class PostgresSchemaDriftTest {
 				sql.contains("1704067200000"));
 		assertTrue("V1__baseline.sql must mask the node field with MAX_NODE_ID",
 				sql.contains(Integer.toString((1 << 16) - 1)));
+	}
+
+	/**
+	 * The tables {@code id_remap} will accept are exactly the five whose keys the app issues.
+	 * <p>
+	 * A sixth such table added in Java would need an entry here too, and the failure without
+	 * this test would be an import stopping on a check constraint months later.
+	 */
+	@Test
+	public void idRemapAcceptsExactlyTheTablesWithIssuedKeys() throws IOException {
+
+		String sql = normalise(read("V3__import_bookkeeping.sql"));
+
+		String expected = "CHECK (table_name IN ("
+				+ String.join(", ", quoted(DeviceTables.tablesWithIssuedKeys())) + "))";
+
+		assertTrue("V3__import_bookkeeping.sql must restrict id_remap.table_name to "
+						+ DeviceTables.tablesWithIssuedKeys() + ", as:\n  " + expected
+						+ "\nnormalised SQL was:\n  " + sql,
+				sql.contains(expected));
+	}
+
+	/**
+	 * {@code id_remap} promises every key in it is one the server minted, which means
+	 * structured. The constant has to be the same one {@link StructuredId} uses.
+	 */
+	@Test
+	public void idRemapUsesTheStructuredIdFloor() throws IOException {
+
+		String sql = read("V3__import_bookkeeping.sql");
+
+		assertTrue("V3__import_bookkeeping.sql must use StructuredId.FIRST_STRUCTURED_ID ("
+						+ StructuredId.FIRST_STRUCTURED_ID + ") as the floor for server_id",
+				sql.contains(String.valueOf(StructuredId.FIRST_STRUCTURED_ID)));
+
+		assertTrue("the node range must stop at StructuredId.MAX_NODE_ID ("
+						+ StructuredId.MAX_NODE_ID + ")",
+				sql.contains("BETWEEN " + StructuredId.FIRST_ASSIGNABLE_NODE_ID
+						+ " AND " + StructuredId.MAX_NODE_ID));
+	}
+
+	/**
+	 * The schema versions {@code import_run} will record have to be the ones the shared
+	 * migrations can actually bring forward. A backup claiming anything else is refused before
+	 * a row is written, so a row outside the range would mean the two disagree.
+	 */
+	@Test
+	public void importRunAcceptsExactlyTheSchemaVersionsTheMigrationsCover() throws IOException {
+
+		String sql = normalise(read("V3__import_bookkeeping.sql"));
+
+		assertTrue("import_run.backup_schema must span "
+						+ SchemaMigrations.FIRST_SUPPORTED_VERSION + ".."
+						+ SchemaMigrations.CURRENT_VERSION,
+				sql.contains("CHECK (backup_schema BETWEEN "
+						+ SchemaMigrations.FIRST_SUPPORTED_VERSION + " AND "
+						+ SchemaMigrations.CURRENT_VERSION + ")"));
+	}
+
+	/** Each value wrapped in single quotes, as the SQL writes them. */
+	private static List<String> quoted(List<String> values) {
+
+		List<String> out = new ArrayList<>();
+
+		for (String value : values) {
+			out.add("'" + value + "'");
+		}
+		return out;
+	}
+
+	/**
+	 * Every column {@code DeviceTables} says the server keeps really is declared in the
+	 * baseline, under exactly that name.
+	 * <p>
+	 * The importer builds its inserts from {@code DeviceTables}, so a column named wrongly
+	 * there produces SQL that is perfectly well-formed and fails against the real database. A
+	 * database is not needed to catch it: the migration is right here, and the two can simply
+	 * be compared.
+	 */
+	@Test
+	public void everyCarriedColumnExistsInTheBaseline() throws IOException {
+
+		String sql = read("V1__baseline.sql");
+
+		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
+
+			String create = statementContaining(sql, "CREATE TABLE " + table.name() + " (");
+			String body = normalise(create);
+
+			for (DeviceTables.Column column : table.columns()) {
+
+				if (!column.isCarried()) {
+					continue;
+				}
+
+				assertTrue("V1__baseline.sql declares no column " + table.name() + "."
+								+ column.postgres() + ", which DeviceTables says is carried",
+						declaresColumn(body, column.postgres()));
+
+				if (column.zoneColumn() != null) {
+					assertTrue("V1__baseline.sql declares no zone column " + table.name()
+									+ "." + column.zoneColumn(),
+							declaresColumn(body, column.zoneColumn()));
+				}
+			}
+		}
+	}
+
+	/**
+	 * The reverse direction, for the data columns: a column in the baseline that
+	 * {@code DeviceTables} does not know about would be one the importer silently never fills.
+	 * <p>
+	 * The provenance columns are excluded because nothing on a device corresponds to them —
+	 * they are nullable precisely so an import can leave them unset — and so is every column
+	 * the description marks as deliberately not carried.
+	 */
+	@Test
+	public void theBaselineHasNoDataColumnTheImporterWouldNeverFill() throws IOException {
+
+		Set<String> provenance = new HashSet<>(Arrays.asList(
+				"created_at", "created_by", "updated_at", "updated_by", "row_version"));
+
+		String sql = read("V1__baseline.sql");
+
+		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
+
+			Set<String> described = new HashSet<>();
+
+			for (DeviceTables.Column column : table.columns()) {
+				if (column.isCarried()) {
+					described.add(column.postgres());
+					if (column.zoneColumn() != null) {
+						described.add(column.zoneColumn());
+					}
+				}
+			}
+
+			String create = statementContaining(sql, "CREATE TABLE " + table.name() + " (");
+
+            for (String declared : columnNamesIn(create)) {
+				if (provenance.contains(declared)) {
+					continue;
+				}
+				assertTrue(table.name() + "." + declared + " is in V1__baseline.sql but not "
+								+ "in DeviceTables, so an import would leave it unset",
+						described.contains(declared));
+			}
+		}
+	}
+
+	/** Whether a normalised CREATE TABLE body declares a column of this name. */
+	private static boolean declaresColumn(String body, String column) {
+		return body.contains("( " + column + " ") || body.contains(", " + column + " ");
+	}
+
+	/**
+	 * The column names a CREATE TABLE declares, which is every line of its body that starts
+	 * with an identifier rather than with a constraint keyword.
+	 */
+	private static List<String> columnNamesIn(String create) {
+
+		List<String> names = new ArrayList<>();
+
+		int open = create.indexOf('(');
+		String body = create.substring(open + 1);
+
+		int depth = 0;
+		StringBuilder current = new StringBuilder();
+		List<String> parts = new ArrayList<>();
+
+		for (char c : body.toCharArray()) {
+			if (c == '(') {
+				depth++;
+			} else if (c == ')') {
+				if (depth == 0) {
+					break;
+				}
+				depth--;
+			}
+			if (c == ',' && depth == 0) {
+				parts.add(current.toString());
+				current.setLength(0);
+			} else {
+				current.append(c);
+			}
+		}
+		parts.add(current.toString());
+
+		for (String part : parts) {
+
+			String trimmed = part.trim();
+
+			if (trimmed.isEmpty()) {
+				continue;
+			}
+
+			String first = trimmed.split("\\s+")[0].toUpperCase(Locale.ROOT);
+
+			if (first.equals("CONSTRAINT") || first.equals("PRIMARY") || first.equals("UNIQUE")
+					|| first.equals("FOREIGN") || first.equals("CHECK")
+					|| first.equals("EXCLUDE")) {
+				continue;
+			}
+			names.add(trimmed.split("\\s+")[0]);
+		}
+		return names;
 	}
 
 	// ── Helpers ──────────────────────────────────────────────────────────

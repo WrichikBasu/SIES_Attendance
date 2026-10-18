@@ -58,6 +58,7 @@ import in.basulabs.siesattendance.backend.util.BreakdownFilter;
 import in.basulabs.siesattendance.backend.util.CourseGroup;
 import in.basulabs.siesattendance.backend.util.ExportFilter;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
+import in.basulabs.siesattendance.backend.util.BackupContainer;
 import in.basulabs.siesattendance.backend.util.DatabaseBackup;
 import in.basulabs.siesattendance.backend.util.LectureFilter;
 import in.basulabs.siesattendance.backend.util.MarkSheetExporter;
@@ -605,10 +606,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * Cheap: it touches only the first few dozen bytes.
 	 */
 	public void inspectBackup(@NonNull Uri source,
-	                          @NonNull java.util.function.Consumer<DatabaseBackup.Info> cb) {
+	                          @NonNull java.util.function.Consumer<BackupContainer.Info> cb) {
 
 		FILE_TASK_EXECUTOR.execute(() -> {
-			DatabaseBackup.Info info = DatabaseBackup.inspect(getApplication(), source);
+			BackupContainer.Info info = DatabaseBackup.inspect(getApplication(), source);
 			new Handler(Looper.getMainLooper()).post(() -> cb.accept(info));
 		});
 	}

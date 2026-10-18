@@ -60,6 +60,12 @@ dependencies {
 
     runtimeOnly(libs.postgresql)
 
+    // Reading a device's backup means opening a SQLite file, which this is the only way to
+    // do on a plain JVM. The shared schema migrations then run against it through
+    // JdbcSqliteDb, so an old backup is brought up to the current schema by the very code
+    // the phone would have used.
+    implementation(libs.sqlite.jdbc)
+
     testImplementation(libs.spring.boot.starter.test)
     // The named query cases, shared with the app's dump test so that both sides really do
     // generate a statement for the same filter.
@@ -72,12 +78,38 @@ dependencies {
 // well as in production, so that a local run cannot pass on a machine in Asia/Kolkata
 // and fail on a server in UTC.
 tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
-    jvmArgs("-Duser.timezone=UTC")
+    jvmArgs(
+        "-Duser.timezone=UTC",
+        // sqlite-jdbc unpacks and loads a native library, which Java 25 warns about and a
+        // later release will refuse outright unless it is permitted here. Only the importer
+        // touches SQLite, but bootRun is how the importer is run.
+        "--enable-native-access=ALL-UNNAMED",
+    )
 }
 
 tasks.named<Test>("test") {
     useJUnitPlatform()
+    // As above: the importer's tests open real SQLite files.
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
     testLogging {
         events("failed")
     }
+}
+
+// Writes a sample .siesbak, so the importer can be tried by hand before there is a real
+// device backup to try it on. Uses the test fixtures, which is where the knowledge of how
+// to build one lives.
+//
+//   ./gradlew :server:sampleBackup
+//   ./gradlew :server:sampleBackup -Psample.version=6   # an old schema, to be migrated
+tasks.register<JavaExec>("sampleBackup") {
+    group = "verification"
+    description = "Writes a sample device backup to build/sample/."
+    mainClass = "in.basulabs.siesattendance.server.importer.SampleBackup"
+    classpath = sourceSets["test"].runtimeClasspath
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+    args(
+        layout.buildDirectory.dir("sample").get().asFile.path,
+        providers.gradleProperty("sample.version").getOrElse("10"),
+    )
 }
