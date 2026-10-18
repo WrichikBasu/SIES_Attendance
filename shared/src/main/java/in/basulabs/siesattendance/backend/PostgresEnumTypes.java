@@ -38,6 +38,7 @@ public final class PostgresEnumTypes {
 		types.put(AccountKind.class, "account_kind");
 		types.put(AppRole.class, "app_role");
 		types.put(GrantAuthority.class, "grant_authority");
+		types.put(AuditAction.class, "audit_action");
 
 		TYPES = Collections.unmodifiableMap(types);
 	}

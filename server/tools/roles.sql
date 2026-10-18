@@ -61,10 +61,21 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 -- as sies_owner, so these defaults are what grant the service access to a
 -- table added by a future migration without anyone remembering to.
 --
--- audit_log arrives in Phase 5 and is the exception: it will be granted
--- INSERT alone, explicitly, after the default below has been revoked for
--- it. A grant is easier to add than to take away, so the comment is here
--- now rather than in the migration that needs it.
+-- audit_log is the exception, and it turned out stronger than this note
+-- originally predicted. V7 revokes EVERYTHING on it from sies_app -- not
+-- even INSERT -- because the audit triggers and audit_event() are
+-- SECURITY DEFINER and run as the owner. So the service holds no
+-- privilege on that table at all and has no statement it can aim at it,
+-- which is a stronger claim than "INSERT and nothing else". sies_auditor
+-- gets SELECT back, and nobody anywhere gets UPDATE or DELETE.
+--
+-- THE ORDER OF THIS FILE AND THE MIGRATIONS MATTERS. These defaults have
+-- to be in place before Flyway runs, so that each table it creates is
+-- reachable; V7's revoke then runs last and takes audit_log back. Grant
+-- broadly afterwards instead and the revoke is silently undone -- which
+-- is exactly what the test harness did at first, and the test asserting
+-- the service cannot rewrite an audit entry passed anyway, for the wrong
+-- reason.
 --
 -- Note what these wide grants do NOT do. sies_app has every verb on every
 -- table, and sees almost none of it: what it may read and change is

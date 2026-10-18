@@ -92,21 +92,7 @@ public class BootstrapCommand implements ApplicationRunner {
 						? DEFAULT_PASSWORD_ENV
 						: one(arguments, "bootstrap.password-env"));
 
-		long account;
-
-		try {
-			AccountDirectory accounts = new AccountDirectory(dataSource);
-
-			// STAFF: an administrator is not necessarily a professor, and giving them a
-			// professors row to hang the account on would corrupt every query that counts
-			// teaching staff.
-			account = accounts.create(AccountKind.STAFF, null, null, name, email,
-					password.clone(), null);
-		} finally {
-			Arrays.fill(password, '\0');
-		}
-
-		grantAdminToItself(account);
+		long account = createAdministrator(name, email, password);
 
 		System.out.printf("""
 				Created administrator account %d for %s.
@@ -114,6 +100,64 @@ public class BootstrapCommand implements ApplicationRunner {
 				It must change its password on first use: must_rotate is set, and nothing
 				should let it past that until it has.
 				%n""", account, email);
+	}
+
+	/**
+	 * Creates the account and grants it {@code ADMIN}, in one transaction, labelled so the
+	 * audit entries say what they are.
+	 * <p>
+	 * One transaction because a half-bootstrapped administrator — an account with no role — is
+	 * an account that cannot grant itself one, and the only way out would be to run this again
+	 * against a database where {@link #administratorExists()} is still false but the address is
+	 * taken.
+	 * <p>
+	 * The actor is announced as unattributed with the label {@code "bootstrap"}. There is no
+	 * account to attribute it to yet, which is the whole point, and {@code "bootstrap"} is a
+	 * truer answer than the {@code "system"} the audit trigger would otherwise default to:
+	 * both of these entries were caused by a person running a command, and the log should say
+	 * which command.
+	 */
+	private long createAdministrator(@NonNull String name, @NonNull String email,
+	                                 @NonNull char[] password) throws SQLException {
+
+		try (Connection connection = dataSource.getConnection()) {
+
+			connection.setAutoCommit(false);
+
+			try {
+				ActorSession.announceUnattributed(connection, "bootstrap");
+
+				// STAFF: an administrator is not necessarily a professor, and giving them a
+				// professors row to hang the account on would corrupt every query that counts
+				// teaching staff.
+				long account = AccountDirectory.create(connection, AccountKind.STAFF, null,
+						null, name, email, password.clone(), null);
+
+				// Self-granting is not a loophole; it is the only way the first one can exist.
+				// Recording the account as its own author says exactly that, rather than
+				// leaving the column null and losing the difference between "bootstrapped"
+				// and "unknown".
+				try (PreparedStatement statement = connection.prepareStatement(
+						"INSERT INTO user_role (account_id, role, granted_by, reason) "
+								+ "VALUES (?, 'ADMIN', ?, "
+								+ "'bootstrapped by BootstrapCommand')")) {
+
+					statement.setLong(1, account);
+					statement.setLong(2, account);
+					statement.executeUpdate();
+				}
+
+				connection.commit();
+				return account;
+
+			} catch (SQLException | RuntimeException e) {
+				connection.rollback();
+				throw e;
+			} finally {
+				connection.setAutoCommit(true);
+				Arrays.fill(password, '\0');
+			}
+		}
 	}
 
 	private boolean administratorExists() throws SQLException {
@@ -125,26 +169,6 @@ public class BootstrapCommand implements ApplicationRunner {
 		     var results = statement.executeQuery()) {
 
 			return results.next() && results.getLong(1) > 0;
-		}
-	}
-
-	/**
-	 * Grants the new account the {@code ADMIN} role, naming itself as the granter.
-	 * <p>
-	 * Self-granting is not a loophole here; it is the only way the first one can exist, and
-	 * recording the account as its own author says exactly that rather than leaving the column
-	 * null and losing the distinction between "bootstrapped" and "unknown".
-	 */
-	private void grantAdminToItself(long account) throws SQLException {
-
-		try (Connection connection = dataSource.getConnection();
-		     PreparedStatement statement = connection.prepareStatement(
-				     "INSERT INTO user_role (account_id, role, granted_by, reason) "
-						     + "VALUES (?, 'ADMIN', ?, 'bootstrapped by BootstrapCommand')")) {
-
-			statement.setLong(1, account);
-			statement.setLong(2, account);
-			statement.executeUpdate();
 		}
 	}
 

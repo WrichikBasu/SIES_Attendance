@@ -14,6 +14,7 @@ import java.util.Arrays;
 import javax.sql.DataSource;
 
 import in.basulabs.siesattendance.backend.AccountKind;
+import in.basulabs.siesattendance.backend.AuditAction;
 
 /**
  * The accounts, and whether a password is theirs.
@@ -125,7 +126,25 @@ public final class AccountDirectory {
 	                            @NonNull char[] password) throws SQLException {
 
 		try (Connection connection = dataSource.getConnection()) {
-			return authenticate(connection, email, door, password);
+
+			// One transaction, because the failure counter and the audit entry that records
+			// the failure have to land together. Committed whichever way the attempt went: a
+			// refused attempt is not a rolled-back one, it is a thing that happened and has
+			// to be counted.
+			connection.setAutoCommit(false);
+
+			try {
+				Attempt attempt = authenticate(connection, email, door, password);
+				connection.commit();
+				return attempt;
+
+			} catch (SQLException | RuntimeException e) {
+				connection.rollback();
+				throw e;
+			} finally {
+				connection.setAutoCommit(true);
+			}
+
 		} finally {
 			Arrays.fill(password, '\0');
 		}
@@ -144,10 +163,24 @@ public final class AccountDirectory {
 			// account" and "wrong password" is measurable from outside, and the login box
 			// becomes a way to ask whether somebody works here.
 			Passwords.encoder().matches(CharBuffer.wrap(password), DUMMY_HASH);
+
+			// Logged with no account and no address. The fact that somebody tried an address
+			// nobody has is worth a line; the address itself is not, because a complete log of
+			// failed logins is a list of valid addresses as soon as somebody reads it
+			// alongside the successes.
+			ActorSession.announceUnattributed(connection, "an unknown address, at the "
+					+ door.name().toLowerCase(java.util.Locale.ROOT) + " door");
+			AuditLog.record(connection, AuditAction.LOGIN_FAILED);
+
 			return new Attempt(null, Refusal.NO_SUCH_ACCOUNT, false);
 		}
 
+		ActorSession.announce(connection, ActorSession.Actor.ofAccount(
+				stored.accountId, stored.displayName));
+
 		if (stored.disabledAt != null) {
+			AuditLog.record(connection, AuditAction.LOGIN_FAILED,
+					AuditLog.detail("refused", "the account is disabled"));
 			return new Attempt(null, Refusal.DISABLED, false);
 		}
 
@@ -156,11 +189,28 @@ public final class AccountDirectory {
 			// Deliberately not checked against the password: an account that is locked is
 			// locked, and verifying first would let an attacker learn whether their guess was
 			// right by whether the refusal changed.
+			AuditLog.record(connection, AuditAction.LOGIN_FAILED,
+					AuditLog.detail("refused", "the account is locked",
+							"until", stored.lockedUntil.toInstant().toString()));
 			return new Attempt(null, Refusal.LOCKED, false);
 		}
 
 		if (!Passwords.encoder().matches(CharBuffer.wrap(password), stored.passwordHash)) {
-			recordFailure(connection, stored.accountId);
+
+			boolean nowLocked = recordFailure(connection, stored.accountId);
+
+			AuditLog.record(connection, AuditAction.LOGIN_FAILED,
+					AuditLog.detail("refused", "the password did not match"));
+
+			// A separate entry, because "locked at 14:02 after five tries" is the line
+			// somebody looks for, and finding it by counting LOGIN_FAILED entries is the kind
+			// of reconstruction a log exists to make unnecessary.
+			if (nowLocked) {
+				AuditLog.record(connection, AuditAction.ACCOUNT_LOCKED,
+						AuditLog.detail("after", FAILURES_BEFORE_LOCK + " consecutive "
+								+ "failures or more"));
+			}
+
 			return new Attempt(null, Refusal.WRONG_PASSWORD, false);
 		}
 
@@ -175,6 +225,10 @@ public final class AccountDirectory {
 
 		recordSuccess(connection, stored.accountId);
 
+		AuditLog.record(connection, AuditAction.LOGIN, rehashed
+				? AuditLog.detail("door", door.name(), "rehashed", true)
+				: AuditLog.detail("door", door.name()));
+
 		return new Attempt(new Principal(stored.accountId, stored.kind, stored.profId,
 				stored.studentId, stored.displayName, stored.mustRotate), null, rehashed);
 	}
@@ -186,17 +240,53 @@ public final class AccountDirectory {
 	 * set the password is not mid-way through guessing it.
 	 */
 	public void setPassword(long accountId, @NonNull char[] password) throws SQLException {
+		setPassword(accountId, password, null);
+	}
+
+	/**
+	 * The same, recording who did it when that is not the owner of the account.
+	 *
+	 * @param actedBy the account performing the reset, for the audit entry. Null means the
+	 *                owner is changing their own, which is the ordinary case
+	 */
+	public void setPassword(long accountId, @NonNull char[] password, @Nullable Long actedBy)
+			throws SQLException {
 
 		try (Connection connection = dataSource.getConnection()) {
-			writeHash(connection, accountId,
-					Passwords.encoder().encode(CharBuffer.wrap(password)), false);
 
-			try (PreparedStatement statement = connection.prepareStatement(
-					"UPDATE app_account SET failed_logins = 0, locked_until = NULL "
-							+ "WHERE account_id = ?")) {
-				statement.setLong(1, accountId);
-				statement.executeUpdate();
+			connection.setAutoCommit(false);
+
+			try {
+				writeHash(connection, accountId,
+						Passwords.encoder().encode(CharBuffer.wrap(password)), false);
+
+				try (PreparedStatement statement = connection.prepareStatement(
+						"UPDATE app_account SET failed_logins = 0, locked_until = NULL "
+								+ "WHERE account_id = ?")) {
+					statement.setLong(1, accountId);
+					statement.executeUpdate();
+				}
+
+				long actor = actedBy == null ? accountId : actedBy;
+
+				ActorSession.announce(connection, ActorSession.Actor.ofAccount(
+						actor, "account " + actor));
+
+				// Which account's password, since a reset by somebody else is the interesting
+				// case and the actor alone does not say whose it was.
+				AuditLog.record(connection, AuditAction.PASSWORD_ROTATE, "app_account",
+						AuditLog.detail("account_id", accountId),
+						AuditLog.detail("reset_by_another", actedBy != null));
+
+				connection.commit();
+
+			} catch (SQLException | RuntimeException e) {
+				connection.rollback();
+				throw e;
+			} finally {
+				connection.setAutoCommit(true);
 			}
+
 		} finally {
 			Arrays.fill(password, '\0');
 		}
@@ -213,8 +303,25 @@ public final class AccountDirectory {
 	                   @NonNull String loginEmail, @NonNull char[] password,
 	                   @Nullable Long createdBy) throws SQLException {
 
-		try (Connection connection = dataSource.getConnection();
-		     PreparedStatement statement = connection.prepareStatement(
+		try (Connection connection = dataSource.getConnection()) {
+			return create(connection, kind, profId, studentId, displayName, loginEmail,
+					password, createdBy);
+		}
+	}
+
+	/**
+	 * The same, on a caller's own transaction.
+	 * <p>
+	 * For a caller that has more to do in the same unit — the bootstrap, which creates an
+	 * account and grants it a role and must not be able to do only one of those.
+	 */
+	public static long create(@NonNull Connection connection, @NonNull AccountKind kind,
+	                          @Nullable Long profId, @Nullable Long studentId,
+	                          @NonNull String displayName, @NonNull String loginEmail,
+	                          @NonNull char[] password, @Nullable Long createdBy)
+			throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
 				     "INSERT INTO app_account (kind, prof_id, student_id, display_name, "
 						     + "login_email, password_hash, must_rotate, created_by) "
 						     + "VALUES (?::account_kind, ?, ?, ?, ?, ?, true, ?) "
@@ -296,7 +403,7 @@ public final class AccountDirectory {
 	 * it out in Java would mean reading the counter, deciding, and writing it back, with room
 	 * between the two for a second attempt to land and the counter to go backwards.
 	 */
-	private static void recordFailure(@NonNull Connection connection, long accountId)
+	private static boolean recordFailure(@NonNull Connection connection, long accountId)
 			throws SQLException {
 
 		try (PreparedStatement statement = connection.prepareStatement(
@@ -307,12 +414,20 @@ public final class AccountDirectory {
 						+ "      interval '1 hour')"
 						+ "  ELSE locked_until END, "
 						+ "updated_at = now() "
-						+ "WHERE account_id = ?")) {
+						+ "WHERE account_id = ? "
+						// Whether this failure is the one that locked it, read back from the
+						// same statement rather than worked out in Java from a counter that
+						// another attempt may already have moved.
+						+ "RETURNING failed_logins >= ?")) {
 
 			statement.setInt(1, FAILURES_BEFORE_LOCK);
 			statement.setInt(2, FAILURES_BEFORE_LOCK);
 			statement.setLong(3, accountId);
-			statement.executeUpdate();
+			statement.setInt(4, FAILURES_BEFORE_LOCK);
+
+			try (ResultSet results = statement.executeQuery()) {
+				return results.next() && results.getBoolean(1);
+			}
 		}
 	}
 

@@ -16,7 +16,10 @@ import java.util.List;
 
 import javax.sql.DataSource;
 
+import in.basulabs.siesattendance.backend.AuditAction;
 import in.basulabs.siesattendance.backend.StructuredId;
+import in.basulabs.siesattendance.server.security.ActorSession;
+import in.basulabs.siesattendance.server.security.AuditLog;
 
 /**
  * Imports one device's backup into the central database.
@@ -144,10 +147,31 @@ public final class BackupImporter {
 					// Inside the transaction, because set_config(..., true) is
 					// transaction-scoped: set before the BEGIN it would be discarded, and
 					// every policy would then see a null actor and match nothing.
-					setActor(server, request.actorAccount());
+					setActor(server, request.actorAccount(), runId, request.sourceLabel());
 
 					new ImportSession(backup.connection(), server, ids, request.sourceNode(),
 							report).importAll();
+
+					// INSIDE the transaction, and before it ends. Two reasons, and both of
+					// them were wrong in the first draft of this: a dry run must not leave an
+					// entry claiming the import happened, and the actor settings are
+					// transaction-scoped, so after a commit the entry would have been written
+					// with no actor and labelled "system".
+					if (request.actorAccount() != null) {
+						AuditLog.record(server, AuditAction.BACKUP_IMPORT, "import_run",
+								AuditLog.detail("run_id", runId),
+								AuditLog.detail(
+										"source", request.sourceLabel(),
+										"source_node", request.sourceNode(),
+										"backup_schema", backup.schemaVersionAsFound(),
+										"digest", backup.digest(),
+										"seen_before", seenBefore,
+										"dry_run", request.dryRun(),
+										"inserted", report.totalInserted(),
+										"updated", report.totalUpdated(),
+										"unchanged", report.totalUnchanged(),
+										"remapped", report.totalRemapped()));
+					}
 
 					if (request.dryRun()) {
 						server.rollback();
@@ -180,33 +204,37 @@ public final class BackupImporter {
 	}
 
 	/**
-	 * Announces who is importing, for the row-level security policies.
+	 * Announces who is importing, for the row-level security policies and for the audit log.
 	 * <p>
-	 * All three settings are written, two of them empty, for the same reason the service
-	 * writes all three: a policy must never have to ask which of them is populated. The
-	 * importer is neither a professor nor a student, so both of those are empty and the
-	 * {@code ADMIN} role on the account is what the policies match.
+	 * The importer is neither a professor nor a student, so both of those settings are empty
+	 * and the {@code ADMIN} role on the account is what the policies match.
+	 *
+	 * <h3>"pre-migration", and why the actor is not null</h3>
+	 * The plan said imported rows should carry {@code actor_label = 'pre-migration'} and a
+	 * null actor, and that was written before the policies existed. A null actor now reaches
+	 * no row at all, so the import could not happen. Both halves of the original intent still
+	 * hold, split between the two columns: {@code actor_account} is the person who ran the
+	 * import, because somebody is accountable for having loaded a device's history whether or
+	 * not the rows name an author; {@code actor_label} says {@code pre-migration}, because the
+	 * authorship of the attendance <em>itself</em> is unrecorded and unrecoverable. Writing
+	 * the operator's name into the label as though they had marked those registers would be
+	 * the invention the plan was guarding against.
 	 * <p>
 	 * A null account sets nothing at all, which is correct for a connection that is exempt
 	 * from the policies — a superuser, as the tests use. It is not correct for production, and
 	 * the symptom there is the whole import failing on its first lecture with "new row
 	 * violates row-level security policy", which is at least unambiguous.
 	 */
-	private static void setActor(@NonNull Connection server, @Nullable Long account)
-			throws SQLException {
+	private static void setActor(@NonNull Connection server, @Nullable Long account, long runId,
+	                             @NonNull String sourceLabel) throws SQLException {
 
 		if (account == null) {
 			return;
 		}
 
-		try (PreparedStatement statement = server.prepareStatement(
-				"SELECT set_config('app.account_id', ?, true),"
-						+ "       set_config('app.prof_id',    '', true),"
-						+ "       set_config('app.student_id', '', true)")) {
-
-			statement.setString(1, Long.toString(account));
-			statement.execute();
-		}
+		ActorSession.announce(server, ActorSession.Actor
+				.ofAccount(account, "pre-migration (import #" + runId + " from "
+						+ sourceLabel + ")"));
 	}
 
 	/**

@@ -29,6 +29,7 @@ server/
     security/AccountDirectory.java      accounts, lockout, rotation, two doors
     security/ActorSession.java          who is acting, for one transaction
     security/BootstrapCommand.java      the first administrator, once
+    security/AuditLog.java              the events no trigger can see
   src/main/resources/
     application.yml                     every credential from the environment
     application-import.yml              the importer is a command, not a service
@@ -39,17 +40,20 @@ server/
     db/migration/V4__cross_department_courses.sql   V2's course/stream key, corrected
     db/migration/V5__identity.sql       accounts, roles, CR grants, the roster function
     db/migration/V6__row_level_security.sql   which rows each of them reaches
+    db/migration/V7__audit_log.sql      append-only by privilege, not by convention
   src/test/java/.../sql/SqlDumpTest.java         writes every statement for the differ
   src/test/java/.../importer/BackupImporterTest.java   14 tests, against a real database
   src/test/java/.../importer/DeviceBackup.java   builds a genuine .siesbak
   src/test/java/.../importer/SampleBackup.java   one to try the importer on
   src/test/java/.../security/RowLevelSecurityTest.java   20 tests, as a constrained role
   src/test/java/.../security/AccountDirectoryTest.java   15 tests, the credential layer
+  src/test/java/.../audit/AuditLogTest.java      15 tests, as a role that may not tidy up
   src/test/java/.../testing/TestPostgres.java    the throwaway container, shared
   src/test/sql/constraint_smoke_test.sql    39 assertions, 25 of them rejections
   tools/verify-schema.sh                a throwaway container, checked and removed
   tools/verify-import.sh                the importer, against a real PostgreSQL
   tools/verify-rls.sh                   the policies, as a role they apply to
+  tools/verify-audit.sh                 the trail, and that nobody can edit it
   tools/dev-database.sh                 a local database that survives a restart
   tools/roles.sql                       the three roles and what each may do
 ```
@@ -298,6 +302,69 @@ would prove nothing.
 `tools/verify-rls.sh` runs the two classes and then insists they ran: a security test that
 skips itself because Docker is missing is a green build that proves nothing.
 
+## The audit trail
+
+Two ways in, and the service holds no privilege on the table for either of them.
+
+**Row changes write themselves.** An `AFTER INSERT OR UPDATE OR DELETE` trigger on fourteen
+tables writes a `to_jsonb` image of the row before and after. The trigger takes the key column
+names as its own arguments, so an entry can be found again without knowing the table's shape.
+
+**Everything else goes through `audit_event()`**, which takes no actor. It reads one from the
+same session settings the policies read, so a caller cannot write an entry naming somebody else
+— the difference between a log and a story. That covers the things no trigger can see: a login,
+a failed login, a lockout, a password change, and above all an export, which leaves nothing
+behind at all and is the realistic way a term's attendance leaves the building.
+
+Both are `SECURITY DEFINER` and owned by the migration role, so `V7` revokes **everything** on
+`audit_log` from `sies_app` — not even `INSERT`, and not `SELECT` either. There is no statement
+the service can aim at that table. `sies_auditor` gets `SELECT` back. Nobody anywhere gets
+`UPDATE` or `DELETE`.
+
+### Three details that are easy to get wrong
+
+**`clock_timestamp()`, not `now()`.** `now()` is the transaction's start time, identical for
+every statement in it. Marking a register is one transaction containing sixty inserts, and with
+`now()` all sixty would share an instant and their order would be unrecoverable.
+
+**Compare before redacting.** The trigger skips an `UPDATE` whose images are identical, because
+the importer and the phone's merge both write rows back unchanged as a matter of course. It
+also strips `password_hash`, because the auditor can read this table and an unredacted log
+would hand them every hash the college has ever stored. The first draft redacted *first* — so a
+change to nothing but the password hash left two identical images, looked like a no-op, and
+produced no entry at all. The one column that must never be logged was also the one change that
+went unrecorded.
+
+**No foreign keys onto `app_account` or `courses`.** A foreign key would let an audit entry
+block the deletion of what it describes, or be cascaded away with it. The log has to outlive its
+subject: the last thing it records about an account is usually the account going away.
+
+### Partitions, and why there is an overflow
+
+Monthly ranges, so a retention decision later is a `DETACH` rather than a `DELETE` of millions
+of rows while the college is using the system. `audit_log_add_months()` creates them and is
+idempotent, so a scheduled job can simply run it; `V7` creates two years' worth up front.
+
+There is also a `DEFAULT` partition, and that is the part worth arguing about. Without one, an
+insert past the last pre-created month fails — and because these inserts come from triggers,
+the failure is not "the log is behind", it is **"attendance cannot be marked"**. An audit log
+that can stop the college taking attendance is worse than one that is untidy. A row in
+`audit_log_overflow` is a signal that nobody has run the partition job for two years.
+
+### "pre-migration", and why the actor is not null
+
+The plan said imported rows should carry `actor_label = 'pre-migration'` and a null actor. That
+was written before the policies existed, and a null actor now reaches no row at all — the
+import could not happen. Both halves of the intent survive, split between the columns:
+`actor_account` is the person who ran the import, because somebody is accountable for loading a
+device's history; `actor_label` says `pre-migration`, because the authorship of the attendance
+*itself* is unrecorded and unrecoverable. Writing the operator's name in as though they had
+marked those registers is the invention the plan was guarding against.
+
+A real import of the sample device produces 58 entries — 57 row changes and one
+`BACKUP_IMPORT` carrying the per-table report — all labelled
+`pre-migration (import #1 from RaoPhone)` against the account that ran it.
+
 ## What the device schema loses, and why
 
 | Room | Here | Why |
@@ -310,10 +377,10 @@ skips itself because Docker is missing is a green build that proves nothing.
 
 ## Findings
 
-Ten things. The first four came out of the translation in Phase 2, the next three out of
-building the importer, and the last three out of Phase 4. All but one of the first seven are
-about the app rather than the schema; all three of the last are about this schema, which is
-what happens once it starts making decisions of its own.
+Twelve things. The first four came out of the translation in Phase 2, the next three out of
+building the importer, three more out of Phase 4 and two out of Phase 5. All but one of the
+first seven are about the app rather than the schema; the last five are about this schema,
+which is what happens once it starts making decisions of its own.
 
 **`batch_desc` has no uniqueness on the name.** Room's
 `index_batch_desc_batchID_academicYear` guarantees nothing, because `batchID` is already the
@@ -426,6 +493,20 @@ reachability table. Designing that is its own piece of work; guessing at it woul
 the college's roster or break the roll. The gap is stated in V6's header as well, so it cannot
 be discovered by surprise.
 
+**Redacting before comparing hid the one change that mattered.** Written up under the audit
+trail above, and worth repeating as a finding because the shape generalises: two correct rules
+applied in the wrong order produced a third behaviour neither of them described. The no-op skip
+was right, the redaction was right, and together-in-that-order they meant a password change was
+never recorded. `aPasswordHashIsNeverWrittenToTheLog` caught it by asserting the entry existed
+before asserting what was in it.
+
+**`FOR ALL` was not the only shorthand that over-delivered.** V7's first `CHECK` said
+`(action IN ('INSERT','UPDATE','DELETE')) = (table_name IS NOT NULL)` — an equality where an
+implication was meant. A row change must name its table; everything else *may*, and an export
+of attendance obviously wants to. The constraint forbade exactly the case the column exists
+for. Same lesson as the `FOR ALL` finding one phase earlier: a condition written compactly
+constrains whatever the compact form happens to constrain.
+
 ## Where the importer deliberately differs from the merge
 
 Three places, each because the server knows something a phone does not. Each is a decision, not
@@ -500,9 +581,15 @@ format and a filter chain with nothing behind them. `spring-security-crypto` is 
 classpath rather than `spring-boot-starter-security` for the same reason: the starter installs
 a servlet filter chain, and there is nothing yet to filter.
 
-The audit log is Phase 5. Note one thing it inherits from here: its actor column has to point
-at `app_account` and not at `professors`, because a CR is a student and a log that cannot name
-the person who marked the register is not evidence.
+The audit log is now here, and its actor column points at `app_account` and not at
+`professors`, because a CR is a student and a log that cannot name the person who marked the
+register is not evidence.
+
+What is still missing on top of the API: nothing writes `EXPORT`, `CSV_IMPORT` or
+`DEVICE_REGISTER` entries yet, because nothing exports, imports a roster or registers a device
+over the wire — those are the endpoints. The vocabulary is in place so that adding them is a
+call to `AuditLog.record` and not a schema change, and `audit_event()` already refuses to be
+handed a row change, which is the one way that call could be misused.
 
 The part of Phase 3 that code cannot finish is the data. The gate asks for every device's
 backup to be imported, the reconciliation to pass, and the reference exports from Phase 0 to

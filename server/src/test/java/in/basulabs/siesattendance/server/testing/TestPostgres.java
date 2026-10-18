@@ -39,10 +39,23 @@ public final class TestPostgres implements AutoCloseable {
 
 	private static final String DATABASE = "sies";
 
-	/** The non-superuser, non-owner role the policies are written for. */
-	private static final String APP_ROLE = "sies_app_test";
+	/**
+	 * The non-superuser, non-owner role the policies are written for.
+	 * <p>
+	 * Named exactly as in {@code tools/roles.sql}, and that matters: {@code V7__audit_log.sql}
+	 * revokes {@code audit_log} from this role <em>by name</em>, so a test role called
+	 * something else would quietly keep privileges the real one does not have, and the test
+	 * that the service cannot rewrite an audit entry would pass against a database where it
+	 * can.
+	 */
+	private static final String APP_ROLE = "sies_app";
 
-	private static final String APP_PASSWORD = "sies_app_test";
+	private static final String APP_PASSWORD = "sies_app";
+
+	/** Reads the audit log and nothing else. V7 grants it SELECT by name as well. */
+	private static final String AUDITOR_ROLE = "sies_auditor";
+
+	private static final String AUDITOR_PASSWORD = "sies_auditor";
 
 	private final String url;
 
@@ -92,35 +105,50 @@ public final class TestPostgres implements AutoCloseable {
 				"jdbc:postgresql://localhost:" + PORT + "/" + DATABASE
 						+ "?user=postgres&password=postgres");
 
+		// BEFORE the migrations, and in this order for a reason. roles.sql creates the roles
+		// and sets ALTER DEFAULT PRIVILEGES on a fresh cluster, the migrations then create
+		// their tables and inherit those defaults, and V7 revokes audit_log from the service
+		// at the end. Granting after the migrations instead -- which is what this did first --
+		// puts the broad grant last, so V7's revoke is silently undone and a test asserting
+		// the service cannot touch audit_log passes for the wrong reason.
+		postgres.createDatabaseRoles();
 		postgres.applyMigrations();
-		postgres.createApplicationRole();
 		return postgres;
 	}
 
 	/**
-	 * Creates the role the row-level security tests connect as.
+	 * Creates the two roles the tests connect as, the way {@code tools/roles.sql} does.
 	 * <p>
 	 * This is not decoration. A superuser bypasses every policy even on a table under
 	 * {@code FORCE ROW LEVEL SECURITY}, and a table's owner bypasses its own policies unless
 	 * the table is forced — so a test that connected as {@code postgres}, which is both, would
-	 * pass against a database with no policies at all. The role below is neither: it owns
-	 * nothing, it is not a superuser, and it has no {@code BYPASSRLS}. It is what
-	 * {@code tools/roles.sql} calls {@code sies_app}.
+	 * pass against a database with no policies at all. Neither role below is either: they own
+	 * nothing, are not superusers, and have no {@code BYPASSRLS}.
 	 * <p>
-	 * The privileges are deliberately wide — every table, every verb — because the point is to
-	 * prove that the <em>policies</em> stop a read that the <em>grants</em> allow. A test that
-	 * passed because of a missing GRANT would prove nothing about row-level security.
+	 * The privileges are deliberately wide — every table, every verb for the service — because
+	 * the point is to prove that the <em>policies</em> stop a read that the <em>grants</em>
+	 * allow. A test that passed because of a missing GRANT would prove nothing about row-level
+	 * security. {@code ALTER DEFAULT PRIVILEGES} rather than a grant on existing tables, so
+	 * that the tables the migrations are about to create are covered and a later migration can
+	 * take a privilege back.
 	 */
-	private void createApplicationRole() throws Exception {
+	private void createDatabaseRoles() throws Exception {
 
 		psql("DROP ROLE IF EXISTS " + APP_ROLE + ";"
+				+ " DROP ROLE IF EXISTS " + AUDITOR_ROLE + ";"
 				+ " CREATE ROLE " + APP_ROLE + " LOGIN PASSWORD '" + APP_PASSWORD + "'"
 				+ " NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;"
-				+ " GRANT USAGE ON SCHEMA public TO " + APP_ROLE + ";"
-				+ " GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "
-				+ APP_ROLE + ";"
-				+ " GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO " + APP_ROLE + ";"
-				+ " GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO " + APP_ROLE + ";");
+				+ " CREATE ROLE " + AUDITOR_ROLE + " LOGIN PASSWORD '" + AUDITOR_PASSWORD + "'"
+				+ " NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;"
+				+ " GRANT USAGE ON SCHEMA public TO " + APP_ROLE + ", " + AUDITOR_ROLE + ";"
+				+ " ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public"
+				+ "   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO " + APP_ROLE + ";"
+				+ " ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public"
+				+ "   GRANT SELECT ON TABLES TO " + AUDITOR_ROLE + ";"
+				+ " ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public"
+				+ "   GRANT USAGE, SELECT ON SEQUENCES TO " + APP_ROLE + ";"
+				+ " ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public"
+				+ "   GRANT EXECUTE ON FUNCTIONS TO " + APP_ROLE + ", " + AUDITOR_ROLE + ";");
 	}
 
 	/**
@@ -133,6 +161,16 @@ public final class TestPostgres implements AutoCloseable {
 		return DriverManager.getConnection(
 				"jdbc:postgresql://localhost:" + PORT + "/" + DATABASE
 						+ "?user=" + APP_ROLE + "&password=" + APP_PASSWORD);
+	}
+
+	/**
+	 * A connection as the auditor: {@code SELECT} on everything including the audit log, and
+	 * nothing else anywhere.
+	 */
+	public Connection auditorConnection() throws SQLException {
+		return DriverManager.getConnection(
+				"jdbc:postgresql://localhost:" + PORT + "/" + DATABASE
+						+ "?user=" + AUDITOR_ROLE + "&password=" + AUDITOR_PASSWORD);
 	}
 
 	/**
@@ -251,7 +289,11 @@ public final class TestPostgres implements AutoCloseable {
 					// V5's identity tables. Listed explicitly rather than left to CASCADE:
 					// a grant or a role surviving into the next test would make a policy
 					// test pass for the wrong reason.
-					+ "app_account, user_role, attendance_delegate "
+					+ "app_account, user_role, attendance_delegate, "
+					// Partitioned: truncating the parent empties every partition. Emptied
+					// between tests like anything else, because an audit entry from the
+					// previous test is indistinguishable from one this test caused.
+					+ "audit_log "
 					+ "RESTART IDENTITY CASCADE");
 		}
 	}
