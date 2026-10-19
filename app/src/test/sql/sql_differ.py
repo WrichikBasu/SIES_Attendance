@@ -546,9 +546,17 @@ class Postgres:
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
     def migrate(self) -> None:
-        for name in sorted(os.listdir(MIGRATIONS)):
-            if not name.startswith("V") or not name.endswith(".sql"):
-                continue
+        # By version number, not by name. Sorted as text, V10 comes before V2 and the
+        # tenth migration runs first, which fails on a type V7 creates -- the same trap
+        # that caught verify-schema.sh, dev-database.sh and TestPostgres when V10 was
+        # written, and this is the fourth place it lived.
+        def version(name: str) -> int:
+            return int(name[1:].split("__", 1)[0])
+
+        names: list[str] = [name for name in os.listdir(MIGRATIONS)
+                            if name.startswith("V") and name.endswith(".sql")]
+
+        for name in sorted(names, key=version):
             with open(os.path.join(MIGRATIONS, name), encoding="utf-8") as handle:
                 self._psql(handle.read(), [], quiet=True)
 

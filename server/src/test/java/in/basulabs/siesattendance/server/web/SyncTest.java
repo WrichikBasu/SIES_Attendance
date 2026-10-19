@@ -39,6 +39,7 @@ import java.util.UUID;
 import in.basulabs.siesattendance.backend.AccountKind;
 import in.basulabs.siesattendance.backend.StoredTimes;
 import in.basulabs.siesattendance.backend.StructuredId;
+import in.basulabs.siesattendance.backend.sync.DeviceTables;
 import in.basulabs.siesattendance.backend.sync.OutboxOp;
 import in.basulabs.siesattendance.backend.sync.SyncIntent;
 import in.basulabs.siesattendance.backend.sync.SyncJson;
@@ -272,11 +273,42 @@ class SyncTest {
 		assertEquals(200, pushed.status(), pushed::toString);
 		assertEquals(0, pushed.body().get("accepted").intValue());
 		assertTrue(pushed.body().get("rejected").get(0).get("reason").stringValue()
-						.contains("not by this device"),
+						.contains("no such row here"),
 				pushed.body().get("rejected").toString());
+		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
+				"a key from the wrong node will be the wrong node tomorrow too");
 
 		assertEquals(0, count("SELECT count(*) FROM lectures"),
-				"a phone must not be able to write rows claiming to be another phone's");
+				"a phone must not be able to CREATE rows claiming to be another phone's");
+	}
+
+	@Test
+	void anotherDevicesRowMayBeAmendedWhenItIsAlreadyThere() throws Exception {
+
+		// One professor, two phones -- a new handset, or a tablet for the laboratory. The
+		// second one has no business creating rows under the first one's node, and every
+		// business correcting a mark on a lecture the first one recorded.
+		Phone first = signInWithAPhone("a.cs@sies.edu.in");
+		long lectureID = first.key(500);
+
+		assertEquals(2, push(first, List.of(lectureIntent(lectureID, COURSE_CS, 9),
+				attendanceIntent(lectureID, STUDENT_CS, true))).body()
+				.get("accepted").intValue());
+
+		Phone second = signInWithAPhone("a.cs@sies.edu.in");
+
+		assertTrue(second.node != first.node, "two installs, two nodes");
+
+		Reply pushed = push(second, List.of(attendanceIntent(lectureID, STUDENT_CS, false),
+				lectureIntent(lectureID, COURSE_CS, 9)));
+
+		assertEquals(200, pushed.status(), pushed::toString);
+		assertEquals(2, pushed.body().get("accepted").intValue(), pushed::toString);
+
+		assertEquals(1, count("SELECT count(*) FROM attendance WHERE NOT present"),
+				"the correction from the second phone is the one that stands");
+		assertEquals(1, count("SELECT count(*) FROM lectures"),
+				"and it amended the lecture rather than making a second one");
 	}
 
 	@Test
@@ -307,6 +339,14 @@ class SyncTest {
 						.contains("not yours to change"),
 				pushed.body().get("rejected").toString());
 
+		// Not final, and worth saying why: this professor cannot see that Chemistry course at
+		// all, so the server cannot tell "not your course" from "that course has not reached
+		// us yet". It keeps the intent rather than dropping it, which leaves a stuck row with
+		// a sentence against it instead of a lost one. Keeping beats dropping whenever the
+		// answer is unclear.
+		assertFalse(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
+				pushed.body().get("rejected").toString());
+
 		assertEquals(0, count("SELECT count(*) FROM lectures"));
 	}
 
@@ -332,26 +372,84 @@ class SyncTest {
 	}
 
 	@Test
-	void aTableThePoliciesDoNotCoverIsNotAccepted() throws Exception {
+	void aProfessorMayNotPushTheRoll() throws Exception {
+
+		// V11 accepts students from a device. Who may write one is the policies' decision, and
+		// their answer is the office: a roll number is what every other session's records are
+		// matched by, so a professor rewriting their own class's roll would be rewriting
+		// history nobody asked them to.
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+
+		Reply pushed = push(phone, List.of(studentIntent(phone.key(600), "NEW PERSON")));
+
+		assertEquals(0, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertTrue(pushed.body().get("rejected").get(0).get("reason").stringValue()
+						.contains("loaded by the office"),
+				"the sentence a professor meets has to say what to do about it: "
+						+ pushed.body().get("rejected"));
+		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
+				"a policy refusal is settled: a device that kept retrying it would never "
+						+ "empty its queue, and the row behind it is real attendance");
+
+		assertEquals(2, count("SELECT count(*) FROM students"));
+	}
+
+	@Test
+	void theOfficeMayPushTheRoll() throws Exception {
+
+		Phone office = signInWithAPhone("office@sies.edu.in");
+		long studentID = office.key(610);
+
+		Reply pushed = push(office, List.of(studentIntent(studentID, "T THOMAS")));
+
+		assertEquals(200, pushed.status(), pushed::toString);
+		assertEquals(1, pushed.body().get("accepted").intValue(), pushed::toString);
+
+		assertEquals(1, count("SELECT count(*) FROM students WHERE student_id = " + studentID));
+		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE table_name = 'students' "
+						+ "AND action = 'INSERT' AND actor_account = " + accountOffice),
+				"a roster row arriving from a device is still a change with an author");
+	}
+
+	@Test
+	void aTableNoDeviceHoldsIsNotAccepted() throws Exception {
 
 		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
 
-		Map<String, Object> student = new LinkedHashMap<>();
-		student.put("studentID", 2003L);
-		student.put("name", "NEW PERSON");
-		student.put("pronouns", "they/them");
-		student.put("email", null);
+		Map<String, Object> row = new LinkedHashMap<>();
+		row.put("accountID", 99L);
 
-		Reply pushed = push(phone, List.of(intent("students", List.of(2003L), "UPSERT",
-				student)));
+		Reply pushed = push(phone, List.of(intent("app_account", List.of(99L), "UPSERT", row)));
 
 		assertEquals(0, pushed.body().get("accepted").intValue());
 		assertTrue(pushed.body().get("rejected").get(0).get("reason").stringValue()
-						.contains("does not accept students"),
-				"students has no read policy, so nothing here could decide who may rewrite "
-						+ "the roll -- and deciding it in Java is the thing this design keeps out");
+						.contains("does not accept app_account"),
+				"synced_tables() is the list, and the server's own tables are not on it");
+	}
 
-		assertEquals(2, count("SELECT count(*) FROM students"));
+	@Test
+	void aMarkWhoseLectureHasNotArrivedIsKeptRatherThanDropped() throws Exception {
+
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+
+		// A mark on its own, with no lecture. attendance's policies reach the lecture to decide
+		// anything, so this comes back as "not yours to change" when the truth is "not yet" --
+		// and the batch that sends the lecture would have had it accepted. Dropping it as a
+		// settled refusal would be losing attendance.
+		Reply pushed = push(phone, List.of(
+				attendanceIntent(phone.key(620), STUDENT_CS, true)));
+
+		assertEquals(0, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertFalse(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
+				"a refusal that the next batch could resolve must not be final: "
+						+ pushed.body().get("rejected"));
+
+		// And it does resolve: the same mark, once its lecture is there.
+		long lectureID = phone.key(621);
+
+		assertEquals(2, push(phone, List.of(lectureIntent(lectureID, COURSE_CS, 9),
+				attendanceIntent(lectureID, STUDENT_CS, true))).body()
+				.get("accepted").intValue());
 	}
 
 	@Test
@@ -425,14 +523,80 @@ class SyncTest {
 		Reply pulled = get(phone, "/sync/pull");
 
 		assertEquals(200, pulled.status(), pulled::toString);
-		assertEquals(2, pulled.body().get("changes").size(), pulled::toString);
 		assertFalse(pulled.body().get("watermark").stringValue().isBlank(),
 				"a snapshot has to come with somewhere to resume from");
 
-		// In dependency order, so a device can apply the page as it arrives.
-		assertEquals("lectures", pulled.body().get("changes").get(0).get("table").stringValue());
-		assertEquals("attendance",
-				pulled.body().get("changes").get(1).get("table").stringValue());
+		// Since V11 a snapshot is what a new install needs to be usable, not just the rows it
+		// sent: the session, the staff list, the one student it may see, that student's
+		// enrolment, its own course, and then the lecture and the mark.
+		assertEquals(1, changesFor(pulled.body(), "academic_years").size());
+		assertEquals(2, changesFor(pulled.body(), "professors").size());
+		assertEquals(1, changesFor(pulled.body(), "courses").size(), pulled::toString);
+		assertEquals(1, changesFor(pulled.body(), "students").size());
+		assertEquals(1, changesFor(pulled.body(), "student_year").size());
+		assertEquals(1, changesFor(pulled.body(), "lectures").size());
+		assertEquals(1, changesFor(pulled.body(), "attendance").size());
+
+		// In dependency order, so a device can apply the page as it arrives: nothing points at
+		// a row that has not been sent yet.
+		List<Integer> depths = new ArrayList<>();
+
+		for (JsonNode change : pulled.body().get("changes")) {
+			depths.add(DeviceTables.depthOf(change.get("table").stringValue()));
+		}
+
+		for (int at = 1; at < depths.size(); at++) {
+			assertTrue(depths.get(at) >= depths.get(at - 1),
+					"a snapshot out of dependency order cannot be applied as it arrives: "
+							+ depths);
+		}
+	}
+
+	@Test
+	void aSnapshotTooBigForOnePageResumesWhereItStopped() throws Exception {
+
+		// The failure this guards against was invisible while the feed was two tables of a
+		// fixture: a truncated snapshot used to hand back the HEAD as its watermark, so every
+		// row past the first page was never sent and no later pull would ever ask for it. A
+		// college roster is thousands of rows and a page is hundreds.
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+		long lectureID = phone.key(1050);
+
+		push(phone, List.of(lectureIntent(lectureID, COURSE_CS, 9),
+				attendanceIntent(lectureID, STUDENT_CS, true)));
+
+		List<String> seen = new ArrayList<>();
+		String watermark = null;
+
+		for (int page = 0; page < 20; page++) {
+
+			Reply pulled = get(phone, "/sync/pull?limit=2"
+					+ (watermark == null ? "" : "&since=" + urlEncode(watermark)));
+
+			assertEquals(200, pulled.status(), pulled::toString);
+
+			for (JsonNode change : pulled.body().get("changes")) {
+				seen.add(change.get("table").stringValue() + change.get("key"));
+			}
+
+			watermark = pulled.body().get("watermark").stringValue();
+
+			if (!pulled.body().get("more").booleanValue()) {
+				break;
+			}
+		}
+
+		assertEquals(9, seen.size(), "every row, across the pages: " + seen);
+		assertEquals(seen.size(), new java.util.LinkedHashSet<>(seen).size(),
+				"and each of them once: " + seen);
+
+		// And the watermark the last page handed back is an ordinary one, so the next pull is
+		// a feed read rather than a fourth attempt at the snapshot.
+		Reply after = get(phone, "/sync/pull?since=" + urlEncode(watermark));
+
+		assertEquals(200, after.status(), after::toString);
+		assertEquals(0, after.body().get("changes").size(),
+				"nothing has happened since the snapshot, so there is nothing to send");
 	}
 
 	@Test
@@ -444,10 +608,10 @@ class SyncTest {
 		push(phone, List.of(lectureIntent(lectureID, COURSE_CS, 9),
 				attendanceIntent(lectureID, STUDENT_CS, false)));
 
-		JsonNode changes = get(phone, "/sync/pull").body().get("changes");
+		JsonNode pulled = get(phone, "/sync/pull").body();
 
-		JsonNode lecture = changes.get(0).get("row");
-		JsonNode marks = changes.get(1).get("row");
+		JsonNode lecture = changesFor(pulled, "lectures").get(0).get("row");
+		JsonNode marks = changesFor(pulled, "attendance").get(0).get("row");
 
 		// Room's column names, and Room's values: the phone applies these without converting
 		// anything, which is why the server converts in both directions.
@@ -519,8 +683,19 @@ class SyncTest {
 		Reply pulled = get(chemistry, "/sync/pull");
 
 		assertEquals(200, pulled.status(), pulled::toString);
-		assertEquals(0, pulled.body().get("changes").size(),
+		assertEquals(0, changesFor(pulled.body(), "lectures").size(),
 				"the feed hands out keys; the policies are what make it the caller's keys");
+		assertEquals(0, changesFor(pulled.body(), "attendance").size(), pulled::toString);
+
+		// What a chemist does get is the shared scaffolding and their own roll, and the CS
+		// student is not part of either. This is the reachability rule doing its job: a
+		// department comparison would have been wrong, because a minor or an open elective
+		// puts another department's student on the roll -- and nothing here does.
+		assertEquals(1, changesFor(pulled.body(), "students").size(), pulled::toString);
+		assertEquals(STUDENT_CHEM,
+				changesFor(pulled.body(), "students").get(0).get("key").get(0).longValue());
+		assertEquals(COURSE_CHEM,
+				changesFor(pulled.body(), "courses").get(0).get("key").get(0).longValue());
 	}
 
 	@Test
@@ -531,7 +706,12 @@ class SyncTest {
 
 		Phone office = signInWithAPhone("office@sies.edu.in");
 
-		assertEquals(1, get(office, "/sync/pull").body().get("changes").size());
+		JsonNode pulled = get(office, "/sync/pull").body();
+
+		assertEquals(1, changesFor(pulled, "lectures").size());
+		assertEquals(2, changesFor(pulled, "students").size(),
+				"both departments' students, which is what an office account is for");
+		assertEquals(2, changesFor(pulled, "courses").size(), pulled::toString);
 	}
 
 	@Test
@@ -627,18 +807,36 @@ class SyncTest {
 		// hand-rolled reader in :shared. Nothing else checks that those two agree.
 		SyncJson.PullPage page = SyncJson.parsePull(pulled.raw());
 
-		assertEquals(2, page.changes().size());
 		assertFalse(page.watermark().isBlank());
 
-		SyncIntent lecture = page.changes().get(0);
+		SyncIntent lecture = null;
+		SyncIntent mark = null;
 
-		assertEquals("lectures", lecture.table());
+		for (SyncIntent change : page.changes()) {
+
+			if ("lectures".equals(change.table())) {
+				lecture = change;
+			} else if ("attendance".equals(change.table())) {
+				mark = change;
+			}
+		}
+
+		assertNotNull(lecture, page.changes().toString());
+		assertNotNull(mark, page.changes().toString());
+
 		assertEquals(lectureID, (long) lecture.key().get(0));
 		assertEquals(OutboxOp.UPSERT, lecture.op());
 		assertEquals(COURSE_CS, lecture.row().get("courseID"),
 				"a key read as a double would come back rounded, and be a different course");
 
-		assertEquals(0L, page.changes().get(1).row().get("present"));
+		assertEquals(0L, mark.row().get("present"));
+
+		// And the reader copes with every table the feed now carries, not only the two it was
+		// written against: an enum, a date and a null all arrive through it.
+		for (SyncIntent change : page.changes()) {
+			assertFalse(change.table().isBlank());
+			assertFalse(change.key().isEmpty());
+		}
 	}
 
 	@Test
@@ -759,6 +957,31 @@ class SyncTest {
 		public String toString() {
 			return status + " " + raw;
 		}
+	}
+
+	/** A student row as a device would send one. */
+	private Map<String, Object> studentIntent(long studentID, String name) {
+
+		Map<String, Object> student = new LinkedHashMap<>();
+		student.put("studentID", studentID);
+		student.put("name", name);
+		student.put("pronouns", "they/them");
+		student.put("email", null);
+
+		return intent("students", List.of(studentID), "UPSERT", student);
+	}
+
+	/** The changes in a page that are for one table, in the order they arrived. */
+	private static List<JsonNode> changesFor(JsonNode body, String table) {
+
+		List<JsonNode> matching = new ArrayList<>();
+
+		for (JsonNode change : body.get("changes")) {
+			if (table.equals(change.get("table").stringValue())) {
+				matching.add(change);
+			}
+		}
+		return matching;
 	}
 
 	private Reply push(Phone phone, List<Map<String, Object>> intents) throws Exception {

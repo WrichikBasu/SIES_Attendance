@@ -496,6 +496,215 @@ class RowLevelSecurityTest {
 		}
 	}
 
+	// ── The roster, since V11 ────────────────────────────────────────────
+
+	/*
+	 * Before V11 these nine tables had no policies at all, so every one of these tests would
+	 * have passed trivially by reading everything. They are the gate on the reachability rule:
+	 * "which students may this professor see" is not a department comparison, and the way to be
+	 * sure of that is to ask it of a roll that crosses departments.
+	 */
+
+	@Test
+	void aProfessorSeesTheStudentsOnTheirOwnRollAndNoOthers() throws Exception {
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+
+			assertEquals(1, count(as, "SELECT count(*) FROM students"),
+					"the one student on CS-101's roll");
+			assertEquals(1, count(as, "SELECT count(*) FROM students WHERE student_id = "
+					+ STUDENT_CR));
+			assertEquals(0, count(as, "SELECT count(*) FROM students WHERE student_id = 2002"),
+					"a Chemistry major is on nobody's CS roll");
+
+			assertEquals(0, count(as, "SELECT count(*) FROM student_year "
+							+ "WHERE student_id = 2002"),
+					"and neither is their enrolment, which is where the roll number lives");
+		}
+	}
+
+	@Test
+	void aMinorFromAnotherDepartmentIsOnTheRollAndSoIsItsStudent() throws Exception {
+
+		// The case V6 would not guess at, and the reason this took until V11: a department
+		// comparison would hide this student from the professor who actually teaches them.
+		postgres.asSuperuser("""
+				INSERT INTO professors (prof_id, name, email, department, designation)
+				    VALUES (1004, 'D MATH', 'd.math@sies.edu.in', 'MATHEMATICS', 'Professor');
+
+				UPDATE student_year SET minor_dept = 'MATHEMATICS'
+				    WHERE student_id = 2001 AND academic_year = 2025;
+
+				INSERT INTO courses
+				    (course_id, prof_id, course_code, course_topic, stream,
+				     offering_department, year, semester, course_type)
+				    VALUES (3003, 1004, 'MATH-MIN-1', 'Discrete', 'BSc_unaided',
+				            'MATHEMATICS', 'FY', 1, 'MINOR');
+
+				INSERT INTO course_instructor (course_id, prof_id) VALUES (3003, 1004);
+				""");
+
+		long accountMath = createAccount("PROFESSOR", 1004L, null, "d.math@sies.edu.in");
+
+		try (Connection as = postgres.actingAs(accountMath, 1004L, null)) {
+
+			assertEquals(1, count(as, "SELECT count(*) FROM students WHERE student_id = 2001"),
+					"a Computer Science major taking Mathematics as a minor is on the "
+							+ "Mathematics professor's roll, and a department comparison "
+							+ "would have hidden them");
+			assertEquals(0, count(as, "SELECT count(*) FROM students WHERE student_id = 2002"),
+					"and a Chemistry major who takes no Mathematics is not");
+		}
+	}
+
+	@Test
+	void aCrReadsTheRollOfTheCourseTheyRepresentAndNoOther() throws Exception {
+
+		// A CR has to see the class list: in this app, taking attendance is marking a roll.
+		// So the reachability predicate admits a CR exactly as it admits an instructor -- and
+		// the grant's session is part of it, which is what keeps last year's CR out.
+		postgres.asSuperuser("""
+				INSERT INTO students (student_id, name, pronouns, email) VALUES
+				    (2003, 'T THOMAS', 'he/him', 't.thomas@sies.edu.in');
+
+				INSERT INTO student_year
+				    (student_id, academic_year, roll_no, year, stream, major_dept, semester)
+				    VALUES (2003, 2025, 'CS-FY-002', 'FY', 'BSc_unaided',
+				            'COMPUTER_SCIENCE', 1);
+				""");
+
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+
+			assertEquals(2, count(as, "SELECT count(*) FROM students"),
+					"both students on CS-101's roll, which is what a register needs");
+			assertEquals(1, count(as, "SELECT count(*) FROM students WHERE student_id = 2003"));
+			assertEquals(0, count(as, "SELECT count(*) FROM students WHERE student_id = 2002"),
+					"and not the Chemistry major, who is on nobody's CS roll");
+
+			// Their own enrolments come back through the own-row policy whatever else is
+			// true -- including the 2026 one, which their CR grant does not cover.
+			assertEquals(1, count(as, "SELECT count(*) FROM student_year "
+							+ "WHERE student_id = " + STUDENT_CR + " AND academic_year = 2026"),
+					"a student always reads their own record");
+
+			assertEquals(0, update(as, "UPDATE students SET name = 'CHANGED' "
+							+ "WHERE student_id = 2003"),
+					"reading a roll is not editing one");
+		}
+	}
+
+	@Test
+	void aHeadReadsTheirDepartmentsRollAndNotAnothers() throws Exception {
+
+		try (Connection as = postgres.actingAs(accountHeadCs, PROF_HEAD_CS, null)) {
+
+			assertEquals(1, count(as, "SELECT count(*) FROM students WHERE student_id = 2001"),
+					"a head is responsible for their department's students whether or not "
+							+ "they teach them");
+			assertEquals(0, count(as, "SELECT count(*) FROM students WHERE student_id = 2002"));
+
+			assertEquals(1, count(as, "SELECT count(*) FROM courses"),
+					"and for their department's courses");
+		}
+	}
+
+	@Test
+	void aProfessorMayNotRewriteTheRoll() throws Exception {
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+
+			// No exception: a row no policy's USING clause admits is a row the UPDATE does
+			// not see, so it matches nothing. That is the quiet form of a refusal, and it is
+			// why every one of these tests checks the read side as well.
+			assertEquals(0, update(as,
+							"UPDATE students SET name = 'CHANGED' WHERE student_id = 2001"),
+					"a roll number is what every other session's records are matched by, so "
+							+ "the roll is the office's");
+
+			assertEquals(0, update(as, "UPDATE student_year SET roll_no = 'CS-FY-999' "
+					+ "WHERE student_id = 2001 AND academic_year = 2025"));
+
+			// The loud form, for completeness: an INSERT has nothing to filter, so the WITH
+			// CHECK refuses it outright.
+			assertThrows(SQLException.class, () -> execute(as,
+							"INSERT INTO students (student_id, name, pronouns) "
+									+ "VALUES (2009, 'NEW PERSON', 'they/them')"),
+					"and a professor may not add a student either");
+		}
+
+		try (Connection as = postgres.actingAs(accountOffice, null, null)) {
+			assertEquals(1, update(as,
+					"UPDATE students SET name = 'R RAO JR' WHERE student_id = 2001"),
+					"and the office may");
+		}
+	}
+
+	@Test
+	void aProfessorMayRunTheirOwnCourseAndNotSomebodyElses() throws Exception {
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+
+			assertEquals(1, update(as, "UPDATE courses SET remarks = 'moved to lab 2' "
+					+ "WHERE course_id = " + COURSE_CS));
+
+			assertEquals(0, update(as, "UPDATE courses SET remarks = 'not mine' "
+							+ "WHERE course_id = " + COURSE_CHEM),
+					"another department's course is not visible, so the UPDATE matches "
+							+ "nothing -- which is the quiet form of a refusal and why the "
+							+ "read side is tested separately");
+
+			// A new course of their own, which is what the app lets a professor do. The
+			// coordinator column is what says it is theirs at the moment of the insert:
+			// course_instructor cannot exist yet.
+			execute(as, "INSERT INTO courses (course_id, prof_id, course_code, course_topic, "
+					+ "stream, offering_department, year, semester, course_type) VALUES "
+					+ "(3009, " + PROF_CS + ", 'CS-109', 'Practicals', 'BSc_unaided', "
+					+ "'COMPUTER_SCIENCE', 'FY', 1, 'MAJOR')");
+
+			assertThrows(SQLException.class, () -> execute(as,
+							"INSERT INTO courses (course_id, prof_id, course_code, "
+									+ "course_topic, stream, offering_department, year, "
+									+ "semester, course_type) VALUES "
+									+ "(3010, " + PROF_CHEM + ", 'CH-109', 'Practicals', "
+									+ "'BSc', 'CHEMISTRY', 'FY', 1, 'MAJOR')"),
+					"and not one under another professor in another department");
+		}
+	}
+
+	@Test
+	void theCalendarAndTheStaffListAreReadableByEverybodySignedIn() throws Exception {
+
+		// Both are needed by every device -- a lecture's session is resolved against the
+		// calendar -- and neither says anything about a student.
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+
+			assertEquals(2, count(as, "SELECT count(*) FROM academic_years"));
+			assertEquals(3, count(as, "SELECT count(*) FROM professors"));
+
+			assertEquals(0, update(as, "UPDATE academic_years SET end_date = '2026-06-30' "
+							+ "WHERE academic_year = 2025"),
+					"readable is not writable: the read policy admits the row for SELECT and "
+							+ "no policy admits it for UPDATE, so the statement matches none");
+
+			assertThrows(SQLException.class, () -> execute(as,
+					"INSERT INTO academic_years (academic_year, start_date, end_date) "
+							+ "VALUES (2027, '2027-06-01', '2028-05-31')"));
+		}
+	}
+
+	@Test
+	void anUnauthenticatedConnectionSeesNoRosterEither() throws Exception {
+
+		try (Connection as = postgres.appConnection()) {
+
+			assertEquals(0, count(as, "SELECT count(*) FROM students"));
+			assertEquals(0, count(as, "SELECT count(*) FROM student_year"));
+			assertEquals(0, count(as, "SELECT count(*) FROM courses"));
+			assertEquals(0, count(as, "SELECT count(*) FROM academic_years"));
+			assertEquals(0, count(as, "SELECT count(*) FROM professors"));
+		}
+	}
+
 	// ── Fixture helpers ──────────────────────────────────────────────────
 
 	/** Creates an account as the superuser and returns the id the sequence gave it. */

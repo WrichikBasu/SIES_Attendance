@@ -15,9 +15,16 @@
 #     the policies, and the audit entries checked for the account, the
 #     session and the device.
 #
-#   * OutboxTriggerTest -- the device half, against real SQLite. A write
-#     queues its own key in the same statement, two edits collapse to one
-#     intent, and a pull applying rows does not queue them back.
+#   * OutboxTriggerTest and DeviceSqlTest -- the device half, against
+#     real SQLite. A write queues its own key in the same statement, two
+#     edits collapse to one intent, a pull applying rows does not queue
+#     them back, and the statements the phone runs are the ones the
+#     shared description says they are.
+#
+#   * PullOrderTest -- the order a pulled page is applied in, which
+#     became load-bearing when V11 widened the feed from two tables to
+#     eleven: Room's foreign keys are RESTRICT, so a lecture written
+#     before its course is a page that can never be applied.
 #
 # Both halves insist they ran: they skip themselves without Docker, and a
 # skipped gate is a green build that proves nothing.
@@ -37,25 +44,30 @@ fi
 
 echo "==> running both halves"
 "$ROOT/gradlew" -p "$ROOT" :server:test --rerun \
-  --tests '*SyncTest*' --tests '*OutboxTriggerTest*'
+  --tests '*SyncTest*' --tests '*OutboxTriggerTest*' --tests '*DeviceSqlTest*'
+
+"$ROOT/gradlew" -p "$ROOT" :app:testDebugUnitTest --rerun \
+  --tests '*PullOrderTest*'
 
 echo
 echo "==> checking they ran"
 
-python3 - "$RESULTS" <<'PYEOF'
+python3 - "$RESULTS" "$ROOT/app/build/test-results/testDebugUnitTest" <<'PYEOF'
 import glob
 import sys
 import xml.etree.ElementTree as ET
 from typing import Dict
 
-results_dir: str = sys.argv[1]
+results_dirs: list[str] = sys.argv[1:]
 
 wanted: Dict[str, Dict[str, int]] = {
     "SyncTest": {"tests": 0, "failures": 0, "skipped": 0},
     "OutboxTriggerTest": {"tests": 0, "failures": 0, "skipped": 0},
+    "DeviceSqlTest": {"tests": 0, "failures": 0, "skipped": 0},
+    "PullOrderTest": {"tests": 0, "failures": 0, "skipped": 0},
 }
 
-for path in glob.glob(f"{results_dir}/*.xml"):
+for path in [p for d in results_dirs for p in glob.glob(f"{d}/*.xml")]:
     root = ET.parse(path).getroot()
     name: str = root.get("name", "")
     for suite in wanted:

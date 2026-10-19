@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
@@ -71,10 +72,14 @@ public final class SyncWorker extends Worker {
 		OutboxDrain drain = new OutboxDrain(db, client);
 
 		try {
-			boolean more = pushEverything(drain);
+			Pushed pushed = pushEverything(drain);
+			boolean more = pushed.morePending();
 			more |= pullEverything(drain);
 
-			DeviceIdentity.recordSyncError(context, null);
+			// The refusal, or null to clear whatever was there. A sync that went through and
+			// dropped a row the server will never take is not a failed sync, and it is not a
+			// silent one either.
+			DeviceIdentity.recordSyncError(context, pushed.refusal());
 
 			if (more) {
 				// Enqueued rather than continued: a long-running worker is one the system
@@ -114,25 +119,43 @@ public final class SyncWorker extends Worker {
 		}
 	}
 
-	/** @return whether anything is still waiting to be sent */
-	private boolean pushEverything(@NonNull OutboxDrain drain) throws IOException {
+	/**
+	 * What draining the queue came to.
+	 *
+	 * @param morePending whether anything is still waiting to be sent
+	 * @param refusal     the last refusal the server called final, or null. Carried out rather
+	 *                    than written to the error field inside the drain, because the success
+	 *                    path below clears that field and would otherwise wipe the one message
+	 *                    worth keeping
+	 */
+	private record Pushed(boolean morePending, @Nullable String refusal) {
+	}
+
+	@NonNull
+	private Pushed pushEverything(@NonNull OutboxDrain drain) throws IOException {
+
+		String refusal = null;
 
 		for (int batch = 0; batch < MAX_BATCHES; batch++) {
 
 			OutboxDrain.Result result = drain.push();
 
-			if (!result.morePending()) {
-				return false;
+			if (result.refusal() != null) {
+				refusal = result.refusal();
 			}
 
-			if (result.sent() == 0) {
-				// Nothing moved and something is still pending, which means every intent in
-				// this batch was refused. Trying the same batch again in the same run would
-				// spin.
-				return false;
+			if (!result.morePending()) {
+				return new Pushed(false, refusal);
+			}
+
+			if (result.sent() == 0 && result.dropped() == 0) {
+				// Nothing moved, nothing left the queue, and something is still pending: every
+				// intent in this batch was refused and kept. Trying the same batch again in
+				// the same run would spin.
+				return new Pushed(false, refusal);
 			}
 		}
-		return true;
+		return new Pushed(true, refusal);
 	}
 
 	/** @return whether the server says there is more to fetch */

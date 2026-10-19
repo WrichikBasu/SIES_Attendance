@@ -351,6 +351,30 @@ public final class DeviceTables {
 	}
 
 	/**
+	 * How deep a table sits in dependency order: 0 for one that points at nothing, higher for
+	 * one that points at those.
+	 * <p>
+	 * Both ends of sync sort a batch by this — the server before it writes a push, the device
+	 * before it applies a pull — because a foreign key is {@code RESTRICT} on both sides: a
+	 * lecture has to land after its course and be deleted before it. Neither end takes the
+	 * other's word for the order, and this is the one place the order is written down.
+	 *
+	 * @param table a table name; an unknown one sorts last, where a row that nothing can point
+	 *              at belongs
+	 */
+	public static int depthOf(@NonNull String table) {
+
+		List<Table> tables = inDependencyOrder();
+
+		for (int at = 0; at < tables.size(); at++) {
+			if (tables.get(at).name().equals(table)) {
+				return at;
+			}
+		}
+		return tables.size();
+	}
+
+	/**
 	 * The five tables whose primary keys are issued by {@code IdGenerator} rather than
 	 * described by the world, and so the five that need an entry in the identity map when a
 	 * legacy key has to be replaced.

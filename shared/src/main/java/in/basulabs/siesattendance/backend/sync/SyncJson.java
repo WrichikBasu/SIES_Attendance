@@ -48,9 +48,16 @@ public final class SyncJson {
 	public record PushOutcome(int accepted, @NonNull List<Rejection> rejected) {
 	}
 
-	/** One row the server would not take, and what it said about it. */
+	/**
+	 * One row the server would not take, and what it said about it.
+	 *
+	 * @param permanent whether the server says sending it again cannot help. Absent from the
+	 *                  field means false, which is the cautious reading: an older server that
+	 *                  does not send it gets the behaviour it was written for, where every
+	 *                  refusal is kept and retried
+	 */
 	public record Rejection(@NonNull String table, @NonNull List<Long> key,
-	                        @NonNull String reason) {
+	                        @NonNull String reason, boolean permanent) {
 	}
 
 	private SyncJson() {
@@ -202,7 +209,8 @@ public final class SyncJson {
 
 			rejected.add(new Rejection(text(rejection.get("table"), "table"),
 					keyFrom(rejection.get("key")),
-					text(rejection.get("reason"), "reason")));
+					text(rejection.get("reason"), "reason"),
+					Boolean.TRUE.equals(rejection.get("permanent"))));
 		}
 
 		Object accepted = root.get("accepted");

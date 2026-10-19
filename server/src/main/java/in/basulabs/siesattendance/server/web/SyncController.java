@@ -61,8 +61,14 @@ public final class SyncController {
 	public record PushRequest(@Nullable List<IntentBody> intents) {
 	}
 
+	/**
+	 * @param permanent whether the device should stop trying to send this row. True for a
+	 *                  refusal about the row or the actor, false for one about the state of the
+	 *                  database — a parent that has not arrived yet is the common case and is
+	 *                  worth another go
+	 */
 	public record RejectionBody(@NonNull String table, @NonNull List<Long> key,
-	                            @NonNull String reason) {
+	                            @NonNull String reason, boolean permanent) {
 	}
 
 	/**
@@ -138,7 +144,7 @@ public final class SyncController {
 
 			for (SyncWriter.Rejection rejection : result.rejected()) {
 				rejected.add(new RejectionBody(rejection.table(), rejection.key(),
-						rejection.reason()));
+						rejection.reason(), rejection.permanent()));
 			}
 
 			// No audit entry of its own: the triggers on lectures and attendance wrote one per

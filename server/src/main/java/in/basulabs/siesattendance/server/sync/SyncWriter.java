@@ -34,21 +34,29 @@ import in.basulabs.siesattendance.backend.sync.OutboxOp;
  * cannot tell whether its batch arrived, and it does not have to — it sends it again. A delete
  * is equally forgiving, because deleting a row that is not there is not an error here.
  *
- * <h3>Which tables, and why so few</h3>
- * {@code synced_tables()} in V10 says, and the answer is {@code lectures} and {@code attendance}.
- * Both are under {@code FORCE ROW LEVEL SECURITY}, so every statement below is policed by the
- * policies rather than by this class: a professor pushing another department's lecture is refused
- * by the database, and the refusal arrives here as an error to report rather than as a decision
- * to make. The tables that have no policies are not accepted at all, because accepting them would
- * mean this class deciding who may rewrite a roster — which is exactly the thing the whole design
- * keeps out of Java.
+ * <h3>Which tables</h3>
+ * {@code synced_tables()} says, and since V11 the answer is all eleven a device holds. Every one
+ * of them carries policies, so every statement below is policed by the database rather than by
+ * this class: a professor pushing another department's lecture is refused, and so is one pushing a
+ * roster, and the refusal arrives here as something to report rather than as a decision to make.
+ * That is the whole reason the set is read from the database instead of being written down here —
+ * widening it is a migration, not a release of this file.
  *
- * <h3>The node check</h3>
- * A row whose key the device issued has to carry that device's node. It is the one rule here that
- * is not the database's: a phone must not be able to write rows claiming to be another phone's,
- * and nothing in SQL knows which phone is holding the token. Attendance has no key of its own to
- * check — its key is a lecture and a student, both issued elsewhere — and it does not need one: a
- * CR marking a register the professor created is the ordinary case, and the policies decide it.
+ * <h3>The node check, and why it only applies to a new row</h3>
+ * A key a device issues has to carry that device's node. It is the one rule here that is not the
+ * database's: a phone must not be able to create rows claiming to be another phone's, and nothing
+ * in SQL knows which phone is holding the token.
+ * <p>
+ * It applies to <em>creating</em> a row and not to writing one. Before V11 the distinction did not
+ * arise, because a device only ever pushed rows it had made itself; now that it pulls a roster, a
+ * professor amending a course that came from the server is pushing a key some other node issued,
+ * and refusing that would make the pull pointless. So a key from another node is accepted only
+ * when the row is already there — and whether it may then be changed is the policies' decision,
+ * which is where it belongs.
+ * <p>
+ * Tables with no surrogate key of their own are not checked at all and do not need to be: their
+ * keys are other rows' keys, and a CR marking a register the professor created is the ordinary
+ * case.
  */
 public final class SyncWriter {
 
@@ -63,21 +71,58 @@ public final class SyncWriter {
 	                     @Nullable Map<String, Object> row) {
 	}
 
-	/** An intent that was not applied, and the sentence the device should show. */
+	/**
+	 * An intent that was not applied, and the sentence the device should show.
+	 *
+	 * @param permanent whether sending this again could ever work. A policy refusal, a row the
+	 *                  conversion cannot make sense of and a key from the wrong node are
+	 *                  settled: the device drops the intent and says so, because a queue that
+	 *                  retries them for ever is a queue that never empties and a phone that
+	 *                  never finishes syncing. A missing parent row or a lost race is not
+	 *                  settled, and those are kept and tried again
+	 */
 	public record Rejection(@NonNull String table, @NonNull List<Long> key,
-	                        @NonNull String reason) {
+	                        @NonNull String reason, boolean permanent) {
 	}
 
 	/**
 	 * @param accepted how many intents were applied
-	 * @param rejected the ones that were not, each with a reason. A device keeps these rather
-	 *                 than dropping them, so nothing is lost quietly
+	 * @param rejected the ones that were not, each with a reason and whether it is worth
+	 *                 sending again
 	 */
 	public record Result(int accepted, @NonNull List<Rejection> rejected) {
 	}
 
 	/** PostgreSQL's {@code insufficient_privilege}: a policy refused the statement. */
 	private static final String INSUFFICIENT_PRIVILEGE = "42501";
+
+	/**
+	 * The SQL states that mean "this row, as it stands, is not writable here" — as opposed to
+	 * "not yet" or "not just then".
+	 * <p>
+	 * A check constraint, a not-null, a bad value: the row says something the schema forbids, and
+	 * it will say the same thing tomorrow. A foreign key is deliberately <em>not</em> here, and
+	 * nor is a unique violation, which usually means two devices are arguing about a natural key
+	 * and one of them is about to win.
+	 * <p>
+	 * A policy refusal is in {@link #settled} rather than here, because it is the one that
+	 * depends on what else has arrived — see that method.
+	 */
+	/**
+	 * The tables whose refusals a professor is likely to meet, and which deserve a sentence
+	 * that says what to do rather than only what went wrong.
+	 */
+	private static final Set<String> ROSTER_TABLES =
+			Set.of("students", "student_year", "professors", "academic_years");
+
+	private static final Set<String> SETTLED_STATES = Set.of(
+			INSUFFICIENT_PRIVILEGE,
+			"23514",    // check_violation
+			"23502",    // not_null_violation
+			"22P02",    // invalid_text_representation
+			"22003",    // numeric_value_out_of_range
+			"22007",    // invalid_datetime_format
+			"22008");   // datetime_field_overflow
 
 	private SyncWriter() {
 	}
@@ -98,15 +143,18 @@ public final class SyncWriter {
 	                           @Nullable Integer deviceNode) throws SQLException {
 
 		Set<String> allowed = syncedTables(connection);
+		Set<String> stamped = tablesWithProvenance(connection);
 		List<Rejection> rejected = new ArrayList<>();
 		int accepted = 0;
 
 		for (Intent intent : inApplicationOrder(intents)) {
 
-			String refusal = unacceptable(intent, allowed, deviceNode);
+			String refusal = unacceptable(connection, intent, allowed, deviceNode);
 
 			if (refusal != null) {
-				rejected.add(new Rejection(intent.table(), intent.key(), refusal));
+				// Every refusal from there is about the intent itself rather than about the
+				// state of the database, so none of them is worth sending again.
+				rejected.add(new Rejection(intent.table(), intent.key(), refusal, true));
 				continue;
 			}
 
@@ -116,7 +164,7 @@ public final class SyncWriter {
 				if (intent.op() == OutboxOp.DELETE) {
 					delete(connection, intent);
 				} else {
-					upsert(connection, intent);
+					upsert(connection, intent, stamped.contains(intent.table()));
 				}
 
 				connection.releaseSavepoint(savepoint);
@@ -124,11 +172,13 @@ public final class SyncWriter {
 
 			} catch (DeviceValue.Unconvertible e) {
 				connection.rollback(savepoint);
-				rejected.add(new Rejection(intent.table(), intent.key(), e.getMessage()));
+				// The row will convert the same way next time.
+				rejected.add(new Rejection(intent.table(), intent.key(), e.getMessage(), true));
 
 			} catch (SQLException e) {
 				connection.rollback(savepoint);
-				rejected.add(new Rejection(intent.table(), intent.key(), explain(e)));
+				rejected.add(new Rejection(intent.table(), intent.key(),
+						explain(e, intent.table()), settled(connection, intent, e)));
 			}
 		}
 
@@ -167,13 +217,75 @@ public final class SyncWriter {
 		return sorted;
 	}
 
+	/**
+	 * Whether this failure is worth the device trying again, or not.
+	 * <p>
+	 * The subtle case is {@code 42501}, and it took a test to find it. The policies on
+	 * {@code attendance} reach the mark's lecture to decide anything at all, so a mark whose
+	 * lecture has not arrived yet is refused by the <em>policy</em> and never gets as far as the
+	 * foreign key — it comes back as "not yours to change" when the truth is "not yet". Calling
+	 * every policy refusal final would therefore drop real attendance out of a queue whose next
+	 * batch would have been accepted.
+	 * <p>
+	 * So a policy refusal is final only when everything the row points at is already here. If a
+	 * parent is missing, or is one this actor cannot see, the intent is kept and tried again: a
+	 * row stuck in a queue with a sentence against it is a bad outcome, and a row silently
+	 * dropped is a worse one.
+	 * <p>
+	 * A delete needs no such care. Deleting a row that is not there succeeds, so a refused
+	 * delete is a row that is there and is not the caller's, which will not change.
+	 */
+	private static boolean settled(@NonNull Connection connection, @NonNull Intent intent,
+	                               @NonNull SQLException e) throws SQLException {
+
+		String state = String.valueOf(e.getSQLState());
+
+		if (INSUFFICIENT_PRIVILEGE.equals(state)) {
+			return intent.op() == OutboxOp.DELETE || parentsPresent(connection, intent);
+		}
+
+		return SETTLED_STATES.contains(state);
+	}
+
+	/** Whether every row this intent points at is already here, as far as the actor can see. */
+	private static boolean parentsPresent(@NonNull Connection connection,
+	                                      @NonNull Intent intent) throws SQLException {
+
+		DeviceTables.Table table = DeviceTables.of(intent.table());
+		Map<String, Object> row = intent.row();
+
+		for (Map.Entry<String, String> reference : table.foreignKeys().entrySet()) {
+
+			Object value = row == null ? null : row.get(reference.getKey());
+
+			if (value == null && table.primaryKey().contains(reference.getKey())) {
+				// A key column that is also a foreign key, as attendance's both are.
+				value = intent.key().get(table.primaryKey().indexOf(reference.getKey()));
+			}
+
+			if (!(value instanceof Number parent)) {
+				// Absent or null: a nullable reference, like a lecture with no batch, points
+				// at nothing and so cannot be waiting for anything.
+				continue;
+			}
+
+			if (!exists(connection, DeviceTables.of(reference.getValue()),
+					List.of(parent.longValue()))) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 	/** Why this intent cannot be applied at all, or null. */
 	@Nullable
-	private static String unacceptable(@NonNull Intent intent, @NonNull Set<String> allowed,
-	                                   @Nullable Integer deviceNode) {
+	private static String unacceptable(@NonNull Connection connection, @NonNull Intent intent,
+	                                   @NonNull Set<String> allowed,
+	                                   @Nullable Integer deviceNode) throws SQLException {
 
 		if (!allowed.contains(intent.table())) {
-			return "this server does not accept " + intent.table() + " from a device yet";
+			return "this server does not accept " + intent.table() + " from a device";
 		}
 
 		DeviceTables.Table table;
@@ -213,18 +325,62 @@ public final class SyncWriter {
 			return "this session is not on a registered device, so it may not write rows";
 		}
 
-		if (StructuredId.nodeOf(key) != deviceNode) {
+		if (StructuredId.nodeOf(key) != deviceNode && !exists(connection, table, intent.key())) {
+			// Another node's key, and no row here under it. Creating one would be this device
+			// claiming to be that one; amending an existing row would not, and is allowed above
+			// -- see the class notes. A row that exists but this actor cannot read reaches here
+			// too, and refusing it is the same answer by a different route: a row you cannot
+			// see is not one you may write.
 			return "key " + key + " was issued by node " + StructuredId.nodeOf(key)
-					+ ", not by this device";
+					+ " and there is no such row here for this device to amend";
 		}
 
 		return null;
 	}
 
+	/**
+	 * Whether the row is already there, as far as this actor can see.
+	 * <p>
+	 * One statement, on the rare path: it is asked only when a key's node is not the pushing
+	 * device's, which for a device pushing its own work never happens.
+	 */
+	private static boolean exists(@NonNull Connection connection,
+	                              @NonNull DeviceTables.Table table, @NonNull List<Long> key)
+			throws SQLException {
+
+		StringBuilder sql = new StringBuilder("SELECT 1 FROM ").append(table.name())
+				.append(" WHERE ");
+
+		for (int at = 0; at < table.primaryKey().size(); at++) {
+			sql.append(at == 0 ? "" : " AND ")
+					.append(table.column(table.primaryKey().get(at)).postgres())
+					.append(" = ?");
+		}
+
+		try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+
+			for (int at = 0; at < key.size(); at++) {
+				statement.setLong(at + 1, key.get(at));
+			}
+
+			try (ResultSet results = statement.executeQuery()) {
+				return results.next();
+			}
+		}
+	}
+
 	// ── The statements ───────────────────────────────────────────────────
 
-	private static void upsert(@NonNull Connection connection, @NonNull Intent intent)
-			throws SQLException {
+	/**
+	 * @param stamped whether this table carries the provenance columns. The three membership
+	 *                tables — batch_student_map, course_batch_map, course_instructor — are
+	 *                nothing but their keys and have no created_at, updated_at or row_version
+	 *                to write; every other table has all three. Asked of the catalogue rather
+	 *                than listed here, so a table that gains them does not need this file
+	 *                changed
+	 */
+	private static void upsert(@NonNull Connection connection, @NonNull Intent intent,
+	                           boolean stamped) throws SQLException {
 
 		DeviceTables.Table table = DeviceTables.of(intent.table());
 		Map<String, Object> row = intent.row();
@@ -253,7 +409,11 @@ public final class SyncWriter {
 
 		// created_at, unlike the importer, which deliberately leaves it null: the importer is
 		// loading history and "created now" would be a lie, while a push is a row arriving now.
-		sql.append(", created_at) VALUES (").append(values).append(", now()) ");
+		if (stamped) {
+			sql.append(", created_at) VALUES (").append(values).append(", now()) ");
+		} else {
+			sql.append(") VALUES (").append(values).append(") ");
+		}
 
 		sql.append("ON CONFLICT (");
 
@@ -283,8 +443,10 @@ public final class SyncWriter {
 						.append(" = EXCLUDED.").append(changeable.get(at));
 			}
 
-			sql.append(", updated_at = now(), row_version = ").append(table.name())
-					.append(".row_version + 1");
+			if (stamped) {
+				sql.append(", updated_at = now(), row_version = ").append(table.name())
+						.append(".row_version + 1");
+			}
 
 			/*
 			 * And only when something actually differs.
@@ -370,7 +532,34 @@ public final class SyncWriter {
 		fields.add(new DeviceValue.Field(column, value, ""));
 	}
 
-	/** The tables V10 says a device may sync, read from the database rather than restated here. */
+	/**
+	 * Which of the synced tables carry created_at, updated_at and row_version.
+	 * <p>
+	 * One query rather than a list in this file. A list would be a second place that has to
+	 * agree with V1 about which tables are nothing but their keys, and the catalogue already
+	 * knows.
+	 */
+	@NonNull
+	private static Set<String> tablesWithProvenance(@NonNull Connection connection)
+			throws SQLException {
+
+		Set<String> tables = new LinkedHashSet<>();
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT table_name FROM information_schema.columns "
+						+ "WHERE table_schema = current_schema() "
+						+ "  AND column_name  = 'created_at' "
+						+ "  AND table_name   = ANY (synced_tables())");
+		     ResultSet results = statement.executeQuery()) {
+
+			while (results.next()) {
+				tables.add(results.getString("table_name"));
+			}
+		}
+		return tables;
+	}
+
+	/** The tables synced_tables() says a device may sync, read rather than restated here. */
 	@NonNull
 	private static Set<String> syncedTables(@NonNull Connection connection) throws SQLException {
 
@@ -390,14 +579,23 @@ public final class SyncWriter {
 	/**
 	 * A database error as something the device can show a person.
 	 * <p>
-	 * A policy refusal is the interesting one and is named as such. Everything else keeps the
-	 * server's own message, because the alternative is a device displaying "something went
-	 * wrong" about a row it will go on trying to send for ever.
+	 * A policy refusal is the interesting one and is named as such. The roster tables get a
+	 * sentence of their own, because that refusal is the one a professor will actually meet —
+	 * they imported a class list on their own phone, which is what the app has always let them
+	 * do, and "not yours to change" would leave them with nothing to do about it. Everything
+	 * else keeps the server's own message, because the alternative is a device displaying
+	 * "something went wrong" about a row it cannot send.
 	 */
 	@NonNull
-	private static String explain(@NonNull SQLException e) {
+	private static String explain(@NonNull SQLException e, @NonNull String table) {
 
 		if (INSUFFICIENT_PRIVILEGE.equals(e.getSQLState())) {
+
+			if (ROSTER_TABLES.contains(table)) {
+				return "the roll is loaded by the office, so this roster stays on this device. "
+						+ "Attendance still syncs.";
+			}
+
 			return "the server refused this row: it is not yours to change";
 		}
 

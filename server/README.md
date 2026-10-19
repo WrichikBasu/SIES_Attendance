@@ -11,7 +11,8 @@ The service answers eight endpoints under `/api/v1` — sign in, change a passwo
 register a device, export a register, load a roster, push a device's changes, pull what it has not
 seen — and a bearer token is the only way to reach any of them. The app is behind one interface
 now, keeps Room as its cache, and queues every local change in an outbox its own database fills
-with triggers.
+with triggers. Every table a device holds crosses the wire, and which rows may be read or written
+is decided by row-level security rather than by anything in Java.
 
 ```
 server/
@@ -67,16 +68,17 @@ server/
     db/migration/V8__the_wire.sql       sessions, devices, and who may export what
     db/migration/V9__device_schema_v11.sql    a backup may now say 11
     db/migration/V10__sync.sql          the change feed, over the audit log
+    db/migration/V11__roster_reachability.sql  policies on the other nine tables
   src/test/java/.../sql/SqlDumpTest.java         writes every statement for the differ
   src/test/java/.../importer/BackupImporterTest.java   14 tests, against a real database
   src/test/java/.../importer/DeviceBackup.java   builds a genuine .siesbak
   src/test/java/.../importer/SampleBackup.java   one to try the importer on
-  src/test/java/.../security/RowLevelSecurityTest.java   20 tests, as a constrained role
+  src/test/java/.../security/RowLevelSecurityTest.java   28 tests, as a constrained role
   src/test/java/.../security/AccountDirectoryTest.java   15 tests, the credential layer
   src/test/java/.../audit/AuditLogTest.java      15 tests, as a role that may not tidy up
   src/test/java/.../web/WireTest.java            35 tests, the whole service over HTTP
   src/test/java/.../web/LoginRateLimiterTest.java   6 tests, no container needed
-  src/test/java/.../web/SyncTest.java            24 tests, the server half of sync
+  src/test/java/.../web/SyncTest.java            29 tests, the server half of sync
   src/test/java/.../importer/OutboxTriggerTest.java   11 tests, against real SQLite
   src/test/java/.../importer/DeviceSqlTest.java  5 tests, the phone's own statements
   src/test/java/.../testing/TestPostgres.java    the throwaway container, shared
@@ -602,28 +604,51 @@ One thing does leak: a `DELETE` has no row left to apply a policy to, so a delet
 key alone. That is stated rather than papered over — a key is a number that names no person, and
 the alternative is a device that never hears about a deleted lecture and shows it for ever.
 
-### Two tables, and why so few
+### Eleven tables, and who may write each
 
-`synced_tables()` says `lectures` and `attendance`, and that is the whole list. Both are under
-`FORCE ROW LEVEL SECURITY`, so every push is policed by the policies rather than by the service: a
-professor pushing another department's lecture is refused by the database, and the refusal arrives
-as something to report rather than a decision to make.
+`synced_tables()` is every table a device holds, in dependency order. It was two until V11, and the
+reason it was two is worth keeping: a table with no policies would have meant this service deciding
+who may rewrite a roster, in Java, which is what the design keeps out of Java. V11 wrote those
+policies, so the list could widen without the service gaining a single decision.
 
-The other nine are refused outright. `courses`, `students` and `student_year` have no read
-policies — V6's header says why at length — so accepting them would mean this service deciding who
-may rewrite a roster, which is exactly what the design keeps out of Java; and pulling them would
-realise a gap that currently has no endpoint to come through. The consequence worth knowing: a
-brand-new install cannot populate itself from the server. It needs its roster, and the roster needs
-the reachability policy that is still unwritten.
+| Table | Read | Write |
+|---|---|---|
+| `academic_years` | anyone signed in | the office |
+| `professors` | anyone signed in | the office; a professor may amend their own row |
+| `students` | reachable students, or your own row | the office |
+| `student_year` | the same reachability | the office |
+| `courses` | the coordinator, instructors, the head, a CR | the coordinator, instructors, the head, the office |
+| `course_instructor` | whoever may read the course | whoever may write it |
+| `batch_desc` | anyone signed in | any professor |
+| `batch_student_map` | when the student is readable | a professor, for a student they can reach |
+| `course_batch_map` | whoever may read the course | whoever may write it |
+| `lectures` | the instructor, the head, a CR, the office | the instructor, the head, a CR (not delete) |
+| `attendance` | through its lecture | through its lecture |
+
+"Reachable" is the predicate V6 would not guess at: a student is reachable when the actor heads
+their major department in that session, or instructs, represents or heads the offering department
+of a course the student's enrolment is on the roll of. That is `roll_for_course()` inverted, and
+V11's header says why it has to be written twice.
+
+What this changes in practice: a new install can populate itself — the calendar, the staff list,
+its own courses, its own roll — which is what the pull was for. And a professor's roster changes
+stay on their phone: the push is refused, the refusal says the roll is loaded by the office, and
+attendance keeps syncing. That refusal is final and the device drops the intent, which is the
+difference between a queue that empties and one that does not.
 
 ### The node check is the one rule that is not the database's
 
 A row whose key the device issued has to carry that device's node, and nothing in SQL knows which
-phone is holding the token. So the push checks it: a key from another node is refused, and so is a
-key from before the ID scheme existed — those rows reach the server through the backup importer,
-which can renumber them, and a sync push cannot. Attendance has no key of its own to check, and
-needs none: its key is a lecture and a student, both issued elsewhere, and a CR marking a register
-the professor created is the ordinary case.
+phone is holding the token. So the push checks it — but only when the row is **new**. Before V11 a
+device only ever pushed rows it had made itself and the distinction did not arise; now that it
+pulls a roster, a professor amending a course that came from the server is pushing a key some other
+node issued, and refusing that would make the pull pointless. So a key from another node is
+accepted when the row is already there, and whether it may then be changed is the policies'
+decision. Two phones belonging to one professor is the ordinary case and it works.
+
+A key from before the ID scheme existed is still refused outright: those rows reach the server
+through the backup importer, which can renumber them, and a sync push cannot. Tables with no
+surrogate key of their own are not checked and need no check — their keys are other rows' keys.
 
 ### Idempotent in both directions
 
@@ -635,6 +660,14 @@ every row in it, describing a change that did not happen.
 
 A delete of a row that is not there is not an error. A pull is resumable from its watermark, and
 the watermark only moves when every row in the page landed.
+
+A first pull is a snapshot rather than a replay of the log, and since V11 a snapshot rarely fits in
+one page: a college roster is thousands of rows. So it is resumable too. When it fills a page it
+hands back a watermark naming the table and key it got to, **carrying the head it started from**,
+and the next pull continues from there and finishes on that same head. Keeping the original head is
+the whole trick — a head taken at the end of each page would skip every change made while the
+pages in between were being sent. The watermark is opaque to the device by contract, which is what
+let this be added without teaching the phone anything.
 
 ### What the phone needs and does not have
 
@@ -725,9 +758,9 @@ says plainly that the two have not been joined on a phone.
 
 ## Findings
 
-Twenty-one things. The first four came out of the translation in Phase 2, the next three out of
+Twenty-four things. The first four came out of the translation in Phase 2, the next three out of
 building the importer, three more out of Phase 4, two out of Phase 5, four out of Phase 5.5 and
-five out of Phase 6. All but one of the first seven are about the app rather than the schema; the rest are
+eight out of Phase 6. All but one of the first seven are about the app rather than the schema; the rest are
 about this schema and this service, which is what happens once they start making decisions of
 their own.
 
@@ -997,14 +1030,17 @@ where that is recorded.
 
 ## Not here yet
 
-**The sync pair.** The write path that drains a device's outbox and the pull that answers
-"everything since this watermark" are not here, and that is the same reasoning that kept every
-endpoint out until Phase 5.5 — an endpoint written before its caller exists is an endpoint whose
-shape is a guess. The difference is that the four that do exist had their inputs settled already
-by what was built: `AccountDirectory` decided what a login takes, `StructuredId` decided what a
-device registration takes, and `PgExportQueryBuilder`'s columns were already being compared cell
-for cell by the differ. The outbox's shape is not settled by anything yet, so the sync pair waits
-for Phase 6.
+**A roster screen.** V11's reachability predicate is evaluated per row and nothing is
+materialised, which is right for a dozen professors and a few thousand enrolments — an index scan
+and a handful of role lookups. A screen that listed every student in the college would want the
+materialised reachability table V6 imagined. That screen does not exist, and the predicate is in
+one function when it is wanted.
+
+**Locally created people.** A device that creates a professor or a student of its own and then
+signs in cannot push them: the roll is the office's, and the staff list too. Worse, if that person
+already exists on the server under a different key, nothing in a push can tell. That is what the
+backup importer is for — it matches on natural keys and renumbers — and it is the reason Phase 7
+is a shadow run rather than a flag flip.
 
 **No Spring Security.** Still `spring-security-crypto` and not the starter. There is one
 credential, checked in one place, and no authorization decision is taken in Java at all: V6's
@@ -1018,10 +1054,33 @@ were vocabulary with nothing to say them until this phase; the export, the roste
 registration write them now. What is still unwritten is anything to do with sync, for the reason
 above.
 
-**`courses` and `student_year` still have no read policies.** The export and the roster both work
-around that gap in the service, through `exportable_courses()` and `actor_may_manage_roster()`,
-and both are written in SQL so that the day those tables get policies there is one rule to move
-rather than two to reconcile. The gap itself is unchanged and is described in V6's header.
+**`courses` and `student_year` had no read policies, and writing them was the whole of V11.**
+Until then the export and the roster worked around the gap in the service, through
+`exportable_courses()` and `actor_may_manage_roster()` — both written in SQL precisely so that
+there would be one rule to move rather than two to reconcile when the day came. It came, and that
+is what the two functions bought: `actor_may_read_course()` is the first asked one course at a
+time, and the roster policies are written in terms of the second.
+
+**A policy refuses before a foreign key does, which nearly dropped attendance.** `attendance`'s
+policies reach the mark's lecture to decide anything at all, so a mark pushed before its lecture
+comes back as `insufficient_privilege` — "not yours to change" — and never reaches the foreign
+key that would have said "not yet". The first version of the permanent/transient rule called every
+policy refusal final, which would have dropped real marks out of a queue whose next batch would
+have accepted them. A policy refusal is now final only when every row the intent points at is
+already there. A test found it; nothing in the reading of it suggested it.
+
+**A resumed snapshot skipped the table it resumed in.** The resume loop set "reached the table we
+stopped in" and then `continue`d, so the remainder of that table was never read: a two-row page
+delivered eight of nine rows and the ninth was lost for good. Caught by the test that pulls a whole
+fixture two rows at a time and asserts every row arrives exactly once — which is the only shape of
+test that could have caught it, since every page looked perfectly well-formed on its own.
+
+**The tenth migration broke a fourth lexicographic sort.** `sql_differ.py` applied migrations in
+`sorted(os.listdir(...))` order, so V10 ran before V2 and failed on a type V7 creates. The same
+trap had already been fixed in `verify-schema.sh`, `dev-database.sh` and `TestPostgres`, and this
+was the fourth copy of it. Worth stating as a general lesson: a version number in a filename sorts
+as text unless somebody makes it sort as a number, and it stays correct for exactly nine
+migrations.
 
 The part of Phase 3 that code cannot finish is the data. The gate asks for every device's
 backup to be imported, the reconciliation to pass, and the reference exports from Phase 0 to

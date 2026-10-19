@@ -9,6 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,9 +32,18 @@ import in.basulabs.siesattendance.backend.MainDatabase;
  * its own sequence number rather than by a range — a row dirtied again while the batch was in
  * flight has a new sequence, so it survives.
  * <p>
- * A rejected intent is <em>kept</em>, with the reason recorded against it. Dropping it would be
- * losing attendance quietly, which is the one outcome worth more than a stuck queue; keeping it
- * makes a phone that cannot sync say so.
+ * A rejected intent is kept or dropped according to what the server said about it. A refusal
+ * that could resolve itself — a lecture whose course has not arrived yet — is kept and tried
+ * again, because dropping it would be losing attendance quietly. A refusal that cannot — a policy
+ * saying this is not yours to change, a row the server cannot convert — is dropped, and the
+ * sentence the server sent comes back in {@link Result#refusal()} for a screen to show.
+ * <p>
+ * Keeping everything was the earlier rule and it does not survive V11. Now that a device holds a
+ * roster it did not write, a professor's phone queues changes to rows the office owns, and the
+ * server refuses them every time: keeping those means a queue that never empties, a pending count
+ * that never reaches zero, and real attendance stuck behind rows that will never be accepted.
+ * Dropping the intent does not drop the row — it is still in the device's own database, which is
+ * the system of record until cutover.
  *
  * <h3>Applying</h3>
  * Each page is written inside one transaction with {@code sync_state.applying} set, so the outbox
@@ -57,7 +67,14 @@ public final class OutboxDrain {
 	private static final int PAGE = 500;
 
 	/** What one run did, for the worker to decide on and a screen to show. */
-	public record Result(int sent, int rejected, int applied, boolean morePending) {
+	/**
+	 * @param rejected how many the server refused and this device kept, to try again
+	 * @param dropped  how many it refused for good, which are gone from the queue
+	 * @param refusal  the last such refusal's own words, for a screen; null when there were
+	 *                 none, which is what clears a stale message
+	 */
+	public record Result(int sent, int rejected, int dropped, @Nullable String refusal,
+	                     int applied, boolean morePending) {
 
 		public boolean didSomething() {
 			return sent > 0 || applied > 0;
@@ -86,7 +103,7 @@ public final class OutboxDrain {
 		List<EntityOutbox> pending = db.daoOutbox().pendingSync(BATCH);
 
 		if (pending.isEmpty()) {
-			return new Result(0, 0, 0, false);
+			return new Result(0, 0, 0, null, 0, false);
 		}
 
 		List<SyncIntent> intents = new ArrayList<>();
@@ -109,7 +126,7 @@ public final class OutboxDrain {
 		}
 
 		if (intents.isEmpty()) {
-			return new Result(0, 0, 0, false);
+			return new Result(0, 0, 0, null, 0, false);
 		}
 
 		SyncJson.PushOutcome outcome;
@@ -125,35 +142,53 @@ public final class OutboxDrain {
 		}
 
 		List<Long> accepted = new ArrayList<>(sequences);
-		List<Long> refused = new ArrayList<>();
+		List<Long> keep = new ArrayList<>();
+		List<Long> drop = new ArrayList<>();
+		String refusal = null;
 
 		for (SyncJson.Rejection rejection : outcome.rejected()) {
 
 			Long sequence = sequenceOf(pending, rejection.table(), rejection.key());
 
-			if (sequence != null) {
-				accepted.remove(sequence);
-				refused.add(sequence);
-				Log.w(TAG, "the server refused " + rejection.table() + rejection.key()
-						+ ": " + rejection.reason());
+			if (sequence == null) {
+				continue;
+			}
+
+			accepted.remove(sequence);
+			Log.w(TAG, "the server refused " + rejection.table() + rejection.key()
+					+ ": " + rejection.reason());
+
+			if (rejection.permanent()) {
+				drop.add(sequence);
+				// The last one wins rather than the first: they are all shown one at a time
+				// and the most recent is the one a person is most likely to recognise.
+				refusal = rejection.reason();
+			} else {
+				keep.add(sequence);
 			}
 		}
 
+		// Deleted alongside the accepted ones, in the same transaction: a refusal that cannot
+		// be retried and a row that has landed both leave the queue, and for the queue they
+		// are the same event.
+		List<Long> finished = new ArrayList<>(accepted);
+		finished.addAll(drop);
+
 		db.runInTransaction(() -> {
 
-			if (!accepted.isEmpty()) {
-				db.daoOutbox().deleteSentSync(accepted);
+			if (!finished.isEmpty()) {
+				db.daoOutbox().deleteSentSync(finished);
 			}
 
-			if (!refused.isEmpty()) {
-				db.daoOutbox().recordFailureSync(refused, "the server refused this row");
+			if (!keep.isEmpty()) {
+				db.daoOutbox().recordFailureSync(keep, "the server refused this row");
 			}
 
 			db.daoOutbox().recordPushSync(System.currentTimeMillis());
 		});
 
-		return new Result(accepted.size(), refused.size(), 0,
-				db.daoOutbox().countPendingSync() > refused.size());
+		return new Result(accepted.size(), keep.size(), drop.size(), refusal, 0,
+				db.daoOutbox().countPendingSync() > keep.size());
 	}
 
 	/**
@@ -176,7 +211,7 @@ public final class OutboxDrain {
 					db.daoOutbox().recordPullSync(page.watermark(),
 							System.currentTimeMillis()));
 
-			return new Result(0, 0, 0, page.more());
+			return new Result(0, 0, 0, null, 0, page.more());
 		}
 
 		int[] applied = new int[1];
@@ -189,7 +224,7 @@ public final class OutboxDrain {
 			db.daoOutbox().setApplyingSync(1);
 
 			try {
-				for (SyncIntent change : page.changes()) {
+				for (SyncIntent change : inApplicationOrder(page.changes())) {
 					apply(sqlite, change);
 					applied[0]++;
 				}
@@ -201,7 +236,36 @@ public final class OutboxDrain {
 			}
 		});
 
-		return new Result(0, 0, applied[0], page.more());
+		return new Result(0, 0, 0, null, applied[0], page.more());
+	}
+
+	/**
+	 * A page in the order it can be written, which is not necessarily the order it arrived.
+	 * <p>
+	 * The same rule as {@code SyncWriter.inApplicationOrder} on the server, for the same reason
+	 * and in the other direction: upserts in dependency order so a course lands before a lecture
+	 * on it, deletes last and in reverse so a lecture goes before the course it hangs off.
+	 * {@link DeviceTables#depthOf} is where that order is written down.
+	 * <p>
+	 * A snapshot already arrives in this order, because {@code synced_tables()} is in dependency
+	 * order and the server reads it that way. A page of changes arrives in the order things
+	 * happened, which is usually the same thing and is not guaranteed to be — a course renamed
+	 * after the lecture it carries was created is enough to break it. Sorting here costs a
+	 * comparison per row and removes the question.
+	 */
+	@NonNull
+	public static List<SyncIntent> inApplicationOrder(@NonNull List<SyncIntent> changes) {
+
+		List<SyncIntent> sorted = new ArrayList<>(changes);
+
+		sorted.sort(Comparator
+				.comparingInt((SyncIntent change) -> change.op() == OutboxOp.DELETE ? 1 : 0)
+				.thenComparingInt(change -> {
+					int depth = DeviceTables.depthOf(change.table());
+					return change.op() == OutboxOp.DELETE ? -depth : depth;
+				}));
+
+		return sorted;
 	}
 
 	// ── One row, each way ────────────────────────────────────────────────

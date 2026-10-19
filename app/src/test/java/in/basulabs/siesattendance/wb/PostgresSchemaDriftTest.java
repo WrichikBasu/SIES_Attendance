@@ -29,9 +29,9 @@ import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.PostgresEnumTypes;
 import in.basulabs.siesattendance.backend.StructuredId;
 import in.basulabs.siesattendance.backend.migration.SchemaMigrations;
-import in.basulabs.siesattendance.backend.sync.DeviceTables;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
+import in.basulabs.siesattendance.backend.sync.DeviceTables;
 
 /**
  * Keeps the PostgreSQL migrations in step with the Java the app runs on.
@@ -247,6 +247,77 @@ public class PostgresSchemaDriftTest {
 						&& body.contains("y.major_dept = c.offering_department"));
 		assertTrue("the open-elective branch must match oe_dept",
 				body.contains("y.oe_dept = c.offering_department"));
+	}
+
+	// ── The roster, asked the other way round in V11 ─────────────────────
+
+	/*
+	 * V11's actor_reaches_enrolment() is roll_for_course() inverted: the same four-way match on
+	 * course_type, asked of one enrolment rather than listed for one course. It has to be a
+	 * second copy -- a set-returning function cannot be a row predicate without a lateral join
+	 * per row -- and these two tests are what stop the copy drifting. A type missing from one
+	 * of them is a student the policies cannot reach, which reads as a student who does not
+	 * exist.
+	 */
+
+	@Test
+	public void theReachabilityPredicateAccountsForEveryCourseType() throws IOException {
+
+		String body = normalise(statementContaining(read("V11__roster_reachability.sql"),
+				"CREATE FUNCTION actor_reaches_enrolment"));
+
+		for (CourseType type : CourseType.values()) {
+			assertTrue("actor_reaches_enrolment in V11__roster_reachability.sql never mentions "
+							+ type.name() + ", so a student on a course of that type would be "
+							+ "reachable by nobody and their rows would read as absent",
+					body.contains("'" + type.name() + "'"));
+		}
+	}
+
+	@Test
+	public void theReachabilityPredicateMatchesTheRosterFunction() throws IOException {
+
+		String predicate = normalise(statementContaining(
+				read("V11__roster_reachability.sql"),
+				"CREATE FUNCTION actor_reaches_enrolment"));
+
+		List<String> quoted = new ArrayList<>();
+		for (CourseType type : CourseType.followingOfferingDepartment()) {
+			quoted.add("'" + type.name() + "'");
+		}
+
+		assertTrue("the major-department branch of actor_reaches_enrolment should match "
+						+ "CourseType.followingOfferingDepartment(), as roll_for_course's does"
+						+ "\nThe function reads: " + predicate,
+				predicate.contains("c.course_type IN (" + String.join(", ", quoted) + ")"));
+
+		// The same three department columns, under the names the predicate takes them by.
+		assertTrue("the minor branch must admit the student's major department too, exactly as "
+						+ "roll_for_course does",
+				predicate.contains("e_minor = c.offering_department")
+						&& predicate.contains("e_major = c.offering_department"));
+		assertTrue("the open-elective branch must match the enrolment's oe department",
+				predicate.contains("e_oe = c.offering_department"));
+	}
+
+	@Test
+	public void theSyncedTablesAreEveryDeviceTableInDependencyOrder() throws IOException {
+
+		String body = normalise(statementContaining(read("V11__roster_reachability.sql"),
+				"CREATE OR REPLACE FUNCTION synced_tables"));
+
+		List<String> expected = new ArrayList<>();
+		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
+			expected.add("'" + table.name() + "'");
+		}
+
+		// Order, not just membership. SyncReader reads this array in order to build a first
+		// snapshot, so a device applying that page as it arrives depends on it: a lecture
+		// before its course is a foreign key violation on the phone.
+		assertTrue("synced_tables() must be every table a device holds, in "
+						+ "DeviceTables.inDependencyOrder(), which reads "
+						+ String.join(", ", expected) + "\nThe function reads: " + body,
+				body.contains("ARRAY[" + String.join(", ", expected) + "]"));
 	}
 
 	// ── The cross-department exemption in V4 ─────────────────────────────
