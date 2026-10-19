@@ -48,6 +48,20 @@
                     android:textColor="?attr/colorError"
                     android:visibility="gone" />
 
+                <!--
+                    Shown only while the server is refusing everything but a password
+                    change, which is the state a new account starts in.
+                -->
+                <TextView
+                    android:id="@+id/tvMustChangePassword"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/sync_must_change_password"
+                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                    android:textColor="?attr/colorError"
+                    android:visibility="gone" />
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -141,6 +155,14 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:text="@string/action_resend_everything" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnChangePassword"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/action_change_password" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnSignOut"

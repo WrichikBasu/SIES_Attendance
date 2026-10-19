@@ -468,7 +468,9 @@ async function onKindChanged() {
     try {
         const people = await api("GET", "/accounts/people?kind=" + kind);
 
-        const ids = people.map((p) => String(p.id));
+        // Already strings on the wire, and kept that way: String(a rounded double) would
+        // round-trip the damage rather than undo it.
+        const ids = people.map((p) => p.id);
         const labels = people.map((p) => p.name + (p.detail ? " · " + p.detail : "")
             + (p.email ? " · " + p.email : ""));
 
@@ -535,8 +537,14 @@ $("create").addEventListener("click", async () => {
         displayName: $("displayName").value.trim(),
         loginEmail: $("newEmail").value.trim(),
         password: $("openingPassword").value,
-        profId: kind === "PROFESSOR" && person && !making ? Number(person) : null,
-        studentId: kind === "STUDENT" && person ? Number(person) : null,
+        // Text, never Number(). A prof_id and a student_id are 59-bit structured keys, and
+        // every number in JavaScript is a double: 370666965485748224 is held exactly, prints
+        // itself as 370666965485748200 -- the shortest decimal that identifies that double --
+        // and the server then looks for a student who does not exist. The whole way this page
+        // got "Something went wrong at the server" out of a correctly chosen name. The server
+        // sends these as strings too; see AccountsController.Person.
+        profId: kind === "PROFESSOR" && person && !making ? person : null,
+        studentId: kind === "STUDENT" && person ? person : null,
         role: role || null,
         department: role && scopeNeeded(role) ? $("newDepartment").value : null,
         academicYear: role && scopeNeeded(role) ? Number($("newSession").value) : null,

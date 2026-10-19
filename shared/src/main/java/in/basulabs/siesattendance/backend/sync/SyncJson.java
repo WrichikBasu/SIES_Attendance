@@ -222,6 +222,52 @@ public final class SyncJson {
 		return new PushOutcome(count.intValue(), rejected);
 	}
 
+	/**
+	 * The sentence out of a refusal, or null when the body does not carry one.
+	 * <p>
+	 * Every error this server returns is {@code {"code": …, "message": …}}, and the message is
+	 * written to be read by the person who caused it — "A password must be at least 12
+	 * characters long", not "weak_password". Showing the raw body instead, which is what the
+	 * phone used to do, puts JSON on a professor's screen.
+	 * <p>
+	 * Null rather than throwing: this is reached while already handling a failure, and a body
+	 * that is not JSON at all — a proxy's HTML error page, say — must not turn into a second
+	 * one.
+	 */
+	@Nullable
+	public static String messageIn(@NonNull String body) {
+
+		try {
+			Object message = asObject(new Reader(body).readValue(), "the response")
+					.get("message");
+
+			return message instanceof String sentence && !sentence.isBlank() ? sentence : null;
+
+		} catch (RuntimeException notJson) {
+			return null;
+		}
+	}
+
+	/**
+	 * A whole number out of a flat answer, or zero when it does not carry one.
+	 * <p>
+	 * Zero rather than an exception or a null, because the two answers read this way — how many
+	 * other sessions a password change revoked, and the like — are counts being reported to a
+	 * person. A server that said nothing about it is a server with nothing to report, and
+	 * failing the call over the absence of a number nobody acts on would be worse than saying
+	 * "and nothing else happened".
+	 */
+	public static int numberIn(@NonNull String body, @NonNull String field) {
+
+		try {
+			Object value = asObject(new Reader(body).readValue(), "the response").get(field);
+			return value instanceof Number number ? number.intValue() : 0;
+
+		} catch (RuntimeException notJson) {
+			return 0;
+		}
+	}
+
 	@NonNull
 	private static SyncIntent intentFrom(@NonNull Map<String, Object> change) {
 

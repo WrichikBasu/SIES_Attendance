@@ -769,6 +769,35 @@
         is a connection, so marking a register never needs a signal. Nothing is removed from
         this phone until the server has it.</string>
 
+    <!-- ── Changing the password ─────────────────────────────────── -->
+
+    <string name="action_change_password">Change password</string>
+    <string name="dialog_change_password_title">Change password</string>
+    <!--
+        Said plainly, because both halves surprise people: a new account's password was
+        chosen by whoever created it, and changing it signs out every other phone or
+        browser that holds this account's session.
+    -->
+    <string name="change_password_explained">The new password must be at least %1$d
+        characters. Changing it ends every other sign-in on this account; this phone stays
+        signed in.</string>
+    <string name="hint_current_password">Current password</string>
+    <string name="hint_new_password">New password</string>
+    <string name="hint_new_password_confirm">New password again</string>
+    <string name="error_current_password_required">Enter the current password</string>
+    <string name="error_new_password_required">Enter the new password</string>
+    <string name="error_new_password_short">At least %1$d characters</string>
+    <string name="error_new_password_blank">A password cannot be only spaces</string>
+    <string name="error_new_password_same">This is the password already in use</string>
+    <string name="error_new_password_mismatch">The two do not match</string>
+    <!--
+        The account was created by somebody else, who therefore knows the password that was
+        typed into it. Until it is changed the server refuses everything but this, so the
+        screen says what will happen rather than letting a sync fail to explain it.
+    -->
+    <string name="sync_must_change_password">This account\'s password has to be changed before
+        anything will sync. It was set by whoever created the account.</string>
+
     <!--
         Shown when somebody starts a register on a build that has a server but has no
         session. Worth saying both halves: why it is being asked, and that it is asked

@@ -68,9 +68,19 @@ public final class AccountsController {
 	                        @NonNull String grantedAt) {
 	}
 
-	/** One account and what it holds. Never a hash, and never a token. */
-	public record AccountBody(long accountId, @NonNull String kind, @Nullable Long profId,
-	                          @Nullable Long studentId, @NonNull String displayName,
+	/**
+	 * One account and what it holds. Never a hash, and never a token.
+	 * <p>
+	 * {@code profId} and {@code studentId} are text, and that is not a style choice. They are
+	 * {@code StructuredId}s — 59 bits of time, sequence and node — and the only client of this
+	 * endpoint is a page written in JavaScript, where every number is a double. A key of that
+	 * size does not survive the round trip: see the note on {@link Person}.
+	 * <p>
+	 * {@code accountId} stays a number because it is a sequence value counted from one, and a
+	 * college will not reach nine quadrillion accounts.
+	 */
+	public record AccountBody(long accountId, @NonNull String kind, @Nullable String profId,
+	                          @Nullable String studentId, @NonNull String displayName,
 	                          @NonNull String loginEmail, boolean mustRotate, boolean locked,
 	                          boolean disabled, @Nullable String lastLoginAt,
 	                          @NonNull List<GrantBody> roles) {
@@ -83,8 +93,8 @@ public final class AccountsController {
 	 * @param academicYear required for {@code HOD}, refused for anything else
 	 */
 	public record NewAccount(@Nullable String kind, @Nullable String displayName,
-	                         @Nullable String loginEmail, @Nullable Long profId,
-	                         @Nullable Long studentId, @Nullable String password,
+	                         @Nullable String loginEmail, @Nullable String profId,
+	                         @Nullable String studentId, @Nullable String password,
 	                         @Nullable String role, @Nullable String department,
 	                         @Nullable Integer academicYear,
 	                         @Nullable NewPerson person) {
@@ -119,8 +129,18 @@ public final class AccountsController {
 	                      @NonNull List<String> roles, @NonNull List<String> kinds) {
 	}
 
-	/** A professor or a student an account can be hung on, for the form's pickers. */
-	public record Person(long id, @NonNull String name, @Nullable String email,
+	/**
+	 * A professor or a student an account can be hung on, for the form's pickers.
+	 * <p>
+	 * The id is text. It is a {@code StructuredId}, and this is read by a page: JavaScript has
+	 * one numeric type, a double, so a 59-bit key cannot be carried as a JSON number. The
+	 * failure is not a visible rounding either — the double holds 370666965485748224 exactly,
+	 * and then prints itself as the shortest decimal that identifies it, which is
+	 * 370666965485748200. Jackson reads that back as a different long, the insert fails on the
+	 * foreign key, and the page says the server went wrong. It did not; the key did. Text all
+	 * the way through, in both directions, and the digits are the digits.
+	 */
+	public record Person(@NonNull String id, @NonNull String name, @Nullable String email,
 	                     @Nullable String detail) {
 	}
 
@@ -156,7 +176,8 @@ public final class AccountsController {
 				}
 
 				accounts.add(new AccountBody(account.accountId(), account.kind().name(),
-						account.profId(), account.studentId(), account.displayName(),
+						digits(account.profId()), digits(account.studentId()),
+						account.displayName(),
 						account.loginEmail(), account.mustRotate(),
 						account.lockedUntil() != null
 								&& account.lockedUntil().toInstant().isAfter(java.time.Instant.now()),
@@ -211,8 +232,9 @@ public final class AccountsController {
 			     ResultSet results = statement.executeQuery(sql)) {
 
 				while (results.next()) {
-					people.add(new Person(results.getLong("id"), results.getString("name"),
-							results.getString("email"), results.getString("detail")));
+					people.add(new Person(Long.toString(results.getLong("id")),
+							results.getString("name"), results.getString("email"),
+							results.getString("detail")));
 				}
 			}
 
@@ -283,6 +305,9 @@ public final class AccountsController {
 		String name = text(body.displayName(), "displayName");
 		String password = text(body.password(), "password");
 
+		Long wantedProf = key(body.profId(), "profId");
+		Long wantedStudent = key(body.studentId(), "studentId");
+
 		String weak = Passwords.tooWeak(password.toCharArray());
 
 		if (weak != null) {
@@ -291,7 +316,7 @@ public final class AccountsController {
 
 		// Checked here rather than left to the CHECK constraint, because the constraint's
 		// message names a constraint and this one names what to do about it.
-		if (kind == AccountKind.PROFESSOR && body.profId() == null && body.person() == null) {
+		if (kind == AccountKind.PROFESSOR && wantedProf == null && body.person() == null) {
 			throw new ApiException(400, "needs_person",
 					"A professor's account has to name the professor it is for, or carry the "
 							+ "details of a new one.");
@@ -306,14 +331,14 @@ public final class AccountsController {
 							+ "so students reach the server through the roster CSV.");
 		}
 
-		if (kind == AccountKind.STUDENT && body.studentId() == null) {
+		if (kind == AccountKind.STUDENT && wantedStudent == null) {
 			throw new ApiException(400, "needs_person",
 					"A student's account has to name the student it is for. Students reach the "
 							+ "server through the roster CSV, because a roll number is what "
 							+ "identifies them and it lives on their enrolment.");
 		}
 
-		if (kind == AccountKind.STAFF && (body.profId() != null || body.studentId() != null)) {
+		if (kind == AccountKind.STAFF && (wantedProf != null || wantedStudent != null)) {
 			throw new ApiException(400, "staff_has_nobody",
 					"A staff account is attached to nobody: office staff are not professors, "
 							+ "and giving them a professors row would corrupt every query "
@@ -339,10 +364,29 @@ public final class AccountsController {
 			// conditional operator promotes to long and unboxes the null -- the same trap as
 			// the Double/Long one in SyncJson, which cost a 55-bit key, and it is worth being
 			// as wary of it here as there.
-			Long profId = body.profId();
+			Long profId = wantedProf;
 
 			if (profId == null && body.person() != null) {
 				profId = createProfessor(connection, body.person());
+			}
+
+			// Checked rather than left to the foreign key, because the foreign key's refusal
+			// arrives as a SQLException with nowhere useful to go: it used to reach the edge
+			// as "Something went wrong at the server", which is exactly the wrong thing to
+			// tell somebody whose only mistake was naming a person the office has not loaded
+			// yet. Inside the transaction, so a professor created a moment ago counts.
+			if (profId != null) {
+				onFile(connection, "professors", "prof_id", profId,
+						"That professor is not on the server. The picker's list is what there "
+								+ "is; a professor who is not on it can be created along with "
+								+ "their account.");
+			}
+
+			if (wantedStudent != null) {
+				onFile(connection, "students", "student_id", wantedStudent,
+						"That student is not on the server. Students arrive through the "
+								+ "roster CSV, because a roll number is what identifies them "
+								+ "and it lives on their enrolment.");
 			}
 
 			if (emailTaken(connection, email, kind)) {
@@ -355,7 +399,7 @@ public final class AccountsController {
 			}
 
 			long accountId = AccountDirectory.create(connection, kind, profId,
-					body.studentId(), name, email, password.toCharArray(),
+					wantedStudent, name, email, password.toCharArray(),
 					actor.session().accountId());
 
 			List<GrantBody> granted = new ArrayList<>();
@@ -375,8 +419,8 @@ public final class AccountsController {
 			// No audit entry of this endpoint's own. The triggers on app_account and user_role
 			// wrote one row entry each, carrying this actor, this session and this device,
 			// which says more than "an account was created" could.
-			return new AccountBody(accountId, kind.name(), profId, body.studentId(),
-					name, email, true, false, false, null, granted);
+			return new AccountBody(accountId, kind.name(), digits(profId),
+					digits(wantedStudent), name, email, true, false, false, null, granted);
 		});
 	}
 
@@ -589,5 +633,52 @@ public final class AccountsController {
 			throw new ApiException(400, "incomplete", field + " is needed.");
 		}
 		return value.trim();
+	}
+
+	/** A key as the wire carries it — digits in a string — or null when it is absent. */
+	@Nullable
+	private static Long key(@Nullable String value, @NonNull String field) {
+
+		if (value == null || value.isBlank()) {
+			return null;
+		}
+
+		try {
+			return Long.valueOf(value.trim());
+
+		} catch (NumberFormatException notAKey) {
+			throw new ApiException(400, "not_a_key",
+					field + " has to be a whole number, as the picker sends it.");
+		}
+	}
+
+	/** A key on its way out, as text. See {@link Person}. */
+	@Nullable
+	private static String digits(@Nullable Long key) {
+		return key == null ? null : Long.toString(key);
+	}
+
+	/**
+	 * Refuses with {@code complaint} unless that row is there.
+	 * <p>
+	 * The table and column are this class's own literals and never a caller's; the key is
+	 * bound. Read under the caller's actor like everything else here, which for an
+	 * administrator is every row.
+	 */
+	private static void onFile(@NonNull Connection connection, @NonNull String table,
+	                           @NonNull String column, long key, @NonNull String complaint)
+			throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT 1 FROM " + table + " WHERE " + column + " = ?")) {
+
+			statement.setLong(1, key);
+
+			try (ResultSet results = statement.executeQuery()) {
+				if (!results.next()) {
+					throw new ApiException(404, "no_such_person", complaint);
+				}
+			}
+		}
 	}
 }

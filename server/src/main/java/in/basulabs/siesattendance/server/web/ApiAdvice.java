@@ -37,6 +37,32 @@ public final class ApiAdvice {
 	 */
 	private static final String INSUFFICIENT_PRIVILEGE = "42501";
 
+	/**
+	 * The states that mean the request was wrong, not the server.
+	 * <p>
+	 * Every one of these used to arrive as {@code server_error} and "Something went wrong at
+	 * the server", which sent somebody looking for a bug here when what had happened was that
+	 * they named a person who is not on file. A constraint refusing a row is the schema working;
+	 * the only question is who is told.
+	 * <ul>
+	 * <li>{@code 23503} foreign key — something named does not exist.</li>
+	 * <li>{@code 23505} unique — it is already there.</li>
+	 * <li>{@code 23514} check, {@code 23502} not null, {@code 22P02} bad input syntax,
+	 * {@code 22001} too long for the column.</li>
+	 * </ul>
+	 * Deliberately vague in the message. The constraint's own name and the key that violated it
+	 * are a description of the schema, and that belongs in the log, where the next two lines put
+	 * it. An endpoint that can say something more useful says it itself and never gets here —
+	 * {@code AccountsController.onFile} is exactly that.
+	 */
+	private static final Map<String, String> CALLERS_FAULT = Map.of(
+			"23503", "Something that request names is not on the server.",
+			"23505", "That is already on the server.",
+			"23514", "The server would not accept one of those values.",
+			"23502", "Something that request needs was missing.",
+			"22P02", "One of those values is not of the right kind.",
+			"22001", "One of those values is too long.");
+
 	private static final Logger LOG = LoggerFactory.getLogger(ApiAdvice.class);
 
 	@NonNull
@@ -72,6 +98,19 @@ public final class ApiAdvice {
 			return ResponseEntity.status(HttpStatus.FORBIDDEN)
 					.body(body("refused_by_database",
 							"The database refused that: it is not yours to change."));
+		}
+
+		String refusal = CALLERS_FAULT.get(String.valueOf(e.getSQLState()));
+
+		if (refusal != null) {
+
+			// At warn, with the state and the message: which constraint and which key is how
+			// the next one of these is diagnosed, and it is not going in the response.
+			LOG.warn("a constraint refused a request ({}): {}", e.getSQLState(),
+					e.getMessage());
+
+			return ResponseEntity.status(HttpStatus.CONFLICT)
+					.body(body("rejected_by_database", refusal));
 		}
 
 		LOG.error("a database error reached the edge", e);

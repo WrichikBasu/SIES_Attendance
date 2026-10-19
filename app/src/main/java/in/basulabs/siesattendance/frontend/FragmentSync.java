@@ -10,10 +10,12 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
 
 import com.google.android.material.button.MaterialButton;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
@@ -22,6 +24,7 @@ import java.util.Arrays;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.sync.SyncClient;
 import in.basulabs.siesattendance.backend.sync.SyncSignIn;
+import in.basulabs.siesattendance.frontend.util.PasswordChange;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -48,7 +51,7 @@ public class FragmentSync extends Fragment {
 
 	private AttendanceViewModel viewModel;
 
-	private TextView tvState, tvPending, tvError;
+	private TextView tvState, tvPending, tvError, tvMustChange;
 
 	private View groupSignIn, groupSignedIn;
 
@@ -78,6 +81,7 @@ public class FragmentSync extends Fragment {
 		tvState = view.findViewById(R.id.tvSyncState);
 		tvPending = view.findViewById(R.id.tvPendingChanges);
 		tvError = view.findViewById(R.id.tvSyncError);
+		tvMustChange = view.findViewById(R.id.tvMustChangePassword);
 		groupSignIn = view.findViewById(R.id.groupSignIn);
 		groupSignedIn = view.findViewById(R.id.groupSignedIn);
 		etEmail = view.findViewById(R.id.etSyncEmail);
@@ -96,6 +100,8 @@ public class FragmentSync extends Fragment {
 		// here, and the triggers will not offer them again because they fire on a write.
 		view.<MaterialButton>findViewById(R.id.btnResendEverything)
 				.setOnClickListener(v -> viewModel.resendEverything());
+		view.<MaterialButton>findViewById(R.id.btnChangePassword)
+				.setOnClickListener(v -> askForNewPassword());
 		view.<MaterialButton>findViewById(R.id.btnSignOut).setOnClickListener(v ->
 				viewModel.signOut(() -> Ui.onMain(this, this::refresh)));
 
@@ -150,6 +156,9 @@ public class FragmentSync extends Fragment {
 
 		tvError.setVisibility(error == null ? View.GONE : View.VISIBLE);
 		tvError.setText(error == null ? "" : error);
+
+		tvMustChange.setVisibility(signedIn && viewModel.passwordChangeRequired()
+				? View.VISIBLE : View.GONE);
 	}
 
 	private void bindDoor() {
@@ -192,5 +201,99 @@ public class FragmentSync extends Fragment {
 					}
 					refresh();
 				}));
+	}
+
+	/**
+	 * Asks for the current password and the new one twice.
+	 * <p>
+	 * Three boxes rather than two, because the server never sees the third: a new password
+	 * typed differently in the two boxes would otherwise be set to whichever was in the first
+	 * one, and the person would find out at the next sign-in. {@code PasswordChange} is where
+	 * that rule and the other three this side can see are written down.
+	 * <p>
+	 * The buttons are wired after {@code show()}, as everywhere else in this app: the builder's
+	 * own listener always dismisses, and a refusal has to be able to leave the dialog open with
+	 * the error on the field it is about.
+	 */
+	private void askForNewPassword() {
+
+		View content = getLayoutInflater().inflate(R.layout.dialog_change_password, null);
+
+		TextInputLayout currentLayout = content.findViewById(R.id.tilCurrentPassword);
+		TextInputLayout newLayout = content.findViewById(R.id.tilNewPassword);
+		TextInputLayout confirmLayout = content.findViewById(R.id.tilConfirmPassword);
+		TextInputEditText currentField = content.findViewById(R.id.etCurrentPassword);
+		TextInputEditText newField = content.findViewById(R.id.etNewPassword);
+		TextInputEditText confirmField = content.findViewById(R.id.etConfirmPassword);
+
+		content.<TextView>findViewById(R.id.tvChangePasswordExplainer).setText(
+				getString(R.string.change_password_explained,
+						PasswordChange.MINIMUM_LENGTH));
+
+		AlertDialog dialog = new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_change_password_title)
+				.setView(content)
+				.setNegativeButton(R.string.action_cancel, null)
+				.setPositiveButton(R.string.action_change_password, null)
+				.create();
+
+		dialog.show();
+
+		dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+
+			String current = textOf(currentField);
+			String next = textOf(newField);
+			String confirm = textOf(confirmField);
+
+			currentLayout.setError(null);
+			newLayout.setError(null);
+			confirmLayout.setError(null);
+
+			PasswordChange.Problem problem = PasswordChange.check(current, next, confirm);
+
+			if (problem != null) {
+				show(problem, currentLayout, newLayout, confirmLayout);
+				return;
+			}
+
+			viewModel.changePassword(current.toCharArray(), next.toCharArray(),
+					changed -> Ui.onMain(this, () -> {
+
+						// Left open on a refusal, with the server's own sentence already on
+						// its way to the toast: the current password is the likely mistake and
+						// retyping it is the whole of the fix.
+						if (Boolean.TRUE.equals(changed)) {
+							dialog.dismiss();
+						}
+						refresh();
+					}));
+		});
+	}
+
+	/** The problem on the field it is about, so the error is where somebody is looking. */
+	private void show(@NonNull PasswordChange.Problem problem,
+	                  @NonNull TextInputLayout currentLayout,
+	                  @NonNull TextInputLayout newLayout,
+	                  @NonNull TextInputLayout confirmLayout) {
+
+		switch (problem) {
+			case NO_CURRENT -> currentLayout.setError(
+					getString(R.string.error_current_password_required));
+			case NO_NEW -> newLayout.setError(
+					getString(R.string.error_new_password_required));
+			case TOO_SHORT -> newLayout.setError(getString(R.string.error_new_password_short,
+					PasswordChange.MINIMUM_LENGTH));
+			case ONLY_SPACES -> newLayout.setError(
+					getString(R.string.error_new_password_blank));
+			case SAME_AS_CURRENT -> newLayout.setError(
+					getString(R.string.error_new_password_same));
+			case MISMATCH -> confirmLayout.setError(
+					getString(R.string.error_new_password_mismatch));
+		}
+	}
+
+	@NonNull
+	private static String textOf(@NonNull TextInputEditText field) {
+		return field.getText() == null ? "" : field.getText().toString();
 	}
 }

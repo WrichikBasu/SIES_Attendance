@@ -61,6 +61,8 @@ public final class DeviceIdentity {
 
 	private static final String WATERMARK_HINT = "lastSyncError";
 
+	private static final String MUST_ROTATE = "mustRotate";
+
 	/** The Keystore entry the token is encrypted with. One per installation. */
 	private static final String KEY_ALIAS = "sies_sync_token";
 
@@ -173,6 +175,24 @@ public final class DeviceIdentity {
 
 	public static void recordSyncError(@NonNull Context context, @Nullable String error) {
 		prefs(context).edit().putString(WATERMARK_HINT, error).apply();
+	}
+
+	/**
+	 * Whether the server said this account's password has to be changed before anything else.
+	 * <p>
+	 * The server is the authority — {@code app_account.must_rotate}, read live on every token
+	 * lookup — and this is only a note of what it said at sign-in, so that the screen can offer
+	 * the one thing that will work instead of leaving somebody to find out by syncing and
+	 * failing. Not a secret and not a credential: it is one bit about what the next tap should
+	 * be.
+	 */
+	public static boolean passwordChangeRequired(@NonNull Context context) {
+		return prefs(context).getBoolean(MUST_ROTATE, false);
+	}
+
+	public static void recordPasswordChangeRequired(@NonNull Context context,
+	                                                boolean required) {
+		prefs(context).edit().putBoolean(MUST_ROTATE, required).apply();
 	}
 
 	// ── Internals ────────────────────────────────────────────────────────

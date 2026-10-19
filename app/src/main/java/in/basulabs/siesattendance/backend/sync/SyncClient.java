@@ -13,6 +13,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 
 import in.basulabs.siesattendance.R;
@@ -148,6 +149,71 @@ public final class SyncClient {
 		call("POST", "/auth/logout", "{}");
 	}
 
+	/**
+	 * Changes the password of the account this session belongs to.
+	 *
+	 * <p>Both arrays are wiped before this returns, however it returns. They have to become
+	 * Strings on the way into the body — that is what a JSON document is — so what the wiping
+	 * buys is that the app itself keeps no copy afterwards, not that the characters were never
+	 * in the heap. The server's own {@code changePassword} says the same thing about its side.
+	 *
+	 * <p>This is the one call that still works when the account is under {@code must_rotate}:
+	 * the token filter admits {@code /auth/password} and {@code /auth/logout} and refuses
+	 * everything else, so a phone whose first sign-in came with a password somebody else chose
+	 * can do exactly two things, and this is the useful one.
+	 *
+	 * @return how many other sign-ins the change put an end to. The server keeps this session
+	 *         and revokes the rest, so a stolen phone's token stops working when the password
+	 *         is changed from another one — worth saying out loud on the screen
+	 * @throws Refused         if the current password is wrong, the new one is too weak, or it
+	 *                         is the same as the old one. The message is the server's own
+	 *                         sentence and is meant to be shown
+	 * @throws Unauthenticated if this session is no longer valid at all
+	 */
+	public int changePassword(@NonNull char[] current, @NonNull char[] next)
+			throws IOException {
+
+		try {
+			String body = "{\"currentPassword\":" + quote(current)
+					+ ",\"newPassword\":" + quote(next) + "}";
+
+			String answer = call("POST", "/auth/password", body);
+
+			return SyncJson.numberIn(answer, "otherSessionsRevoked");
+
+		} finally {
+			Arrays.fill(current, '\0');
+			Arrays.fill(next, '\0');
+		}
+	}
+
+	/** One password as a JSON string, escaped the little that a password can need. */
+	@NonNull
+	private static String quote(@NonNull char[] password) {
+
+		StringBuilder out = new StringBuilder("\"");
+
+		for (char c : password) {
+
+			switch (c) {
+				case '"' -> out.append("\\\"");
+				case '\\' -> out.append("\\\\");
+				case '\n' -> out.append("\\n");
+				case '\r' -> out.append("\\r");
+				case '\t' -> out.append("\\t");
+				default -> {
+					if (c < 0x20) {
+						out.append(String.format("\\u%04x", (int) c));
+					} else {
+						out.append(c);
+					}
+				}
+			}
+		}
+
+		return out.append('"').toString();
+	}
+
 	// ── The one request method ───────────────────────────────────────────
 
 	@NonNull
@@ -207,9 +273,15 @@ public final class SyncClient {
 			}
 
 			if (status >= 400) {
-				// The body carries a code and a message meant for a person; it is the most
-				// useful thing there is to report, and it is the server's own words.
-				throw new Refused(status, read(connection.getErrorStream()));
+				// The body carries a code and a message meant for a person; the message is the
+				// most useful thing there is to report, and it is the server's own words. The
+				// raw body is the fallback rather than the first choice, because this string
+				// ends up on a screen -- see DeviceIdentity.recordSyncError -- and a
+				// professor should not be shown JSON.
+				String error = read(connection.getErrorStream());
+				String sentence = SyncJson.messageIn(error);
+
+				throw new Refused(status, sentence == null ? error : sentence);
 			}
 
 			return read(connection.getInputStream());

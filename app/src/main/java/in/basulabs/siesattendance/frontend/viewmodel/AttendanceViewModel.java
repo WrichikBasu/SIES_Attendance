@@ -452,6 +452,13 @@ public class AttendanceViewModel extends AndroidViewModel {
 				SyncSignIn.Session session = SyncSignIn.signIn(getApplication(), email, door,
 						password);
 
+				// What the server said about the password, so the screen can offer the one
+				// thing that works instead of leaving somebody to discover it by syncing and
+				// failing. Written on every sign-in, false included: an account that no longer
+				// has to rotate must not keep being told it does.
+				DeviceIdentity.recordPasswordChangeRequired(getApplication(),
+						session.mustRotate());
+
 				// The node has to reach IdGenerator before the next key is issued, and
 				// SyncSignIn has already applied it; this only tells the user.
 				toastMessage.postValue(session.mustRotate()
@@ -499,7 +506,6 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
-	/** Asks for a sync now, rather than waiting for the hourly one. */
 	/**
 	 * Queues everything on this phone for sending, and asks for a sync.
 	 * <p>
@@ -524,9 +530,65 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
+	/** Asks for a sync now, rather than waiting for the hourly one. */
 	public void syncNow() {
 		SyncScheduler.requestSync(getApplication());
 		toastMessage.setValue("Syncing");
+	}
+
+	/** Whether the server has said this account's password must be changed before anything. */
+	public boolean passwordChangeRequired() {
+		return DeviceIdentity.passwordChangeRequired(getApplication());
+	}
+
+	/**
+	 * Changes the password of the account this device is signed in as.
+	 * <p>
+	 * Both arrays are wiped by {@code SyncClient}, however this ends. The form's own text
+	 * cannot be — a {@code String} is not clearable — which is the limit of what a dialog can
+	 * do and the reason nothing keeps one afterwards.
+	 * <p>
+	 * On success the session survives: the server revokes every <em>other</em> sign-in and
+	 * keeps this one, so the phone carries on syncing with the token it already has. That is
+	 * also why a sync is asked for straight afterwards — if the account was under
+	 * {@code must_rotate}, every endpoint but this one has been refusing until now, and there
+	 * may be a term of attendance waiting behind that refusal.
+	 *
+	 * @param onDone run on a background thread: true when the password was changed. What to
+	 *               show goes to {@link #getToastMessage()}, like every other background
+	 *               result here
+	 */
+	public void changePassword(@NonNull char[] current, @NonNull char[] next,
+	                           @NonNull java.util.function.Consumer<Boolean> onDone) {
+
+		busy.setValue(true);
+
+		NETWORK_TASK_EXECUTOR.execute(() -> {
+			try {
+				int revoked = new SyncClient(getApplication()).changePassword(current, next);
+
+				DeviceIdentity.recordPasswordChangeRequired(getApplication(), false);
+				DeviceIdentity.recordSyncError(getApplication(), null);
+				SyncScheduler.requestSync(getApplication());
+
+				toastMessage.postValue(revoked == 0
+						? "Password changed"
+						: "Password changed. " + revoked + " other sign-in"
+								+ (revoked == 1 ? "" : "s") + " ended.");
+				onDone.accept(true);
+
+			} catch (java.io.IOException e) {
+				// The server's own sentence: "That is not the current password for this
+				// account", "A password must be at least 12 characters long". Inventing one
+				// here would say less and risk saying something untrue.
+				toastMessage.postValue(e.getMessage() == null
+						? "Could not change the password" : e.getMessage());
+				onDone.accept(false);
+
+			} finally {
+				busy.postValue(false);
+			}
+		});
 	}
 
 	// ── Attendance sheet export ──────────────────────────────────────────

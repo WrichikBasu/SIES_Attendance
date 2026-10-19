@@ -1046,7 +1046,7 @@ class WireTest {
 		// unique index says and what the two login screens are for.
 		Reply student = post("/accounts", json(
 				"kind", "STUDENT",
-				"studentId", STUDENT_OTHER,
+				"studentId", Long.toString(STUDENT_OTHER),
 				"displayName", "S SHAH",
 				"loginEmail", "admin@sies.edu.in",
 				"password", "a long enough opening password"), token, null);
@@ -1238,6 +1238,116 @@ class WireTest {
 				"the token lives in a variable and is meant to die with the tab");
 	}
 
+	// ── Keys on the wire ────────────────────────────────────────────────
+
+	/**
+	 * A real student key, and what a browser makes of it.
+	 * <p>
+	 * {@code 370666965485748224} is a {@code StructuredId} the import minted, taken from the
+	 * dev database. A double holds it exactly — and then prints itself as the shortest decimal
+	 * that identifies it, which is the second number. That is what a page sends after
+	 * {@code Number()} has touched it, and what the server then cannot find.
+	 */
+	private static final long REAL_KEY = 370666965485748224L;
+
+	private static final long AS_A_BROWSER_PRINTS_IT = 370666965485748200L;
+
+	@Test
+	void aStudentsKeyIsCarriedAsTextInBothDirections() throws Exception {
+
+		postgres.asSuperuser("""
+				INSERT INTO students (student_id, name, pronouns, email) VALUES
+				    (370666965485748224, 'W BASU', 'he/him', 'w.basu@sies.edu.in');
+				INSERT INTO student_year
+				    (student_id, academic_year, roll_no, year, stream, major_dept, semester)
+				VALUES (370666965485748224, 2025, 'CS-TY-042', 'TY', 'BSc_unaided',
+				        'COMPUTER_SCIENCE', 5);
+				""");
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply students = get("/accounts/people?kind=STUDENT", token, null);
+
+		// Quoted, digit for digit. A JSON number here would be read by the only client this
+		// endpoint has -- a page -- into a double, and printed back out as a different key.
+		assertTrue(students.raw().contains("\"id\":\"" + REAL_KEY + "\""),
+				"the picker has to send keys as text: " + students.raw());
+
+		Reply created = post("/accounts", json(
+				"kind", "STUDENT",
+				"studentId", Long.toString(REAL_KEY),
+				"displayName", "W BASU",
+				"loginEmail", "w.basu@sies.edu.in",
+				"password", "a long enough opening password"), token, null);
+
+		assertEquals(200, created.status(), created::toString);
+		assertEquals(Long.toString(REAL_KEY), created.body().get("studentId").stringValue(),
+				"and it comes back as the key that went in");
+
+		assertEquals(1, count("SELECT count(*) FROM app_account WHERE student_id = "
+				+ REAL_KEY));
+	}
+
+	@Test
+	void aKeyThatIsNotOnFileIsNotAServerFault() throws Exception {
+
+		// Exactly what a browser sent before the page stopped putting keys through Number():
+		// a student id one rounding away from a real one. The answer used to be 500
+		// "Something went wrong at the server", which is the least useful true statement
+		// available -- nothing had gone wrong at the server, and the person had chosen a real
+		// name off a list.
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply refused = post("/accounts", json(
+				"kind", "STUDENT",
+				"studentId", Long.toString(AS_A_BROWSER_PRINTS_IT),
+				"displayName", "W BASU",
+				"loginEmail", "w.basu@sies.edu.in",
+				"password", "a long enough opening password"), token, null);
+
+		assertEquals(404, refused.status(), refused::toString);
+		assertEquals("no_such_person", refused.body().get("code").stringValue());
+		assertTrue(refused.body().get("message").stringValue().contains("roster CSV"),
+				"and it says where students come from: " + refused.raw());
+
+		// Nothing half-made, which is the other half of the old behaviour being wrong: the
+		// insert had already taken an account id before the foreign key refused it.
+		assertEquals(0, count("SELECT count(*) FROM app_account "
+				+ "WHERE login_email = 'w.basu@sies.edu.in'"));
+	}
+
+	@Test
+	void aProfessorWhoIsNotOnFileIsNamedAsTheProblem() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply refused = post("/accounts", json(
+				"kind", "PROFESSOR",
+				"profId", "1999",
+				"displayName", "X GHOST",
+				"loginEmail", "x.ghost@sies.edu.in",
+				"password", "a long enough opening password"), token, null);
+
+		assertEquals(404, refused.status(), refused::toString);
+		assertEquals("no_such_person", refused.body().get("code").stringValue());
+	}
+
+	@Test
+	void somethingThatIsNotAKeyAtAllIsRefusedBeforeAnyDatabaseWork() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply refused = post("/accounts", json(
+				"kind", "STUDENT",
+				"studentId", "undefined",
+				"displayName", "Y NOBODY",
+				"loginEmail", "y.nobody@sies.edu.in",
+				"password", "a long enough opening password"), token, null);
+
+		assertEquals(400, refused.status(), refused::toString);
+		assertEquals("not_a_key", refused.body().get("code").stringValue());
+	}
+
 	// ── Creating the person with the account ─────────────────────────────
 
 	@Test
@@ -1261,7 +1371,8 @@ class WireTest {
 
 		assertEquals(200, created.status(), created::toString);
 
-		long profId = created.body().get("profId").longValue();
+		// Text on the wire, as every structured key is here: see AccountsController.Person.
+		long profId = Long.parseLong(created.body().get("profId").stringValue());
 
 		assertTrue(StructuredId.isStructured(profId),
 				"a row the server invented has to be keyed the way the server keys rows");

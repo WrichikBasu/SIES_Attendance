@@ -836,11 +836,11 @@ says plainly that the two have not been joined on a phone.
 
 ## Findings
 
-Thirty-one things. The first four came out of the translation in Phase 2, the next three out of
+Thirty-two things. The first four came out of the translation in Phase 2, the next three out of
 building the importer, three more out of Phase 4, two out of Phase 5, four out of Phase 5.5, nine
 out of Phase 6 — one of those found on a handset rather than by anything here — two from
-building the administration pages, and two from importing a real phone's backup and then letting
-that phone sync again. All but one of the first seven are about the app rather than the schema; the rest are
+building the administration pages, and three from importing a real phone's backup and then using
+the server it filled. All but one of the first seven are about the app rather than the schema; the rest are
 about this schema and this service, which is what happens once they start making decisions of
 their own.
 
@@ -1079,6 +1079,27 @@ instead, since there is no column to set. `PullApplyTest` now runs with `PRAGMA 
 ON`, which is the actual reason it did not catch this: the fixture had them off, and with them
 off REPLACE is harmless.
 
+**A key a double holds exactly still does not survive a browser.** The administration page sent
+`studentId: Number(person)`, and creating a student account answered
+`{"code":"server_error","message":"Something went wrong at the server."}` — five times, each one
+taking an `app_account` id with it. Nothing had gone wrong at the server. `370666965485748224` is a
+59-bit `StructuredId`; JavaScript has one numeric type, and the double happens to hold that value
+*exactly*, so the usual test for this — does the number come back unchanged — passes. The loss is
+in the printing: `String(370666965485748224)` is `"370666965485748200"`, because JavaScript prints
+the shortest decimal that identifies a double, and the neighbouring doubles up there are 64 apart.
+Jackson then reads that as a different `long`, the foreign key refuses it, and the only thing the
+page could say was that the server was broken. Three fixes, because all three were wrong: a
+structured key now leaves these endpoints as **text** (`Person.id`, `AccountBody.profId` and
+`studentId`) and is accepted as text, the page never puts a key through `Number()`, and
+`AccountsController` checks the person is on file before inserting, so naming somebody the office
+has not loaded yet is a 404 that says where students come from. `ApiAdvice` is the backstop: a
+foreign key, unique, check, not-null or bad-input refusal is now a 409 or 400 saying as much,
+instead of a 500 — the constraint is the schema working, and the only question was who got told.
+The one place a key is still a JSON number is the login response, whose client parses longs
+exactly; the page reads only the token and `mustRotate` from it. This is the same family as the
+`Double`/`Long` finding above, and the family's lesson is now stated once: **a key is text
+everywhere it meets a language that does not have a 64-bit integer.**
+
 ## Where the importer deliberately differs from the merge
 
 Three places, each because the server knows something a phone does not. Each is a decision, not
@@ -1203,6 +1224,16 @@ a new administrator, and with any account somebody else created.
 
 **In a browser.** `/accounts.html` notices and shows the rotation form instead of the rest of the
 page. This is the easy way and there is nothing else to know.
+
+**On a phone.** The Server screen has a **Change password** button whenever it holds a session,
+and says so in red when the account is under `must_rotate` — because a professor whose first
+sign-in came with a password the office typed should not have to discover the rule by syncing and
+failing. The phone asks for the current password and the new one twice: the server never sees the
+third box, so without it a password typed differently in the two boxes would be set to whichever
+was in the first one and discovered at the next sign-in. The refusals come back in the server's own
+sentences, on the field they are about. See `FragmentSync.askForNewPassword`,
+`SyncClient.changePassword` and `PasswordChange`, which is where the rules the phone can check
+without a round trip are written down.
 
 **Over HTTP.** Both calls have to be in *one* shell: `$TOKEN` set in one command and used in the
 next is empty if the shell in between has gone, and the answer is then

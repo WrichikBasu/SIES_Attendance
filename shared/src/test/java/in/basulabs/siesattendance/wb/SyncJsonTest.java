@@ -199,4 +199,44 @@ public class SyncJsonTest {
 	public void anEmptyPushIsStillWellFormed() {
 		assertEquals("{\"intents\":[]}", SyncJson.writePush(List.of()));
 	}
+
+	@Test
+	public void aRefusalIsReadForItsSentenceAndNotItsCode() {
+
+		// What reaches a screen. The code is for this program; the message is written for the
+		// person who caused the refusal, and showing them the body instead -- which the phone
+		// used to do -- puts JSON in front of a professor.
+		assertEquals("A password must be at least 12 characters long.",
+				SyncJson.messageIn("{\"code\":\"weak_password\",\"message\":\"A password must "
+						+ "be at least 12 characters long.\"}"));
+	}
+
+	@Test
+	public void aBodyThatIsNotOneOfOursIsNotASecondFailure() {
+
+		// Reached while already handling a failure: a proxy's HTML error page, an empty body
+		// from a connection that was cut, a 502 from something that is not this server. All of
+		// them have to come back as "nothing to quote" rather than throwing.
+		for (String notOurs : List.of("", "<html><body>502 Bad Gateway</body></html>",
+				"{", "{\"code\":\"weak_password\"}", "{\"message\":\"\"}",
+				"{\"message\":12}", "[]")) {
+
+			assertNull("should have carried no sentence: " + notOurs,
+					SyncJson.messageIn(notOurs));
+		}
+	}
+
+	@Test
+	public void aCountMissingFromAnAnswerIsNothingToReport() {
+
+		assertEquals(3, SyncJson.numberIn("{\"otherSessionsRevoked\":3}",
+				"otherSessionsRevoked"));
+
+		// A password change that ended no other session says so with a zero, and one from a
+		// server that does not mention it at all is the same thing to the person reading it.
+		assertEquals(0, SyncJson.numberIn("{\"otherSessionsRevoked\":0}",
+				"otherSessionsRevoked"));
+		assertEquals(0, SyncJson.numberIn("{}", "otherSessionsRevoked"));
+		assertEquals(0, SyncJson.numberIn("not json", "otherSessionsRevoked"));
+	}
 }
