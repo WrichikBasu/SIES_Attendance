@@ -56,9 +56,10 @@ public class SiesAttendanceServer {
 	 * The rules are the ones the configuration files already imply:
 	 * <ul>
 	 * <li>Flyway connects as the owner whenever it is enabled, which it is by default.</li>
-	 * <li>Under the {@code bootstrap} profile the datasource <em>is</em> the owner — that is the
-	 * one legitimate use of the migration role by something other than Flyway — so the app
-	 * role's password is not wanted and is not asked for.</li>
+	 * <li>Under the {@code bootstrap} and {@code migrate} profiles the datasource <em>is</em>
+	 * the owner — granting the first {@code ADMIN} and applying the migrations are the two
+	 * things the service's own role cannot do — so the app role's password is not wanted and
+	 * is not asked for.</li>
 	 * <li>A password handed over directly, as {@code --spring.datasource.password=…} or through
 	 * {@code SPRING_DATASOURCE_PASSWORD}, satisfies the requirement. The tests start the context
 	 * that way, against a container whose password they invented a moment earlier.</li>
@@ -73,10 +74,15 @@ public class SiesAttendanceServer {
 		List<String> arguments = Arrays.asList(args);
 		List<String> missing = new ArrayList<>();
 
-		boolean bootstrap = value(arguments, environment, "spring.profiles.active", "")
-				.contains("bootstrap");
+		String profiles = value(arguments, environment, "spring.profiles.active", "");
 
-		if (!bootstrap
+		// The two profiles that connect as the owner, because they are Flyway and the first
+		// ADMIN grant: both are things the service's own role cannot do. Neither has any use
+		// for the app role's password, and asking for it would make a deployment hand a
+		// secret to a process that does not need it.
+		boolean asOwner = profiles.contains("bootstrap") || profiles.contains("migrate");
+
+		if (!asOwner
 				&& blank(environment.apply("DB_APP_PASSWORD"))
 				&& blank(value(arguments, environment, "spring.datasource.password", null))) {
 			missing.add("DB_APP_PASSWORD");
@@ -85,7 +91,7 @@ public class SiesAttendanceServer {
 		boolean flyway = !"false".equalsIgnoreCase(
 				value(arguments, environment, "spring.flyway.enabled", "true"));
 
-		if ((flyway || bootstrap)
+		if ((flyway || asOwner)
 				&& blank(environment.apply("DB_OWNER_PASSWORD"))
 				&& blank(value(arguments, environment, "spring.flyway.password", null))) {
 			missing.add("DB_OWNER_PASSWORD");

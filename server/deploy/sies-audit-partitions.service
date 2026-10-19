@@ -1,0 +1,44 @@
+# Keeps audit_log's monthly partitions ahead of the calendar.
+#
+# V7 created two years of them and left audit_log_add_months(date, integer) idempotent so
+# that a scheduled job could simply call it. Nothing called it until this unit.
+#
+# Why it matters, and why it is easy to miss: a month with no partition does not fail. The
+# row lands in audit_log_overflow, which exists precisely so that an insert is never lost
+# to a missing partition -- so the first symptom of nobody running this is an audit trail
+# that is quietly in the wrong table, and there is no second symptom.
+#
+#   install -D -m 644 server/deploy/sies-audit-partitions.service \
+#       /etc/systemd/system/sies-audit-partitions.service
+#   install -D -m 644 server/deploy/sies-audit-partitions.timer \
+#       /etc/systemd/system/sies-audit-partitions.timer
+#   systemctl daemon-reload && systemctl enable --now sies-audit-partitions.timer
+
+[Unit]
+Description=Add audit_log partitions for the months ahead
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=sies
+Group=sies
+
+# The function is SECURITY DEFINER and owned by sies_owner, so it is called with the
+# owner's credentials. This is the only scheduled job that needs them, which is the reason
+# it is a separate unit with a separate environment file rather than something the service
+# does on a timer.
+EnvironmentFile=/etc/sies-attendance/migrate-env
+
+# Twelve months each run, on a monthly timer: creating the same partition twice is a no-op,
+# so the overlap is free and means a run that is missed for a year still costs nothing.
+ExecStart=/usr/bin/psql --no-password --set=ON_ERROR_STOP=1 \
+    --command="SELECT audit_log_add_months(date_trunc('month', now())::date, 12) AS made"
+
+Environment=PGHOST=localhost
+Environment=PGPORT=5432
+Environment=PGDATABASE=sies
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true

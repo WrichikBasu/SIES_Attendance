@@ -204,6 +204,74 @@ a superuser and none has `BYPASSRLS` — both of those bypass row-level security
 so does a table's owner unless the table is FORCEd, which is the other reason the service is
 not the owner. `tools/roles.sql` has the detail.
 
+## Running it in production
+
+Not `dev-serve.sh`. That script compiles the working tree, exposes `/actuator/mappings` so it can
+check itself, and applies whatever migrations are on disk at startup — right for a laptop, wrong
+for a database holding a term of attendance.
+
+```sh
+./gradlew :server:bootJar                 # build/libs/sies-attendance.jar
+
+install -D -m 644 server/deploy/sies-attendance.service \
+    /etc/systemd/system/sies-attendance.service
+install -D -m 600 -o root -g root server/deploy/sies-attendance.env.example \
+    /etc/sies-attendance/env              # then fill in DB_APP_PASSWORD
+install -D -m 600 -o root -g root server/deploy/migrate-env.example \
+    /etc/sies-attendance/migrate-env      # then fill in DB_OWNER_PASSWORD and PGPASSWORD
+
+# The schema, as a step with a person behind it:
+set -a; . /etc/sies-attendance/migrate-env; set +a
+java -jar /opt/sies-attendance/sies-attendance.jar --spring.profiles.active=migrate
+
+systemctl daemon-reload
+systemctl enable --now sies-attendance
+systemctl enable --now sies-audit-partitions.timer
+```
+
+**Two environment files, because the point of three database roles is that the long-running
+process cannot alter the schema.** The service's file carries `DB_APP_PASSWORD` and the unit sets
+`SPRING_FLYWAY_ENABLED=false`, so the service never connects as the owner; the migration step and
+the partition job read the other file, which has the owner's password in it. With Flyway left on,
+every service process would hold a credential that can run DDL on every attendance record in the
+college, and a schema change would happen at whatever moment somebody restarted something.
+`SiesAttendanceServer.missingCredentials` knows this split — it does not ask the `migrate` or
+`bootstrap` profiles for the app role's password, and does not ask the service for the owner's.
+
+**`--spring.profiles.active=migrate`** has no web server, so it cannot take the port the service
+wants, and it reports rather than only exiting zero: *"Applied 2: 14 something, 15 something else.
+The schema is at 15."* A failed migration is a failed startup with Flyway's own message and a
+non-zero exit, which is what a deployment script needs. See `MigrateCommand`.
+
+**`sies-audit-partitions.timer`** calls `audit_log_add_months(…, 12)` monthly, `Persistent=true` so
+a machine that was off on the 1st catches up at boot. V7 created two years ahead and left the
+function idempotent for exactly this; nothing called it until now. The failure mode of nobody
+running it is silent — rows land in `audit_log_overflow`, which exists so an insert is never lost,
+so there is no second symptom.
+
+**`TimeoutStopSec=60`** exceeds Spring's 30-second shutdown phase on purpose. `server.shutdown` is
+`graceful`, so SIGTERM makes Tomcat stop accepting connections and finish what is in flight; a
+systemd timeout shorter than that phase would SIGKILL the process in the middle of the very
+requests the graceful shutdown was waiting for. `DeploymentTest` asserts the inequality, because
+nothing else would notice it was wrong.
+
+**`FORWARD_HEADERS=framework`** is set in the unit and is only correct behind a proxy that
+overwrites `X-Forwarded-For`. It is what puts the caller's own address in `audit_log.client_ip` and
+in the login rate limiter's buckets; left at `none` behind a proxy, every request appears to come
+from the proxy — one bucket for the college, and an audit trail naming the load balancer. The
+default is `none` because the alternative is trusting a header any client can send.
+
+What this does **not** include, and what still has to be true before a phone can reach it: TLS with
+the certificate the app pins in `res/xml/network_security_config.xml`, a `pg_dump` and WAL
+schedule with a restore somebody has actually run, and a second instance's worth of thought about
+`LoginRateLimiter`, which counts in memory per process.
+
+Checked by hand against the dev database, from the jar: the migrate profile reports and exits 0,
+the service starts with no owner password in its environment and no Flyway in its log,
+`/actuator/mappings` answers 404 while `/actuator/health` answers UP, `/api/v1/accounts` asks for
+a token, and SIGTERM produces *"Commencing graceful shutdown … Graceful shutdown complete"*
+followed by Hikari draining and the process exiting.
+
 ## Importing a device
 
 ```sh

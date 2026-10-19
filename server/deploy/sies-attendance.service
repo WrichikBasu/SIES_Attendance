@@ -1,0 +1,80 @@
+# The service, as systemd runs it.
+#
+#   install -D -m 644 server/deploy/sies-attendance.service \
+#       /etc/systemd/system/sies-attendance.service
+#   systemctl daemon-reload && systemctl enable --now sies-attendance
+#
+# Not dev-serve.sh. That script compiles the working tree, exposes /actuator/mappings so it
+# can check itself, and applies whatever migrations are on disk at startup -- three things
+# that are right for a laptop and wrong for a database holding a term of attendance.
+
+[Unit]
+Description=SIES Attendance server
+Documentation=file:///opt/sies-attendance/README.md
+# -online, not plain network.target: the first thing it does is open a database connection,
+# and a unit that starts before the interface has an address fails and gets restarted for
+# no reason.
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sies
+Group=sies
+
+# Every credential, and nothing else. Mode 600, owned by root, read by systemd rather than
+# by the process -- so the passwords are not in this file, not in the unit's environment as
+# shown by `systemctl show`, and not in anybody's shell history.
+EnvironmentFile=/etc/sies-attendance/env
+
+# The migrations are a separate step, run by a person: see MigrateCommand. With this false
+# the service never connects as the owner, so the password it holds cannot run DDL and
+# cannot UPDATE or DELETE an audit row. Flipping it to true would undo the reason there are
+# three database roles.
+Environment=SPRING_FLYWAY_ENABLED=false
+
+# Behind a reverse proxy that terminates TLS and overwrites X-Forwarded-For. This is what
+# puts the caller's own address into audit_log.client_ip and into the login rate limiter's
+# buckets; left at none, every request appears to come from the proxy. Only correct when
+# the proxy really does overwrite the header -- see application.yml.
+Environment=FORWARD_HEADERS=framework
+
+# Java 25, which is what :server compiles to. An older JVM fails with
+# UnsupportedClassVersionError at startup, which is the right time to find out.
+ExecStart=/usr/bin/java -jar /opt/sies-attendance/sies-attendance.jar
+
+# SIGTERM, which is systemd's default and is what server.shutdown=graceful listens for:
+# Tomcat stops accepting connections and finishes the requests already in flight.
+#
+# TimeoutStopSec has to exceed spring.lifecycle.timeout-per-shutdown-phase (30s by default,
+# unset in application.yml) or systemd will SIGKILL the process in the middle of the very
+# requests the graceful shutdown was waiting for. 60 leaves room and still bounds a restart.
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+Restart=on-failure
+RestartSec=5
+
+# Hardening. None of it is required for the service to work, and all of it narrows what a
+# flaw in it could reach.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# The one directory it writes: an importer's decrypted working copy. Nothing else on the
+# filesystem needs to be writable, which is what ProtectSystem=strict above enforces.
+ReadWritePaths=/var/lib/sies-attendance
+
+[Install]
+WantedBy=multi-user.target

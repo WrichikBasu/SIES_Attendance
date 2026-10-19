@@ -59,6 +59,28 @@ class StartupCredentialsTest {
 	}
 
 	@Test
+	void theMigrateProfileWantsTheOwnerAndNothingElse() {
+		// It is Flyway and nothing else: no web server, no app role. A deployment that had to
+		// hand it both passwords would be handing one to a process with no use for it.
+		assertEquals(List.of(),
+				missing(Map.of("DB_OWNER_PASSWORD", "devonly-owner"),
+						"--spring.profiles.active=migrate"));
+
+		assertEquals(List.of("DB_OWNER_PASSWORD"),
+				missing(Map.of("DB_APP_PASSWORD", "devonly-app"),
+						"--spring.profiles.active=migrate"));
+	}
+
+	@Test
+	void theServiceInProductionNeedsOnlyTheAppRole() {
+		// What deploy/sies-attendance.service does: migrations are a separate step, so the
+		// long-running process holds the password that cannot run DDL and no other.
+		assertEquals(List.of(), missing(
+				Map.of("DB_APP_PASSWORD", "from-the-environment-file",
+						"SPRING_FLYWAY_ENABLED", "false")));
+	}
+
+	@Test
 	void flywayTurnedOffDoesNotNeedTheOwner() {
 		// What the tests do: the schema is already applied by psql, in production order, so
 		// Flyway is off and no owner connection is ever opened.

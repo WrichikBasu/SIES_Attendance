@@ -101,6 +101,28 @@ tasks.named<Test>("test") {
     }
 }
 
+/*
+ * The artefact that gets deployed.
+ *
+ * One jar, named without a version on purpose: the systemd unit in deploy/ names a path,
+ * and a unit that has to be edited on every release is a unit that will one day point at
+ * a jar nobody deployed. What was deployed is answered by the release, not by the filename.
+ *
+ * Naming the main class rather than letting the plugin find it, because this module has
+ * three entry points that are not it -- BootstrapCommand, ImportCommand and MigrateCommand
+ * all run under their own profile through this same class, and a reader looking for "what
+ * starts" should find the answer here.
+ *
+ *   ./gradlew :server:bootJar     -> build/libs/sies-attendance.jar
+ */
+springBoot {
+    mainClass = "in.basulabs.siesattendance.server.SiesAttendanceServer"
+}
+
+tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
+    archiveFileName = "sies-attendance.jar"
+}
+
 // Writes a sample .siesbak, so the importer can be tried by hand before there is a real
 // device backup to try it on. Uses the test fixtures, which is where the knowledge of how
 // to build one lives.
