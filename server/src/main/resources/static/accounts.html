@@ -207,6 +207,21 @@ let options = null;
 /** The person option that means "not on the server yet". Not a key, so it cannot be one. */
 const NEW_PERSON = "new";
 
+/**
+ * What a stored department is called, or the stored name when this server did not label it.
+ *
+ * Never the other way round: the label is for reading and the value is what is stored, and
+ * a page that sent a label where a value belongs would be writing "CS" into a department
+ * column. Every select here keeps the value and shows the label.
+ */
+function departmentLabel(stored) {
+    if (!stored || !options) {
+        return stored;
+    }
+    const known = options.departments.find((d) => d.value === stored || d === stored);
+    return known && known.label ? known.label : stored;
+}
+
 const $ = (id) => document.getElementById(id);
 
 function say(message, good) {
@@ -259,7 +274,14 @@ function fill(select, values, labels) {
     values.forEach((value, at) => {
         const option = document.createElement("option");
         option.value = String(value);
-        option.textContent = labels ? labels[at] : String(value);
+        // A label that is not there falls back to the value, and never to nothing. The
+        // textContent setter takes a NULLABLE DOMString, so undefined becomes null and null
+        // becomes the empty string: handing it a label this page did not get produces a list
+        // of blank options rather than anything that says what went wrong. That is exactly
+        // what a newer page in front of an older server looked like -- see loadOptions.
+        const label = labels ? labels[at] : null;
+        option.textContent = label === undefined || label === null
+            ? String(value) : String(label);
         select.appendChild(option);
     });
 }
@@ -336,9 +358,22 @@ async function load() {
     fill($("kind"), options.kinds);
     fill($("newRole"), [""].concat(options.roles), ["No role"].concat(options.roles));
     fill($("grantRole"), options.roles);
-    fill($("newDepartment"), options.departments);
-    fill($("grantDepartment"), options.departments);
-    fill($("newPersonDepartment"), options.departments);
+    // What gets stored as the option's value, what a person reads as its text. A department
+    // is COMPUTER_SCIENCE in the column and "CS" on a timetable; see AccountsController.Choice.
+    //
+    // Either shape is accepted, because this page can be newer than the process serving it:
+    // static files are read off disk per request and classes are loaded once at startup, so
+    // a development restart that happens before a rebuild leaves a page from today talking to
+    // a controller from an hour ago. That one sent plain strings, and reading .label off a
+    // string gives undefined, which a <select> renders as a list of blanks.
+    const departments = options.departments.map((d) =>
+        typeof d === "string" ? {value: d, label: d} : d);
+
+    fill($("newDepartment"), departments.map((d) => d.value), departments.map((d) => d.label));
+    fill($("grantDepartment"), departments.map((d) => d.value),
+        departments.map((d) => d.label));
+    fill($("newPersonDepartment"), departments.map((d) => d.value),
+        departments.map((d) => d.label));
     fill($("newSession"), options.sessions);
     fill($("grantSession"), options.sessions);
 
@@ -392,7 +427,7 @@ async function refresh() {
             const tag = document.createElement("span");
             tag.className = "tag " + (grant.live ? "live" : "gone");
             tag.textContent = grant.role
-                + (grant.department ? " · " + grant.department : "")
+                + (grant.department ? " · " + departmentLabel(grant.department) : "")
                 + (grant.academicYear ? " · " + grant.academicYear : "");
 
             if (grant.live) {

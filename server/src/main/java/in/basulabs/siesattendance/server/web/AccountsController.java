@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Locale;
 
 import in.basulabs.siesattendance.backend.AccountKind;
+import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.server.importer.ServerIds;
 import in.basulabs.siesattendance.server.security.AccountDirectory;
 import in.basulabs.siesattendance.server.security.Passwords;
@@ -124,8 +125,20 @@ public final class AccountsController {
 	public record Revocation(@Nullable String reason) {
 	}
 
+	/**
+	 * One thing a form can offer: what gets stored, and what a person reads.
+	 * <p>
+	 * Both, rather than either. The value is what the column holds and what every policy and
+	 * query compares against, so it cannot be prettied up; the label is
+	 * {@code Department.toString()}, which that enum's own notes call "the only thing that
+	 * should ever be shown". A page that shows {@code COMPUTER_SCIENCE} is showing a column
+	 * name to a professor.
+	 */
+	public record Choice(@NonNull String value, @NonNull String label) {
+	}
+
 	/** What the forms need to offer, so that no list is written twice. */
-	public record Options(@NonNull List<String> departments, @NonNull List<Integer> sessions,
+	public record Options(@NonNull List<Choice> departments, @NonNull List<Integer> sessions,
 	                      @NonNull List<String> roles, @NonNull List<String> kinds) {
 	}
 
@@ -216,9 +229,12 @@ public final class AccountsController {
 
 			refuseUnlessAdmin(connection);
 
+			// The department comes back as its stored name and is labelled below rather than
+			// concatenated here: a picker that read "COMPUTER_SCIENCE - Assistant Professor"
+			// was showing a column's contents where it meant to show a department.
 			String sql = wanted == AccountKind.PROFESSOR
 					? "SELECT p.prof_id AS id, p.name, p.email, "
-							+ "p.department::text || ' - ' || p.designation AS detail "
+							+ "p.department::text AS department, p.designation "
 							+ "FROM professors p ORDER BY p.name"
 					: "SELECT s.student_id AS id, s.name, s.email, "
 							+ "(SELECT y.roll_no FROM student_year y "
@@ -234,7 +250,10 @@ public final class AccountsController {
 				while (results.next()) {
 					people.add(new Person(Long.toString(results.getLong("id")),
 							results.getString("name"), results.getString("email"),
-							results.getString("detail")));
+							wanted == AccountKind.PROFESSOR
+									? describe(results.getString("department"),
+											results.getString("designation"))
+									: results.getString("detail")));
 				}
 			}
 
@@ -260,7 +279,7 @@ public final class AccountsController {
 
 			refuseUnlessAdmin(connection);
 
-			List<String> departments = new ArrayList<>();
+			List<Choice> departments = new ArrayList<>();
 			List<Integer> sessions = new ArrayList<>();
 
 			try (Statement statement = connection.createStatement();
@@ -271,7 +290,16 @@ public final class AccountsController {
 							     + "ORDER BY e.enumsortorder")) {
 
 				while (results.next()) {
-					departments.add(results.getString(1));
+
+					String stored = results.getString(1);
+					Department known = Department.fromAny(stored);
+
+					// The database's list, labelled by the app's enum. In that order on
+					// purpose: a department exists because the type says so, and if SQL has
+					// one this build has never heard of, it is still offered -- under its
+					// stored name, which is the honest thing to show when there is no label.
+					departments.add(new Choice(stored,
+							known == null ? stored : known.toString()));
 				}
 			}
 
@@ -650,6 +678,16 @@ public final class AccountsController {
 			throw new ApiException(400, "not_a_key",
 					field + " has to be a whole number, as the picker sends it.");
 		}
+	}
+
+	/** How a professor is told apart from another of the same name: department, then post. */
+	@NonNull
+	private static String describe(@Nullable String department, @Nullable String designation) {
+
+		Department known = department == null ? null : Department.fromAny(department);
+
+		return (known == null ? String.valueOf(department) : known.toString())
+				+ (designation == null ? "" : " - " + designation);
 	}
 
 	/** A key on its way out, as text. See {@link Person}. */

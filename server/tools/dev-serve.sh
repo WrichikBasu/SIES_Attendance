@@ -51,6 +51,53 @@ holder() {
     ss -ltnp 2>/dev/null | awk -v port=":$PORT\$" '$4 ~ port {print $0}' | head -1
 }
 
+holder_pid() {
+    ss -ltnp 2>/dev/null | awk -v port=":$PORT\$" '$4 ~ port {print $0}' \
+        | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1
+}
+
+# Whether the build on disk is newer than the process serving it.
+#
+# The second half of the mistake this script exists to prevent, and it took a
+# second evening to learn. Spring serves src/main/resources/static off the
+# classpath DIRECTORY, read per request, so editing a page shows up without a
+# restart -- while the classes beside it were loaded once, at startup. A
+# rebuild without a restart therefore leaves today's page talking to an older
+# controller, and the route table is no help because the routes did not
+# change. What it looked like: a department dropdown of blank options, because
+# the page asked for a label the old controller had never heard of.
+staleness() {
+
+    local pid
+    pid="$(holder_pid)"
+
+    if [ -z "$pid" ] || [ ! -d "/proc/$pid" ]; then
+        echo "    (cannot tell which process holds the port, so cannot say whether it is"
+        echo "    this build; restart it with this script to be sure)"
+        return 0
+    fi
+
+    # /proc/<pid> is stamped with the moment the process started.
+    local newer
+    newer="$(find "$ROOT/server/build/classes/java/main" "$ROOT/shared/build/classes" \
+        -name '*.class' -newer "/proc/$pid" -print -quit 2>/dev/null)"
+
+    if [ -n "$newer" ]; then
+        echo
+        echo "    STALE: compiled classes are newer than the process on $PORT (pid $pid)."
+        echo "           The pages under static/ are read off disk and ARE current; the"
+        echo "           classes are not. A page that asks the server for something added"
+        echo "           since it started gets an older answer -- and the routes look"
+        echo "           identical, so nothing else here will tell you."
+        echo
+        echo "           kill $pid   then start it again."
+        return 1
+    fi
+
+    echo "    The process on $PORT started after the last compile, so it is this build."
+    return 0
+}
+
 if [ "${1:-}" = "--check" ]; then
     echo "==> what is answering on $PORT"
     curl -sS --fail-with-body --max-time 5 "$BASE/actuator/health" || {
@@ -60,7 +107,9 @@ if [ "${1:-}" = "--check" ]; then
     echo
     routes || echo "    (mappings are not exposed on this process, so it was not started by
     this script -- restart it with dev-serve.sh to be able to check it)"
-    exit 0
+    echo
+    staleness
+    exit $?
 fi
 
 if curl -sf --max-time 2 "$BASE/actuator/health" >/dev/null 2>&1; then

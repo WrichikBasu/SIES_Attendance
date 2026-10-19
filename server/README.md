@@ -180,6 +180,17 @@ refuses to start when the port is busy, and `--check` asks the running process f
 instead of asking whether it is alive. **A 404 from an endpoint you have just written is almost
 always this.**
 
+There is a second half to that trap, and it cost another evening. Spring serves
+`src/main/resources/static` off the classpath **directory**, read per request, while the classes
+beside it were loaded once at startup. So a rebuild without a restart leaves today's page talking
+to an older controller — and the route table cannot tell you, because the routes did not change.
+What it looked like: a department dropdown of blank options, because the page asked for a label
+the running build had never heard of, and `textContent` takes a nullable string, so `undefined`
+becomes `null` becomes `""`. `--check` now compares the compiled classes against the moment the
+process started and says `STALE` with the pid to kill. The pages are written to degrade rather
+than go blank — they accept either shape and fall back to the stored value — but the fix is a
+restart. **A page that shows nothing where it should show a list is almost always this.**
+
 The database is left empty on purpose and Flyway fills it. `baseline-on-migrate` is false,
 so the service refuses a database that already has the schema but no Flyway history — which
 is what you get if you apply the SQL by hand. `MIGRATE=1 ./server/tools/dev-database.sh
@@ -1125,7 +1136,7 @@ administrator, the office account, an auditor and a head of department come into
 
 ```
 GET  /api/v1/accounts                                    who exists and what they hold
-GET  /api/v1/accounts/options                            departments and sessions, from the database
+GET  /api/v1/accounts/options                            departments (stored name and label) and sessions
 GET  /api/v1/accounts/people?kind=PROFESSOR|STUDENT      who an account can be attached to
 POST /api/v1/accounts                                    an account, and optionally a role with it
 POST /api/v1/accounts/{id}/roles                         a role
@@ -1192,6 +1203,15 @@ list and never from the request.
 Paging is by primary key, row-wise, the same mechanism the sync snapshot resumes with and for the
 same reason: an offset is wrong as soon as a row is inserted behind you. Values are rendered as
 text, provenance columns included — this is for reading, not a format for something to parse.
+
+**Enums are shown as what they are called, not as what they are stored as.** A department column
+holds `COMPUTER_SCIENCE`; on a timetable it is "CS", and `Department.toString()` is the app's own
+answer to what to call it, so the page uses that and the phone and the browser cannot drift apart.
+The labels travel *beside* the rows — `labels` on the page response, column by column — rather
+than substituted into them: the rows stay exactly what the table holds, and the stored value is on
+the cell as its tooltip, dotted so you know to look. A data browser that quietly replaced the data
+would be the wrong trade for prettier reading. A value this build has no label for, which is what
+a department added in SQL ahead of the app looks like, shows as the stored name.
 
 ## The first administrator
 

@@ -77,6 +77,8 @@
     th { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
          color: var(--ink-3); position: sticky; top: 0; background: var(--card); }
     td.null { color: var(--ink-3); font-style: italic; }
+    /* A labelled enum: dotted, because hovering it shows what is stored. */
+    td.named { border-bottom: 1px dotted var(--line); cursor: help; }
     .say { padding: 0.6rem 0.8rem; border-radius: 7px; margin-bottom: 1rem;
            font-size: 0.9rem; display: none; }
     .say.bad { display: block; background: #fdecee; color: var(--bad); }
@@ -280,13 +282,24 @@ async function show(table, after) {
 
         page.rows.forEach((row) => {
             const tr = document.createElement("tr");
-            row.forEach((value) => {
+            row.forEach((value, at) => {
                 const td = document.createElement("td");
                 if (value === null) {
                     td.textContent = "null";
                     td.className = "null";
                 } else {
-                    td.textContent = value;
+                    // An enum column shows what the value is called, with what is stored on
+                    // the cell itself: COMPUTER_SCIENCE is a column's contents and "CS" is
+                    // what a professor calls it, and a data browser that hid the first would
+                    // not be showing the data. Labels come from the app's own enums; see
+                    // DataController.PageBody.
+                    const named = (page.labels || {})[page.columns[at]];
+                    const label = named ? named[value] : null;
+                    td.textContent = label || value;
+                    if (label && label !== value) {
+                        td.title = value;
+                        td.className = "named";
+                    }
                 }
                 tr.appendChild(td);
             });

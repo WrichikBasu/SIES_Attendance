@@ -16,8 +16,10 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import in.basulabs.siesattendance.backend.sync.DeviceTables;
@@ -66,9 +68,18 @@ public final class DataController {
 	 *                obvious text form and inventing a JSON shape for each would be a format
 	 *                for somebody to parse, which this is not
 	 * @param next    the cursor for the next page, or null when this was the last
+	 * @param labels  for each column that holds an enum, what each stored value is called:
+	 *                {@code {"department": {"COMPUTER_SCIENCE": "CS"}}}. Sent beside the rows
+	 *                rather than substituted into them, which is the point — the rows stay
+	 *                exactly what the table holds, and the page shows the label with the
+	 *                stored value on the cell as its tooltip. A browser that showed
+	 *                {@code COMPUTER_SCIENCE} was showing a column's contents to a professor;
+	 *                one that quietly replaced it would be showing a data browser that does
+	 *                not show the data
 	 */
 	public record PageBody(@NonNull String table, @NonNull List<String> columns,
-	                       @NonNull List<List<String>> rows, @Nullable String next) {
+	                       @NonNull List<List<String>> rows, @Nullable String next,
+	                       @NonNull Map<String, Map<String, String>> labels) {
 	}
 
 	/** Enough to read, few enough that a browser renders it without complaint. */
@@ -211,11 +222,49 @@ public final class DataController {
 				}
 			}
 
-			return new PageBody(table, columns, rows, next);
+			return new PageBody(table, columns, rows, next, labels(described, columns));
 		});
 	}
 
 	// ── Internals ────────────────────────────────────────────────────────
+
+	/**
+	 * What each enum value in these columns is called, for the columns that hold one.
+	 * <p>
+	 * The labels are the app's own — {@code Department.toString()} and the rest — so the
+	 * browser and the phone call a department the same thing, and renaming one renames both.
+	 * Columns the table description does not know (the provenance ones, which {@code SELECT *}
+	 * also returns) simply are not in the map, and nor are the enums a build is too old to
+	 * know, which is why the page falls back to the stored value rather than to nothing.
+	 */
+	@NonNull
+	private static Map<String, Map<String, String>> labels(
+			@NonNull DeviceTables.Table described, @NonNull List<String> columns) {
+
+		Map<String, Map<String, String>> labels = new LinkedHashMap<>();
+
+		for (String name : columns) {
+
+			for (DeviceTables.Column column : described.carriedColumns()) {
+
+				if (!name.equals(column.postgres())
+						|| column.kind() != DeviceTables.Kind.ENUM
+						|| column.enumType() == null) {
+					continue;
+				}
+
+				Map<String, String> named = new LinkedHashMap<>();
+
+				for (Enum<?> constant : column.enumType().getEnumConstants()) {
+					named.put(constant.name(), constant.toString());
+				}
+
+				labels.put(name, named);
+			}
+		}
+
+		return labels;
+	}
 
 	/**
 	 * The tables this endpoint will read, from the database rather than from a list here.

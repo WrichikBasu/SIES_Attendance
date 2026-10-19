@@ -1190,7 +1190,10 @@ class WireTest {
 		assertEquals(Department.values().length, options.body().get("departments").size(),
 				options::toString);
 		assertEquals(Department.values()[0].name(),
-				options.body().get("departments").get(0).stringValue());
+				options.body().get("departments").get(0).get("value").stringValue());
+		assertEquals(Department.values()[0].toString(),
+				options.body().get("departments").get(0).get("label").stringValue(),
+				"stored name and label, because a form needs both");
 
 		assertEquals(2, options.body().get("sessions").size(), "the fixture has two");
 		assertEquals(4, options.body().get("roles").size());
@@ -1205,6 +1208,10 @@ class WireTest {
 
 		assertEquals(200, professors.status(), professors::toString);
 		assertEquals(3, professors.body().size(), professors::toString);
+
+		// The department a person reads, not the one the column holds.
+		assertTrue(professors.raw().contains("CS - Assistant Professor"), professors.raw());
+		assertFalse(professors.raw().contains("COMPUTER_SCIENCE"), professors.raw());
 
 		Reply students = get("/accounts/people?kind=STUDENT", token, null);
 
@@ -1236,6 +1243,57 @@ class WireTest {
 						|| page.raw().contains("sessionStorage.setItem")
 						|| page.raw().contains("document.cookie"),
 				"the token lives in a variable and is meant to die with the tab");
+	}
+
+	// ── What a person reads ─────────────────────────────────────────────
+
+	@Test
+	void everyDepartmentOfferedCarriesItsLabelAndItsStoredName() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply options = get("/accounts/options", token, null);
+
+		assertEquals(200, options.status(), options::toString);
+
+		// The value is the column's, the label is the enum's. COMPUTER_SCIENCE is what every
+		// policy compares against and "CS" is what it is called on a timetable; a form has to
+		// send the first and show the second.
+		assertTrue(options.raw().contains(
+						"{\"value\":\"COMPUTER_SCIENCE\",\"label\":\"CS\"}"),
+				options.raw());
+
+		// Every department the type has, labelled, in the type's own order.
+		assertEquals(count("SELECT count(*) FROM pg_enum e JOIN pg_type t "
+						+ "ON t.oid = e.enumtypid WHERE t.typname = 'department'"),
+				options.body().get("departments").size());
+
+		for (var department : options.body().get("departments")) {
+			assertFalse(department.get("label").stringValue().isBlank(),
+					"an unlabelled department would show as nothing at all");
+		}
+	}
+
+	@Test
+	void theDataBrowserSendsLabelsBesideTheRowsAndNotInsteadOfThem() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply page = get("/data/professors", token, null);
+
+		assertEquals(200, page.status(), page::toString);
+
+		// The rows are what the table holds, unchanged: this is a data browser, and one that
+		// substituted labels into the rows would not be showing the data.
+		assertTrue(page.raw().contains("COMPUTER_SCIENCE"),
+				"the stored value still travels: " + page.raw());
+
+		assertEquals("CS", page.body().get("labels").get("department")
+				.get("COMPUTER_SCIENCE").stringValue());
+
+		// Only the enum columns, and none of the provenance ones SELECT * also returns.
+		assertTrue(page.body().get("labels").path("created_at").isMissingNode(),
+				"a timestamp has no labels");
 	}
 
 	// ── Keys on the wire ────────────────────────────────────────────────
