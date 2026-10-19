@@ -676,6 +676,29 @@ in `network_security_config.xml` so the platform applies it to every request rat
 ones that remembered the right socket factory, and a WorkManager job triggered by Room's
 invalidation tracker whenever the outbox changes.
 
+### A register needs a session, and nothing else does
+
+A build that has a server asks for a sign-in before the first register can be marked: attendance
+is attributed on the server to the account that sent it, and collecting marks that the server will
+later refuse is worse than asking once. `SignInGuard` is the only place that decides it, and the
+rule is a conjunction — **a server is configured** and **this device has no session** — so a
+release build with no `sync_base_url` is not blocked, because there would be nothing to sign in
+to and the app would simply stop working.
+
+It is not a connectivity check and must never become one. A session is a token on the device;
+having one is the whole question. Marking a register in a basement with no signal works exactly as
+it did, which is the requirement the design is built around.
+
+What that costs, stated plainly: if a device's session is revoked or expires and the server
+answers 401, the app forgets the token, and that professor cannot mark another register until they
+sign in again. A 401 means the server was reachable, so signing in is possible at that moment —
+but it does mean revoking a device mid-term stops it taking attendance, which is a real
+consequence of making attribution a precondition rather than a hope.
+
+Not gated: importing an attendance CSV, restoring a backup, and editing a register that already
+exists. Those are corrections and recoveries rather than new observations, and a device that has
+lost its session should still be able to hand its history over.
+
 ### Pointing a phone at a development server
 
 A debug build and a release build get different resources, and that is the whole mechanism — no
@@ -689,11 +712,18 @@ app/src/debug/res/xml/…                  cleartext allowed, no pin-set
 ```
 
 `10.0.2.2` is how the emulator reaches the machine it runs on. For a real device on the same
-network, put that machine's address in the debug overlay instead:
+network, put that machine's **wifi** address in the debug overlay instead. Ask for the address this
+machine would answer the phone from, rather than for "its address", which it has several of:
 
 ```sh
-ip route get 1 | awk '{print $7; exit}'      # e.g. 10.14.0.2
+ip route get 192.168.0.42 | grep -oP 'src \K\S+'    # the phone's address; prints e.g. 192.168.0.10
 ```
+
+`ip route get 1` is the wrong question and this file told you to ask it for a while: it names the
+address on the default route, which is the VPN interface whenever a VPN is connected, and nothing
+on the wifi can reach that. If a phone that is plainly on the same network cannot connect, a VPN on
+this machine is the first thing to suspect — some clients route or drop local traffic, and a
+split-tunnel or local-network exception is the setting to look for.
 
 Then: start the database and the service, open **Sync with the server** on the dashboard, and sign
 in. The screen shows the device's node once it has one and how many changes are waiting.
@@ -714,12 +744,23 @@ anchor in the app for a key on somebody's laptop.
 Worth having, because it is the thing to try when the phone cannot sync and it tells you which
 half is wrong:
 
+Use `-sS --fail-with-body`, not `-s`. With plain `-s` a server that is not running produces no
+output at all and no error, and the next command in the pipeline gets an empty string: a
+`json.decoder.JSONDecodeError: Expecting value: line 1 column 1` from a command that pipes into
+`python3 -c` almost always means the service was down, not that anything was refused. An actual
+refusal is JSON and says so: `{"code":"sign_in_refused", …}` with a 401.
+
 ```sh
 INSTALL=$(python3 -c 'import uuid; print(uuid.uuid4())')
 
+# 0. Is it even up? Do this first, every time.
+curl -sS --fail-with-body localhost:8080/actuator/health
+
 # 1. Sign in, with the install id. deviceNode comes back null for an install
 #    the server has not seen, which is what makes SyncSignIn register next.
-curl -s -X POST localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' \
+#    -w prints the status, because a body alone cannot tell you a 401 from a 200.
+curl -sS --fail-with-body -w '\nHTTP %{http_code}\n' \
+  -X POST localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' \
   -d "{\"email\":\"you@sies.edu.in\",\"door\":\"STAFF\",\"password\":\"…\",\"installId\":\"$INSTALL\"}"
 
 # 2. Register it. The node comes back here, and signing in again returns it

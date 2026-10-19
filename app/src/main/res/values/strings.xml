@@ -768,4 +768,17 @@
         is a connection, so marking a register never needs a signal. Nothing is removed from
         this phone until the server has it.</string>
 
+    <!--
+        Shown when somebody starts a register on a build that has a server but has no
+        session. Worth saying both halves: why it is being asked, and that it is asked
+        once rather than every time, because a professor who thinks attendance now needs
+        a signal will stop trusting the app in the one place it matters.
+    -->
+    <string name="title_sign_in_required">Sign in to take attendance</string>
+    <string name="message_sign_in_required">Attendance has to reach the server under your
+        name, so this phone needs you to sign in once before a register can be marked. After
+        that it works with no signal at all: marks are saved here first and sent whenever
+        there is a connection.</string>
+    <string name="action_not_now">Not now</string>
+
 </resources>

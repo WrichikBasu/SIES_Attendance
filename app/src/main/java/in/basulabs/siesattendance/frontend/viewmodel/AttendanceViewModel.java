@@ -408,6 +408,17 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return DeviceIdentity.hasToken(getApplication());
 	}
 
+	/**
+	 * Whether this build has a server at all.
+	 * <p>
+	 * Empty in a release build until somebody configures one, and what
+	 * {@code SignInGuard} consults before insisting on a session: there is no asking somebody to
+	 * sign in to nowhere.
+	 */
+	public boolean hasServer() {
+		return new SyncClient(getApplication()).isConfigured();
+	}
+
 	/** The last thing that went wrong while syncing, or null. */
 	@Nullable
 	public String lastSyncError() {

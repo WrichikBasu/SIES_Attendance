@@ -7,6 +7,7 @@ import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -38,6 +39,7 @@ import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.pojo.AttendanceRow;
 import in.basulabs.siesattendance.frontend.adapter.AdapterAttendance;
+import in.basulabs.siesattendance.frontend.util.SignInGuard;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -161,6 +163,17 @@ public class FragmentTakeAttendance extends Fragment {
 		super.onViewCreated(view, savedInstanceState);
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
+
+		if (SignInGuard.mustSignIn(viewModel.hasServer(), viewModel.isSignedIn())) {
+			// Checked here as well as at every route in. Three screens start a register today
+			// and a fourth will be added by somebody who has not read SignInGuard; this is the
+			// one check that cannot be forgotten, because it is on the screen itself. It also
+			// covers a session that ended while this screen was open behind another.
+			Toast.makeText(requireContext(), R.string.title_sign_in_required,
+					Toast.LENGTH_LONG).show();
+			Navigation.findNavController(view).popBackStack();
+			return;
+		}
 
 		actvCourse = view.findViewById(R.id.actvCourse);
 		actvBatch = view.findViewById(R.id.actvBatch);

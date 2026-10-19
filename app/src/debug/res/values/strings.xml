@@ -12,15 +12,21 @@
         reaches the machine it is running on; the service listens on 8080.
 
         FOR A REAL DEVICE on the same network, put this machine's address
-        here instead, with the same port:
+        on the wifi here instead, with the same port. Ask for the address
+        this machine would answer the phone from:
 
-            ip route get 1 | awk '{print $7; exit}'
+            ip route get PHONE_ADDRESS | grep -oP 'src \K\S+'
+
+        where PHONE_ADDRESS is what the phone's wifi settings show. Do
+        NOT use "ip route get 1": that names the address on the default
+        route, which is a VPN interface whenever one is connected, and no
+        phone on the wifi can reach it.
 
         http, not https, and that is why the network config beside this
         file permits cleartext for debug builds. The development server
         has no certificate, and pinning one that does not exist is not a
         thing that can be done.
     -->
-    <string name="sync_base_url" translatable="false">http://10.0.2.2:8080/api/v1</string>
+    <string name="sync_base_url" translatable="false">http://192.168.0.10:8080/api/v1</string>
 
 </resources>

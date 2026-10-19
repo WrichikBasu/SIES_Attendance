@@ -12,6 +12,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
+import androidx.navigation.NavController;
 import androidx.navigation.Navigation;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -44,6 +45,7 @@ import in.basulabs.siesattendance.backend.util.LectureFilter;
 import in.basulabs.siesattendance.frontend.adapter.AdapterLecture;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
+import in.basulabs.siesattendance.frontend.util.SignInGuard;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -154,9 +156,15 @@ public class FragmentLectureList extends Fragment {
 		recyclerView.setAdapter(adapter);
 
 		FloatingActionButton fab = view.findViewById(R.id.fabAddLecture);
-		fab.setOnClickListener(v -> Navigation.findNavController(
-						requireParentFragment().requireView())
-				.navigate(R.id.action_coursesHub_to_takeAttendance));
+		fab.setOnClickListener(v -> {
+
+			// The hub's controller, not this fragment's: this list lives inside a pager.
+			NavController navigation = Navigation.findNavController(
+					requireParentFragment().requireView());
+
+			SignInGuard.ifAllowed(this, viewModel, navigation,
+					() -> navigation.navigate(R.id.action_coursesHub_to_takeAttendance));
+		});
 
 		view.findViewById(R.id.btnFilterPeriod).setOnClickListener(v -> showPeriodChooser());
 

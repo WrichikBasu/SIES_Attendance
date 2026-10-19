@@ -36,6 +36,7 @@ import in.basulabs.siesattendance.backend.pojo.LectureDetails;
 import in.basulabs.siesattendance.backend.util.MarkSheetExporter;
 import in.basulabs.siesattendance.frontend.adapter.AdapterLecture;
 import in.basulabs.siesattendance.frontend.util.MarkExportFlow;
+import in.basulabs.siesattendance.frontend.util.SignInGuard;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -100,12 +101,14 @@ public class FragmentAttendancePicker extends Fragment {
 		// The day being browsed travels with the tap. This screen exists to look at one day at
 		// a time, so a sheet started from it means that day, not today; read at click time
 		// rather than captured, since the arrows and the calendar move it.
-		view.findViewById(R.id.fabTakeAttendance).setOnClickListener(v -> {
-			Bundle args = new Bundle();
-			args.putLong(FragmentTakeAttendance.ARG_DATE, selectedDate.toEpochDay());
-			Navigation.findNavController(v)
-					.navigate(R.id.action_attendancePicker_to_takeAttendance, args);
-		});
+		view.findViewById(R.id.fabTakeAttendance).setOnClickListener(v ->
+				SignInGuard.ifAllowed(this, viewModel, Navigation.findNavController(v), () -> {
+
+					Bundle args = new Bundle();
+					args.putLong(FragmentTakeAttendance.ARG_DATE, selectedDate.toEpochDay());
+					Navigation.findNavController(v)
+							.navigate(R.id.action_attendancePicker_to_takeAttendance, args);
+				}));
 
 		MaterialButton prev = view.findViewById(R.id.btnPrevDay);
 		MaterialButton next = view.findViewById(R.id.btnNextDay);

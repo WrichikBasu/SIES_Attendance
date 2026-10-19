@@ -5,6 +5,14 @@
     android:id="@+id/nav_graph"
     app:startDestination="@id/fragmentDashboard">
 
+    <!--
+        Reachable from anywhere, because the sign-in prompt can come up on any screen that
+        starts a register: the dashboard, a course's lecture list, or the day picker.
+    -->
+    <action
+        android:id="@+id/action_global_sync"
+        app:destination="@id/fragmentSync" />
+
     <fragment
         android:id="@+id/fragmentDashboard"
         android:name="in.basulabs.siesattendance.frontend.FragmentDashboard"
