@@ -32,10 +32,16 @@ import in.basulabs.siesattendance.backend.sync.DeviceTables;
  * the node field however close the clocks are, and letting a phone with a fast clock drag this
  * counter forward would make server keys claim a creation time that never happened.
  *
+ * <h3>Not only the importer's any more</h3>
+ * Public because the accounts endpoint needs it too: a professor created from the administration
+ * page is a row the server invented, and it has to be keyed the same way as every other row the
+ * server invented. The alternative was a second minter with the same job, which is how two things
+ * that must agree stop agreeing.
+ *
  * @see StructuredId for the layout itself
  * @see in.basulabs.siesattendance.backend.IdGenerator the app's equivalent, on a device
  */
-final class ServerIds {
+public final class ServerIds {
 
 	/** Time and sequence of the last key issued, which is what climbs. */
 	private final AtomicLong lastCounter = new AtomicLong(0L);
@@ -46,7 +52,7 @@ final class ServerIds {
 	 * @throws SQLException if the database cannot be read, which has to stop the import rather
 	 *                      than let it mint from a floor of zero
 	 */
-	void primeFrom(@NonNull Connection connection) throws SQLException {
+	public void primeFrom(@NonNull Connection connection) throws SQLException {
 
 		StringBuilder sql = new StringBuilder("SELECT MAX(highest) FROM (");
 		boolean first = true;
@@ -93,7 +99,7 @@ final class ServerIds {
 	}
 
 	/** A fresh key under the server's node. */
-	long next() {
+	public long next() {
 		return StructuredId.compose(nextCounter(), StructuredId.SERVER_NODE);
 	}
 

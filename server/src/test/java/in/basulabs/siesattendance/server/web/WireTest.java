@@ -40,6 +40,7 @@ import java.util.UUID;
 import java.util.stream.Stream;
 
 import in.basulabs.siesattendance.backend.AccountKind;
+import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.StructuredId;
 import in.basulabs.siesattendance.server.SiesAttendanceServer;
 import in.basulabs.siesattendance.server.security.AccountDirectory;
@@ -858,6 +859,617 @@ class WireTest {
 		assertTrue(reply.body().get("errors").get(0).stringValue()
 						.contains("Missing required column"),
 				reply.body().get("errors").toString());
+	}
+
+	@Test
+	void aDeviceThatLearnsItsOldNodeIsListenedTo() throws Exception {
+
+		// The case a rebuilt database creates: the phone registered once without reporting the
+		// node it had picked for itself -- older builds only reported it while it was still
+		// current -- and now reports it. The node it was assigned stands, because taking a
+		// second one would attribute half its rows to a device that is really the same one.
+		// The provisional number is filled in, because it is the only thing that explains the
+		// keys written before registration and without it they cannot be pushed.
+		String token = tokenFor("a.cs@sies.edu.in", "STAFF");
+		UUID install = UUID.randomUUID();
+
+		Reply first = register(token, null, install, null, "Pixel 7a");
+
+		assertEquals(200, first.status(), first::toString);
+		int node = first.body().get("node").intValue();
+
+		assertEquals(1, count("SELECT count(*) FROM device_registration "
+				+ "WHERE install_id = '" + install + "' AND provisional_node IS NULL"));
+
+		// The install header, because the first registration bound this session to the device:
+		// from then on every request has to name it. That binding is the point of V8's
+		// device_session_binding, and a test that forgot the header got a 401 rather than the
+		// answer it was looking for.
+		Reply again = register(token, install, install, 37498, "Pixel 7a");
+
+		assertEquals(200, again.status(), again::toString);
+		assertEquals(node, again.body().get("node").intValue(),
+				"the assigned node stands: a second one would split this phone in two");
+		assertTrue(again.body().get("alreadyRegistered").booleanValue());
+
+		assertEquals(1, count("SELECT count(*) FROM device_registration "
+						+ "WHERE install_id = '" + install + "' AND provisional_node = 37498"),
+				"and the number it used before is now on record");
+	}
+
+	@Test
+	void aRecordedProvisionalNodeIsNotRewritten() throws Exception {
+
+		String token = tokenFor("a.cs@sies.edu.in", "STAFF");
+		UUID install = UUID.randomUUID();
+
+		assertEquals(200, register(token, null, install, 41000, "Pixel 7a").status());
+		assertEquals(200, register(token, install, install, 59999, "Pixel 7a").status(),
+				"the install header, because registering bound the session to this device");
+
+		assertEquals(1, count("SELECT count(*) FROM device_registration "
+						+ "WHERE install_id = '" + install + "' AND provisional_node = 41000"),
+				"the first number was reported while it was still current, which is the "
+						+ "better evidence; a later one must not overwrite it");
+	}
+
+	// ── Accounts and roles ───────────────────────────────────────────────
+
+	/*
+	 * The administration endpoints, and what they refuse. The refusals are the point: an
+	 * account is an authority rather than a record about somebody, so every one of these is
+	 * about who may hand one out.
+	 */
+
+	@Test
+	void anAdminCreatesAnAccountAndGrantsItARoleInOneRequest() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply created = post("/accounts", json(
+				"kind", "STAFF",
+				"displayName", "D AUDIT",
+				"loginEmail", "audit@sies.edu.in",
+				"password", "a long enough opening password",
+				"role", "AUDITOR"), token, null);
+
+		assertEquals(200, created.status(), created::toString);
+
+		long accountId = created.body().get("accountId").longValue();
+
+		assertTrue(created.body().get("mustRotate").booleanValue(),
+				"whoever typed the opening password must not be the person who ends up "
+						+ "knowing it");
+		assertEquals("AUDITOR",
+				created.body().get("roles").get(0).get("role").stringValue());
+
+		assertEquals(1, count("SELECT count(*) FROM app_account WHERE account_id = "
+				+ accountId));
+		assertEquals(1, count("SELECT count(*) FROM user_role WHERE account_id = " + accountId
+						+ " AND role = 'AUDITOR' AND revoked_at IS NULL AND granted_by = "
+						+ accountAdmin),
+				"the grant names who made it, which is what makes it answerable");
+
+		// Both rows are in the audit log against the admin, written by the triggers rather
+		// than by the endpoint.
+		assertEquals(2, count("SELECT count(*) FROM audit_log WHERE action = 'INSERT' "
+						+ "AND table_name IN ('app_account', 'user_role') "
+						+ "AND actor_account = " + accountAdmin),
+				"an account and its role are two rows and two entries");
+
+		// And it can sign in, and is told to change the password before anything else.
+		Reply signedIn = login("audit@sies.edu.in", "STAFF",
+				"a long enough opening password", null);
+
+		assertEquals(200, signedIn.status(), signedIn::toString);
+		assertTrue(signedIn.body().get("mustRotate").booleanValue());
+	}
+
+	@Test
+	void anAccountAndItsRoleArriveTogetherOrNotAtAll() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		// A head of department with no department: the grant cannot be written, and the
+		// account must not be either.
+		Reply refused = post("/accounts", json(
+				"kind", "STAFF",
+				"displayName", "E HEAD",
+				"loginEmail", "ehead@sies.edu.in",
+				"password", "a long enough opening password",
+				"role", "HOD"), token, null);
+
+		assertEquals(400, refused.status(), refused::toString);
+		assertEquals("incomplete_grant", refused.body().get("code").stringValue());
+
+		assertEquals(0, count("SELECT count(*) FROM app_account "
+						+ "WHERE login_email = 'ehead@sies.edu.in'"),
+				"half of \"create an auditor\" is a login that can do nothing and nobody "
+						+ "knows why");
+	}
+
+	@Test
+	void aProfessorMayNotCreateAccountsOrReadTheList() throws Exception {
+
+		String token = tokenFor("a.cs@sies.edu.in", "STAFF");
+
+		Reply created = post("/accounts", json(
+				"kind", "STAFF",
+				"displayName", "F NOBODY",
+				"loginEmail", "nobody@sies.edu.in",
+				"password", "a long enough opening password"), token, null);
+
+		assertEquals(403, created.status(), created::toString);
+		assertEquals("not_allowed", created.body().get("code").stringValue());
+
+		assertEquals(403, get("/accounts", token, null).status(),
+				"the list is a list of who can do what, which is not a teaching matter");
+		assertEquals(403, get("/accounts/options", token, null).status());
+
+		assertEquals(0, count("SELECT count(*) FROM app_account "
+				+ "WHERE login_email = 'nobody@sies.edu.in'"));
+	}
+
+	@Test
+	void theOfficeMayNotCreateAccountsEither() throws Exception {
+
+		// Stated as a test because it is the line most likely to move: onboarding is office
+		// work in most colleges, and V12 is one line if that is what is wanted. Until then
+		// the behaviour is what the file says it is.
+		String token = tokenFor("office@sies.edu.in", "STAFF");
+
+		Reply created = post("/accounts", json(
+				"kind", "STAFF",
+				"displayName", "G OFFICE MADE",
+				"loginEmail", "officemade@sies.edu.in",
+				"password", "a long enough opening password"), token, null);
+
+		assertEquals(403, created.status(), created::toString);
+	}
+
+	@Test
+	void oneAddressMayHoldAStaffAccountAndAStudentAccountButNotTwoOfEither()
+			throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply duplicate = post("/accounts", json(
+				"kind", "STAFF",
+				"displayName", "H CLASH",
+				"loginEmail", "admin@sies.edu.in",
+				"password", "a long enough opening password"), token, null);
+
+		assertEquals(409, duplicate.status(), duplicate::toString);
+		assertEquals("email_taken", duplicate.body().get("code").stringValue());
+
+		// The same address on the other door is a different account, which is what the
+		// unique index says and what the two login screens are for.
+		Reply student = post("/accounts", json(
+				"kind", "STUDENT",
+				"studentId", STUDENT_OTHER,
+				"displayName", "S SHAH",
+				"loginEmail", "admin@sies.edu.in",
+				"password", "a long enough opening password"), token, null);
+
+		assertEquals(200, student.status(), student::toString);
+	}
+
+	@Test
+	void anAccountHasToNameThePersonItIsForAndStaffNameNobody() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply noProfessor = post("/accounts", json(
+				"kind", "PROFESSOR",
+				"displayName", "I NOBODY",
+				"loginEmail", "iprof@sies.edu.in",
+				"password", "a long enough opening password"), token, null);
+
+		assertEquals(400, noProfessor.status(), noProfessor::toString);
+		assertEquals("needs_person", noProfessor.body().get("code").stringValue());
+
+		Reply staffWithPerson = post("/accounts", json(
+				"kind", "STAFF",
+				"profId", PROF_CS,
+				"displayName", "J STAFF",
+				"loginEmail", "jstaff@sies.edu.in",
+				"password", "a long enough opening password"), token, null);
+
+		assertEquals(400, staffWithPerson.status(), staffWithPerson::toString);
+		assertEquals("staff_has_nobody", staffWithPerson.body().get("code").stringValue());
+	}
+
+	@Test
+	void anOpeningPasswordIsHeldToTheSameLengthAsAnyOther() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply weak = post("/accounts", json(
+				"kind", "STAFF",
+				"displayName", "K WEAK",
+				"loginEmail", "kweak@sies.edu.in",
+				"password", "short"), token, null);
+
+		assertEquals(400, weak.status(), weak::toString);
+		assertEquals("weak_password", weak.body().get("code").stringValue());
+	}
+
+	@Test
+	void aCollegeWideRoleTakesNoDepartmentAndAHeadTakesBoth() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply scoped = post("/accounts/" + accountOffice + "/roles",
+				json("role", "AUDITOR", "department", "CHEMISTRY"), token, null);
+
+		assertEquals(400, scoped.status(), scoped::toString);
+		assertEquals("scoped_grant", scoped.body().get("code").stringValue());
+
+		Reply head = post("/accounts/" + accountProfChem + "/roles",
+				json("role", "HOD", "department", "CHEMISTRY", "academicYear", SESSION),
+				token, null);
+
+		assertEquals(200, head.status(), head::toString);
+		assertEquals(1, count("SELECT count(*) FROM user_role WHERE account_id = "
+				+ accountProfChem + " AND role = 'HOD' AND department = 'CHEMISTRY' "
+				+ "AND academic_year = " + SESSION));
+	}
+
+	@Test
+	void revokingARoleKeepsTheGrantAndStopsThePower() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		long grantId = row("SELECT user_role_id FROM user_role WHERE account_id = "
+				+ accountOffice + " AND role = 'OFFICE'").get("user_role_id") == null
+						? 0L
+						: Long.parseLong(row("SELECT user_role_id FROM user_role "
+								+ "WHERE account_id = " + accountOffice
+								+ " AND role = 'OFFICE'").get("user_role_id"));
+
+		Reply revoked = post("/accounts/" + accountOffice + "/roles/" + grantId + "/revoke",
+				json("reason", "left the registry"), token, null);
+
+		assertEquals(200, revoked.status(), revoked::toString);
+		assertFalse(revoked.body().get("live").booleanValue());
+
+		assertEquals(1, count("SELECT count(*) FROM user_role WHERE user_role_id = " + grantId
+						+ " AND revoked_at IS NOT NULL AND revoked_by = " + accountAdmin),
+				"a grant is revoked and never deleted: who held what and when has to stay "
+						+ "answerable");
+
+		// And it takes effect at once, on the next request rather than the next sign-in.
+		assertEquals(403, postCsv("/roster?year=" + SESSION, "rollNo,name\n",
+						tokenFor("office@sies.edu.in", "STAFF")).status(),
+				"the roster was theirs a moment ago");
+
+		// Revoking it twice is not an error the second time round, it is a 404: there is no
+		// live grant to revoke.
+		assertEquals(404, post("/accounts/" + accountOffice + "/roles/" + grantId + "/revoke",
+				json("reason", "again"), token, null).status());
+	}
+
+	@Test
+	void theListSaysWhoHoldsWhatAndNeverAHash() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+		Reply listed = get("/accounts", token, null);
+
+		assertEquals(200, listed.status(), listed::toString);
+		assertTrue(listed.body().size() >= 6, listed::toString);
+
+		assertFalse(listed.raw().contains("argon2"),
+				"a password hash has no business leaving the database, and the encoding "
+						+ "names itself");
+		assertFalse(listed.raw().contains("passwordHash"), listed::toString);
+
+		boolean foundTheAdmin = false;
+
+		for (JsonNode account : listed.body()) {
+
+			if (account.get("accountId").longValue() == accountAdmin) {
+				foundTheAdmin = true;
+				assertEquals("ADMIN",
+						account.get("roles").get(0).get("role").stringValue());
+			}
+		}
+
+		assertTrue(foundTheAdmin, listed::toString);
+	}
+
+	@Test
+	void theFormsAreOfferedTheDatabasesOwnDepartmentsAndSessions() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+		Reply options = get("/accounts/options", token, null);
+
+		assertEquals(200, options.status(), options::toString);
+
+		// From the department enum itself, so a department added in a migration appears
+		// without anybody editing a list in a web page.
+		assertEquals(Department.values().length, options.body().get("departments").size(),
+				options::toString);
+		assertEquals(Department.values()[0].name(),
+				options.body().get("departments").get(0).stringValue());
+
+		assertEquals(2, options.body().get("sessions").size(), "the fixture has two");
+		assertEquals(4, options.body().get("roles").size());
+	}
+
+	@Test
+	void thePeoplePickerOffersProfessorsAndStudentsAndNotStaff() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply professors = get("/accounts/people?kind=PROFESSOR", token, null);
+
+		assertEquals(200, professors.status(), professors::toString);
+		assertEquals(3, professors.body().size(), professors::toString);
+
+		Reply students = get("/accounts/people?kind=STUDENT", token, null);
+
+		assertEquals(200, students.status(), students::toString);
+		assertEquals(2, students.body().size(), students::toString);
+		assertTrue(students.raw().contains("CS-FY-001"),
+				"the roll number is how a person is told from another of the same name");
+
+		assertEquals(400, get("/accounts/people?kind=STAFF", token, null).status(),
+				"a staff account is attached to nobody, so there is no list");
+	}
+
+	@Test
+	void theAdministrationPageIsServedWithoutAToken() throws Exception {
+
+		// The filter guards /api/* and nothing else, which is deliberate: the page is a
+		// static file and holds no data. Everything it shows, it fetches with a token.
+		Reply page = send(HttpRequest.newBuilder(
+				URI.create("http://localhost:" + port + "/accounts.html")).GET(),
+				null, null);
+
+		assertEquals(200, page.status());
+		assertTrue(page.raw().contains("SIES Attendance"), "the page itself");
+
+		// Mentioning it is fine -- the page says in a comment why it does not use it. What
+		// must not appear is a write: a token in storage outlives the person walking away
+		// from the machine, and survives the tab that was supposed to end the session.
+		assertFalse(page.raw().contains("localStorage.setItem")
+						|| page.raw().contains("sessionStorage.setItem")
+						|| page.raw().contains("document.cookie"),
+				"the token lives in a variable and is meant to die with the tab");
+	}
+
+	// ── Creating the person with the account ─────────────────────────────
+
+	@Test
+	void aProfessorWhoIsNotOnTheServerYetIsCreatedWithTheirAccount() throws Exception {
+
+		// The gap a fresh server has: nothing in this service could write a professors row, so
+		// there were no professors, so there could be no professor accounts. The page could
+		// only say "nobody on file yet".
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply created = post("/accounts", json(
+				"kind", "PROFESSOR",
+				"displayName", "N NEW",
+				"loginEmail", "nnew@sies.edu.in",
+				"password", "a long enough opening password",
+				"person", Map.of(
+						"name", "N NEW",
+						"email", "nnew@sies.edu.in",
+						"department", "PHYSICS",
+						"designation", "Assistant Professor")), token, null);
+
+		assertEquals(200, created.status(), created::toString);
+
+		long profId = created.body().get("profId").longValue();
+
+		assertTrue(StructuredId.isStructured(profId),
+				"a row the server invented has to be keyed the way the server keys rows");
+		assertEquals(0, StructuredId.nodeOf(profId),
+				"under node 0, which is what tells it apart from a phone's row for ever");
+
+		assertEquals(1, count("SELECT count(*) FROM professors WHERE prof_id = " + profId
+				+ " AND department = 'PHYSICS'"));
+		assertEquals(1, count("SELECT count(*) FROM app_account WHERE prof_id = " + profId));
+
+		// Both rows are in the audit log against the admin who made them.
+		assertEquals(2, count("SELECT count(*) FROM audit_log WHERE action = 'INSERT' "
+				+ "AND table_name IN ('professors', 'app_account') "
+				+ "AND actor_account = " + accountAdmin));
+	}
+
+	@Test
+	void aProfessorsRowIsNotLeftBehindByAnAccountThatFails() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		// The email is already a staff account's, so the account insert is refused after the
+		// professors row has been written. One transaction, so neither survives.
+		Reply refused = post("/accounts", json(
+				"kind", "PROFESSOR",
+				"displayName", "O CLASH",
+				"loginEmail", "admin@sies.edu.in",
+				"password", "a long enough opening password",
+				"person", Map.of(
+						"name", "O CLASH",
+						"email", "oclash@sies.edu.in",
+						"department", "PHYSICS",
+						"designation", "Professor")), token, null);
+
+		assertEquals(409, refused.status(), refused::toString);
+		assertEquals(0, count("SELECT count(*) FROM professors "
+						+ "WHERE email = 'oclash@sies.edu.in'"),
+				"a name in the staff list that nobody asked for and nothing points at");
+	}
+
+	@Test
+	void aStudentIsNotCreatableThisWayAndTheAnswerSaysWhere() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply refused = post("/accounts", json(
+				"kind", "STUDENT",
+				"displayName", "P PUPIL",
+				"loginEmail", "ppupil@sies.edu.in",
+				"password", "a long enough opening password",
+				"person", Map.of(
+						"name", "P PUPIL",
+						"email", "ppupil@sies.edu.in",
+						"department", "PHYSICS",
+						"designation", "n/a")), token, null);
+
+		assertEquals(400, refused.status(), refused::toString);
+		assertEquals("only_professors", refused.body().get("code").stringValue());
+
+		Reply noStudent = post("/accounts", json(
+				"kind", "STUDENT",
+				"displayName", "P PUPIL",
+				"loginEmail", "ppupil@sies.edu.in",
+				"password", "a long enough opening password"), token, null);
+
+		assertEquals(400, noStudent.status(), noStudent::toString);
+		assertTrue(noStudent.body().get("message").stringValue().contains("roster CSV"),
+				"an error that does not say where to go instead is half an error: "
+						+ noStudent.body().get("message"));
+	}
+
+	// ── Reading the data ─────────────────────────────────────────────────
+
+	/*
+	 * The browser endpoint has no authority rules of its own, which is the whole design: every
+	 * row comes back from a query under the caller's own actor, so these tests are really about
+	 * whether the policies reach a generic reader the same way they reach a purpose-built one.
+	 */
+
+	@Test
+	void theTableListCountsOnlyWhatTheCallerMaySee() throws Exception {
+
+		Reply asAdmin = get("/data", tokenFor("admin@sies.edu.in", "STAFF"), null);
+
+		assertEquals(200, asAdmin.status(), asAdmin::toString);
+		assertEquals(11, asAdmin.body().size(), "every table a device holds");
+
+		Map<String, Long> admin = new LinkedHashMap<>();
+
+		for (JsonNode table : asAdmin.body()) {
+			admin.put(table.get("table").stringValue(), table.get("rows").longValue());
+		}
+
+		assertEquals(2L, admin.get("students"));
+		assertEquals(2L, admin.get("lectures"));
+
+		// The same question, asked by a professor, is a different answer and both are right.
+		Reply asProfessor = get("/data", tokenFor("a.cs@sies.edu.in", "STAFF"), null);
+		Map<String, Long> professor = new LinkedHashMap<>();
+
+		for (JsonNode table : asProfessor.body()) {
+			professor.put(table.get("table").stringValue(), table.get("rows").longValue());
+		}
+
+		assertEquals(1L, professor.get("students"), "the one student on their own roll");
+		assertEquals(1L, professor.get("lectures"), "their own lecture");
+		assertEquals(1L, professor.get("courses"));
+	}
+
+	@Test
+	void aProfessorBrowsingStudentsSeesTheirOwnRollAndNoOther() throws Exception {
+
+		Reply rows = get("/data/students", tokenFor("a.cs@sies.edu.in", "STAFF"), null);
+
+		assertEquals(200, rows.status(), rows::toString);
+		assertEquals(1, rows.body().get("rows").size(), rows::toString);
+
+		assertTrue(rows.raw().contains("R RAO"));
+		assertFalse(rows.raw().contains("S SHAH"),
+				"a Chemistry major is on nobody's Computer Science roll");
+
+		// Rendered as text, which is what a reader wants: the columns are the table's own, in
+		// the table's own order, provenance included.
+		assertTrue(rows.body().get("columns").toString().contains("created_at"),
+				rows.body().get("columns").toString());
+	}
+
+	@Test
+	void aTableWithNoPoliciesIsNotBrowsable() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		// app_account has no policies -- V6 says why -- so a generic reader over it would be a
+		// data leak with a user interface. It is not on the list, so it is not reachable.
+		Reply refused = get("/data/app_account", token, null);
+
+		assertEquals(404, refused.status(), refused::toString);
+		assertEquals("no_such_table", refused.body().get("code").stringValue());
+
+		assertEquals(404, get("/data/audit_log", token, null).status(),
+				"and the log the service cannot even read");
+		assertEquals(404, get("/data/pg_user", token, null).status());
+	}
+
+	@Test
+	void pagingWalksEveryRowOnceAndThenStops() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		// One row at a time, which is the setting most likely to expose an off-by-one in the
+		// cursor: the first version of this endpoint took the cursor from the row it did not
+		// send, which would have skipped one row per page.
+		List<String> seen = new ArrayList<>();
+		String after = null;
+
+		for (int page = 0; page < 10; page++) {
+
+			Reply rows = get("/data/students?limit=1"
+					+ (after == null ? "" : "&after="
+							+ java.net.URLEncoder.encode(after, StandardCharsets.UTF_8)),
+					token, null);
+
+			assertEquals(200, rows.status(), rows::toString);
+
+			for (JsonNode row : rows.body().get("rows")) {
+				seen.add(row.get(0).stringValue());
+			}
+
+			if (rows.body().get("next").isNull()) {
+				break;
+			}
+
+			after = rows.body().get("next").stringValue();
+		}
+
+		assertEquals(2, seen.size(), "both students, once each: " + seen);
+		assertEquals(seen.size(), new java.util.LinkedHashSet<>(seen).size(), seen.toString());
+	}
+
+	@Test
+	void aCursorThisEndpointDidNotIssueIsRefused() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		assertEquals(400, get("/data/students?after=yesterday", token, null).status());
+		assertEquals(400, get("/data/attendance?after=1", token, null).status(),
+				"attendance is keyed on two columns, so a one-part cursor is not one of ours");
+	}
+
+	@Test
+	void thereIsNoBrowsingWithoutASession() throws Exception {
+
+		Reply refused = get("/data", null, null);
+
+		assertEquals(401, refused.status(), refused::toString);
+		assertEquals("unauthenticated", refused.body().get("code").stringValue());
+	}
+
+	@Test
+	void theDataPageIsServedWithoutAToken() throws Exception {
+
+		Reply page = send(HttpRequest.newBuilder(
+				URI.create("http://localhost:" + port + "/data.html")).GET(), null, null);
+
+		assertEquals(200, page.status());
+		assertTrue(page.raw().contains("SIES Attendance"));
+		assertFalse(page.raw().contains("localStorage.setItem")
+				|| page.raw().contains("document.cookie"));
 	}
 
 	// ── The shape of the thing ───────────────────────────────────────────

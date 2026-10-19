@@ -21,6 +21,17 @@
 #     them back, and the statements the phone runs are the ones the
 #     shared description says they are.
 #
+#   * PullApplyTest -- every table in the feed, written into a real
+#     device database, with foreign keys on as Room has them. A handset
+#     found both of the things this now guards, and both had the same
+#     symptom: a page that cannot be applied is a watermark that never
+#     moves, and "sync failed" is all the phone can say. First, a pulled
+#     academic_years row could not be written at all, because startEpoch
+#     is NOT NULL on the device and the server does not keep it. Then a
+#     pulled row the device already had could not be written either,
+#     because INSERT OR REPLACE deletes before it inserts and the
+#     device's own rows point at it with RESTRICT.
+#
 #   * PullOrderTest -- the order a pulled page is applied in, which
 #     became load-bearing when V11 widened the feed from two tables to
 #     eleven: Room's foreign keys are RESTRICT, so a lecture written
@@ -44,7 +55,8 @@ fi
 
 echo "==> running both halves"
 "$ROOT/gradlew" -p "$ROOT" :server:test --rerun \
-  --tests '*SyncTest*' --tests '*OutboxTriggerTest*' --tests '*DeviceSqlTest*'
+  --tests '*SyncTest*' --tests '*OutboxTriggerTest*' --tests '*DeviceSqlTest*' \
+  --tests '*PullApplyTest*'
 
 "$ROOT/gradlew" -p "$ROOT" :app:testDebugUnitTest --rerun \
   --tests '*PullOrderTest*'
@@ -64,6 +76,7 @@ wanted: Dict[str, Dict[str, int]] = {
     "SyncTest": {"tests": 0, "failures": 0, "skipped": 0},
     "OutboxTriggerTest": {"tests": 0, "failures": 0, "skipped": 0},
     "DeviceSqlTest": {"tests": 0, "failures": 0, "skipped": 0},
+    "PullApplyTest": {"tests": 0, "failures": 0, "skipped": 0},
     "PullOrderTest": {"tests": 0, "failures": 0, "skipped": 0},
 }
 

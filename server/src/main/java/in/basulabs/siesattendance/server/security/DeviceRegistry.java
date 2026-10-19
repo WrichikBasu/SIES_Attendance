@@ -77,6 +77,30 @@ public final class DeviceRegistry {
 	}
 
 	/**
+	 * Records the node an install used before it registered, if nothing is recorded yet.
+	 * <p>
+	 * {@code WHERE provisional_node IS NULL}, so this cannot rewrite history: a number already
+	 * there was reported when it was still current and is the better evidence. The clash count
+	 * is deliberately not recalculated — it was counted at registration, against the devices
+	 * that existed then, and a number computed later would mean something different while
+	 * looking the same.
+	 */
+	private static void rememberProvisionalNode(@NonNull Connection connection,
+	                                            @NonNull UUID install, int provisionalNode)
+			throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"UPDATE device_registration SET provisional_node = ? "
+						+ "WHERE install_id = ? AND provisional_node IS NULL "
+						+ "AND revoked_at IS NULL")) {
+
+			statement.setInt(1, provisionalNode);
+			statement.setObject(2, install);
+			statement.executeUpdate();
+		}
+	}
+
+	/**
 	 * Registers an install, or returns the node it already had.
 	 * <p>
 	 * On the caller's transaction, which must already have had an actor announced on it: the
@@ -93,6 +117,17 @@ public final class DeviceRegistry {
 		Registered existing = resolve(connection, install);
 
 		if (existing != null) {
+
+			// Already registered, so the node stands -- taking a second one would attribute
+			// half this phone's rows to a device that is really the same one. But a device
+			// that can now say what node it used before registering, and whose row does not
+			// record one, is worth listening to: that number is the only thing that explains
+			// the keys it wrote back then, and without it they cannot be pushed. Filled when
+			// blank and never overwritten, so a recorded clash stays recorded.
+			if (provisionalNode != null) {
+				rememberProvisionalNode(connection, install, provisionalNode);
+			}
+
 			return existing;
 		}
 

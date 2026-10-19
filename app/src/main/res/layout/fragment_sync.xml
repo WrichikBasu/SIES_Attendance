@@ -135,6 +135,14 @@
                 android:text="@string/action_sync_now" />
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnResendEverything"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/action_resend_everything" />
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnSignOut"
                 style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="match_parent"

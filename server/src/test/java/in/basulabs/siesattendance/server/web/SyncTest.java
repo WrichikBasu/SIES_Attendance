@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -283,6 +285,54 @@ class SyncTest {
 	}
 
 	@Test
+	void theRowsAPhoneMadeBeforeItRegisteredAreItsOwn() throws Exception {
+
+		// The defect a handset found, and the worst shape one can have: a phone that had been
+		// taking attendance for a term was pointed at a server, and every row it held was
+		// refused because the keys carried the node it had picked for itself before
+		// registering. V11 had made that refusal final, so the device dropped the intents and
+		// reported a sync that moved nothing. Measured on the real thing: node 1 assigned,
+		// provisional node 37498, and the only row that arrived was the one table whose key no
+		// device issues.
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+		long lectureID = phone.keyFromBefore(700);
+
+		assertTrue(StructuredId.nodeOf(lectureID) != phone.node,
+				"the whole point: a key from before the node was assigned");
+
+		Reply pushed = push(phone, List.of(lectureIntent(lectureID, COURSE_CS, 9),
+				attendanceIntent(lectureID, STUDENT_CS, true)));
+
+		assertEquals(200, pushed.status(), pushed::toString);
+		assertEquals(2, pushed.body().get("accepted").intValue(), pushed::toString);
+
+		assertEquals(1, count("SELECT count(*) FROM lectures WHERE lecture_id = " + lectureID));
+		assertEquals(1, count("SELECT count(*) FROM attendance WHERE lecture_id = "
+				+ lectureID));
+	}
+
+	@Test
+	void aProvisionalNodeThatIsNotThisDevicesIsStillRefused() throws Exception {
+
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+		Phone other = signInWithAPhone("b.chem@sies.edu.in");
+
+		// Another install's self-picked node. Accepting the device's own prior node must not
+		// become accepting the whole self-picked half of the range.
+		long foreign = StructuredId.compose(StructuredId.MIN_COUNTER + 710, other.provisional);
+
+		Reply pushed = push(phone, List.of(lectureIntent(foreign, COURSE_CS, 9)));
+
+		assertEquals(200, pushed.status(), pushed::toString);
+		assertEquals(0, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertTrue(pushed.body().get("rejected").get(0).get("reason").stringValue()
+						.contains("no such row here"),
+				pushed.body().get("rejected").toString());
+
+		assertEquals(0, count("SELECT count(*) FROM lectures"));
+	}
+
+	@Test
 	void anotherDevicesRowMayBeAmendedWhenItIsAlreadyThere() throws Exception {
 
 		// One professor, two phones -- a new handset, or a tablet for the laboratory. The
@@ -428,6 +478,74 @@ class SyncTest {
 	}
 
 	@Test
+	void aRowPointingAtAnUnsyncableParentIsRefusedForGoodAndSaysWhy() throws Exception {
+
+		// What a phone whose database predates the id scheme sends: an enrolment keyed on a
+		// student numbered 1. That student cannot be pushed -- a key counted out from 1 by
+		// SQLite means nothing off the device -- so the enrolment can never land, and what
+		// arrived before this was a foreign key error that the device kept and retried on
+		// every sync, a hundred rows at a time, for ever.
+		Phone phone = signInWithAPhone("office@sies.edu.in");
+
+		Map<String, Object> enrolment = new LinkedHashMap<>();
+		enrolment.put("studentID", 1L);
+		enrolment.put("academicYear", (long) SESSION);
+		enrolment.put("rollNo", "CS-FY-900");
+		enrolment.put("year", "FY");
+		enrolment.put("stream", "BSc_unaided");
+		enrolment.put("majorDept", "COMPUTER_SCIENCE");
+		enrolment.put("minorDept", null);
+		enrolment.put("oeDept", null);
+		enrolment.put("semester", 1L);
+		enrolment.put("division", null);
+
+		Reply pushed = push(phone, List.of(intent("student_year",
+				List.of(1L, (long) SESSION), "UPSERT", enrolment)));
+
+		assertEquals(200, pushed.status(), pushed::toString);
+		assertEquals(0, pushed.body().get("accepted").intValue(), pushed::toString);
+
+		JsonNode refusal = pushed.body().get("rejected").get(0);
+
+		assertTrue(refusal.get("permanent").booleanValue(),
+				"waiting for a parent that can never be pushed is waiting for ever: "
+						+ refusal);
+		assertTrue(refusal.get("reason").stringValue().contains("backup import"),
+				"and the sentence has to say what to do instead: " + refusal);
+		assertTrue(refusal.get("reason").stringValue().contains("studentID 1"), refusal::toString);
+	}
+
+	@Test
+	void aParentThatIsHereIsFineWhateverItsKeyLooksLike() throws Exception {
+
+		// The other half of the rule. A server whose rows came from a backup import or a
+		// roster CSV has them keyed under node 0, and this fixture inserts them by hand, so a
+		// parent that is present must not be judged by the shape of its key -- a device
+		// holding that key got it from a pull.
+		Phone phone = signInWithAPhone("office@sies.edu.in");
+
+		Map<String, Object> enrolment = new LinkedHashMap<>();
+		enrolment.put("studentID", STUDENT_CS);
+		enrolment.put("academicYear", (long) SESSION);
+		enrolment.put("rollNo", "CS-FY-001");
+		enrolment.put("year", "FY");
+		enrolment.put("stream", "BSc_unaided");
+		enrolment.put("majorDept", "COMPUTER_SCIENCE");
+		enrolment.put("minorDept", null);
+		enrolment.put("oeDept", null);
+		enrolment.put("semester", 2L);
+		enrolment.put("division", null);
+
+		Reply pushed = push(phone, List.of(intent("student_year",
+				List.of(STUDENT_CS, (long) SESSION), "UPSERT", enrolment)));
+
+		assertEquals(200, pushed.status(), pushed::toString);
+		assertEquals(1, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertEquals(2, count("SELECT semester FROM student_year WHERE student_id = "
+				+ STUDENT_CS + " AND academic_year = " + SESSION));
+	}
+
+	@Test
 	void aMarkWhoseLectureHasNotArrivedIsKeptRatherThanDropped() throws Exception {
 
 		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
@@ -507,6 +625,73 @@ class SyncTest {
 		assertEquals(2, pushed.body().get("accepted").intValue(), pushed::toString);
 		assertEquals(0, count("SELECT count(*) FROM lectures"));
 		assertEquals(0, count("SELECT count(*) FROM attendance"));
+	}
+
+	@Test
+	void whatTheServerMayLeaveNullTheDeviceMayLeaveNullToo() throws Exception {
+
+		// The other half of the lesson a handset taught: a column the server can send as null
+		// and the device declares NOT NULL is a row that cannot be written, which is a pull
+		// that cannot move its watermark, which is a sync that never finishes. PullApplyTest
+		// checks the shape of a row the server sends; this checks the two descriptions of
+		// every column agree about nullability in the direction that matters.
+		List<String> wrong = new ArrayList<>();
+
+		try (Connection connection = postgres.connection()) {
+
+			for (String name : syncedTables(connection)) {
+
+				DeviceTables.Table table = DeviceTables.of(name);
+
+				for (DeviceTables.Column column : table.carriedColumns()) {
+
+					boolean postgresAllowsNull = "YES".equals(nullability(connection, name,
+							column.postgres()));
+
+					if (postgresAllowsNull && !column.nullable()) {
+						wrong.add(name + "." + column.postgres() + " is nullable in PostgreSQL "
+								+ "and DeviceTables says it is not");
+					}
+				}
+			}
+		}
+
+		assertTrue(wrong.isEmpty(), String.join("\n", wrong));
+	}
+
+	@NonNull
+	private static List<String> syncedTables(@NonNull Connection connection)
+			throws SQLException {
+
+		List<String> tables = new ArrayList<>();
+
+		try (Statement statement = connection.createStatement();
+		     ResultSet results = statement.executeQuery(
+				     "SELECT unnest(synced_tables())")) {
+
+			while (results.next()) {
+				tables.add(results.getString(1));
+			}
+		}
+		return tables;
+	}
+
+	@Nullable
+	private static String nullability(@NonNull Connection connection, @NonNull String table,
+	                                  @NonNull String column) throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT is_nullable FROM information_schema.columns "
+						+ "WHERE table_schema = current_schema() AND table_name = ? "
+						+ "  AND column_name = ?")) {
+
+			statement.setString(1, table);
+			statement.setString(2, column);
+
+			try (ResultSet results = statement.executeQuery()) {
+				return results.next() ? results.getString(1) : null;
+			}
+		}
 	}
 
 	// ── The pull ─────────────────────────────────────────────────────────
@@ -903,11 +1088,19 @@ class SyncTest {
 	// ── A phone ──────────────────────────────────────────────────────────
 
 	/** A signed-in, registered device: a token, an install and the node it was issued. */
-	private record Phone(String token, UUID install, int node) {
+	private record Phone(String token, UUID install, int node, int provisional) {
 
 		/** A key this device would issue, distinct per {@code n}. */
 		long key(int n) {
 			return StructuredId.compose(StructuredId.MIN_COUNTER + n, node);
+		}
+
+		/**
+		 * A key this device issued before it registered, under the node it had picked for
+		 * itself. On a phone that has been in use for a term, every key looks like this.
+		 */
+		long keyFromBefore(int n) {
+			return StructuredId.compose(StructuredId.MIN_COUNTER + n, provisional);
 		}
 	}
 
@@ -916,9 +1109,14 @@ class SyncTest {
 		String token = tokenFor(email);
 		UUID install = UUID.randomUUID();
 
+		// The node this phone picked for itself before it had ever spoken to a server, which
+		// is what every row it created up to now carries. Kept, because that is the whole
+		// point of sending it: registration is the only chance to record it.
+		int provisional = 40000 + (int) (Math.random() * 20000);
+
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("installId", install.toString());
-		body.put("provisionalNode", 40000 + (int) (Math.random() * 20000));
+		body.put("provisionalNode", provisional);
 		body.put("label", email + "'s phone");
 
 		Reply registered = send(HttpRequest.newBuilder(
@@ -929,7 +1127,8 @@ class SyncTest {
 
 		assertEquals(200, registered.status(), registered::toString);
 
-		return new Phone(token, install, registered.body().get("node").intValue());
+		return new Phone(token, install, registered.body().get("node").intValue(),
+				provisional);
 	}
 
 	private String tokenFor(String email) throws Exception {

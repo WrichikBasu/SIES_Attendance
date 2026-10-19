@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 
 import in.basulabs.siesattendance.backend.StoredTimes;
+import in.basulabs.siesattendance.backend.sync.DeviceDerived;
 import in.basulabs.siesattendance.backend.sync.DeviceSql;
 import in.basulabs.siesattendance.backend.sync.DeviceTables;
 import in.basulabs.siesattendance.backend.sync.OutboxTriggers;
@@ -205,11 +206,43 @@ class DeviceSqlTest {
 		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
 
 			prepare(DeviceSql.selectRow(table));
-			prepare(DeviceSql.upsertRow(table));
+			prepare(DeviceSql.insertRow(table));
 			prepare(DeviceSql.deleteRow(table));
 
-			assertEquals(table.carriedColumns().size(), DeviceSql.upsertColumns(table).size(),
+			// The invariant that matters is that the caller binds exactly as many values as
+			// the statement has placeholders, in the statement's own order. It used to be
+			// stated as "as many as the server carries", which stopped being true when
+			// academic_years gained the two columns the device derives: DeviceSql names
+			// those as well, because startEpoch is NOT NULL here and absent there.
+			assertEquals(placeholdersIn(DeviceSql.insertRow(table)),
+					DeviceSql.insertColumns(table).size(), table.name());
+
+			assertEquals(table.carriedColumns().size()
+							+ DeviceDerived.columnsOf(table).size(),
+					DeviceSql.insertColumns(table).size(), table.name());
+
+			// And the same for the statement that runs first. Null for the three tables that
+			// are nothing but their key, where there is no column to set.
+			String update = DeviceSql.updateRow(table);
+
+			if (update == null) {
+				assertEquals(table.primaryKey().size(), DeviceSql.updateColumns(table).size(),
+						table.name() + ": a table with nothing to set is its key");
+				assertTrue(DeviceSql.insertRow(table).startsWith("INSERT OR IGNORE"),
+						table.name() + ": a membership the device has is not an error");
+				continue;
+			}
+
+			prepare(update);
+
+			assertEquals(placeholdersIn(update), DeviceSql.updateColumns(table).size(),
 					table.name());
+
+			// The update names every column the insert does, once: the ones it sets, then the
+			// ones it finds the row by. A column that fell out of both lists would be a column
+			// the pull had silently stopped writing.
+			assertEquals(DeviceSql.insertColumns(table).size(),
+					DeviceSql.updateColumns(table).size(), table.name());
 		}
 	}
 
@@ -250,20 +283,33 @@ class DeviceSqlTest {
 		}
 	}
 
-	/** What applying a pulled row does. */
+	/** What applying a pulled row does: change it where it is, insert it where it is not. */
 	private void applyRow(DeviceTables.Table table, Map<String, Object> row)
 			throws SQLException {
 
-		try (PreparedStatement statement = connection.prepareStatement(
-				DeviceSql.upsertRow(table))) {
+		String update = DeviceSql.updateRow(table);
 
-			List<DeviceTables.Column> columns = DeviceSql.upsertColumns(table);
+		if (update != null && run(update, DeviceSql.updateColumns(table), row) > 0) {
+			return;
+		}
+
+		run(DeviceSql.insertRow(table), DeviceSql.insertColumns(table), row);
+	}
+
+	private int run(String sql, List<DeviceTables.Column> columns, Map<String, Object> row)
+			throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(sql)) {
 
 			for (int at = 0; at < columns.size(); at++) {
 				statement.setObject(at + 1, row.get(columns.get(at).room()));
 			}
-			statement.executeUpdate();
+			return statement.executeUpdate();
 		}
+	}
+
+	private static long placeholdersIn(String sql) {
+		return sql.chars().filter(character -> character == '?').count();
 	}
 
 	private void prepare(String sql) throws SQLException {

@@ -7,9 +7,11 @@ yet; the two query builders are translations of the app's own, checked by runnin
 comparing the rows; the importer reads a device's own encrypted backup and folds it in,
 resolving every row before it writes one.
 
-The service answers eight endpoints under `/api/v1` — sign in, change a password, sign out,
+The service answers thirteen endpoints under `/api/v1` — sign in, change a password, sign out,
 register a device, export a register, load a roster, push a device's changes, pull what it has not
-seen — and a bearer token is the only way to reach any of them. The app is behind one interface
+seen, and five for accounts and the roles on them — and a bearer token is the only way to reach any
+of them. There is one web page, for account administration, and it is a static file that uses those
+same endpoints. The app is behind one interface
 now, keeps Room as its cache, and queues every local change in an outbox its own database fills
 with triggers. Every table a device holds crosses the wire, and which rows may be read or written
 is decided by row-level security rather than by anything in Java.
@@ -27,6 +29,8 @@ server/
     web/DeviceController.java           a node number per install, idempotently
     web/ExportController.java           the register, narrowed to what you may export
     web/RosterController.java           a CSV in, students and student_year out
+    web/AccountsController.java         accounts, and the roles on them
+    web/DataController.java             reading the data, under the caller's policies
     web/SyncController.java             push what a phone has, pull what it has not
     web/LoginRateLimiter.java           attempts per address, in memory
     web/ApiAdvice.java                  every error as one shape
@@ -47,6 +51,7 @@ server/
     security/AccountDirectory.java      accounts, lockout, rotation, two doors
     security/ActorSession.java          who is acting, for one transaction
     security/BootstrapCommand.java      the first administrator, once
+    security/Roles.java                 granting and revoking, never deleting
     security/AuditLog.java              the events no trigger can see
     security/Sessions.java              opaque bearer tokens, revocable
     security/DeviceRegistry.java        which install is which
@@ -69,6 +74,11 @@ server/
     db/migration/V9__device_schema_v11.sql    a backup may now say 11
     db/migration/V10__sync.sql          the change feed, over the audit log
     db/migration/V11__roster_reachability.sql  policies on the other nine tables
+    db/migration/V12__account_administration.sql  who may create an account
+    db/migration/V13__provisional_node_push.sql   the node a device used before it had one
+  src/main/resources/static/
+    accounts.html                       the administration page, no build step
+    data.html                           reading the data, read-only
   src/test/java/.../sql/SqlDumpTest.java         writes every statement for the differ
   src/test/java/.../importer/BackupImporterTest.java   14 tests, against a real database
   src/test/java/.../importer/DeviceBackup.java   builds a genuine .siesbak
@@ -81,6 +91,7 @@ server/
   src/test/java/.../web/SyncTest.java            29 tests, the server half of sync
   src/test/java/.../importer/OutboxTriggerTest.java   11 tests, against real SQLite
   src/test/java/.../importer/DeviceSqlTest.java  5 tests, the phone's own statements
+  src/test/java/.../importer/PullApplyTest.java  4 tests, every table into a device database
   src/test/java/.../testing/TestPostgres.java    the throwaway container, shared
   src/test/sql/constraint_smoke_test.sql    52 assertions, 35 of them rejections
   tools/verify-schema.sh                a throwaway container, checked and removed
@@ -90,6 +101,7 @@ server/
   tools/verify-wire.sh                  the endpoints, over real HTTP
   tools/verify-sync.sh                  both halves of sync, as far as a JVM reaches
   tools/dev-database.sh                 a local database that survives a restart
+  tools/dev-serve.sh                    the service, and proof it is this build
   tools/roles.sql                       the three roles and what each may do
 ```
 
@@ -154,10 +166,19 @@ python3 app/src/test/sql/sql_differ.py
 ```sh
 ./server/tools/dev-database.sh            # roles and an empty database, ~15 seconds
 eval "$(./server/tools/dev-database.sh --env)"
-./gradlew :server:bootRun                 # Flyway applies both migrations on first start
-curl -s localhost:8080/actuator/health
+./server/tools/dev-serve.sh               # Flyway applies the migrations on first start
+./server/tools/dev-serve.sh --check       # what is answering, and which routes it has
 ./server/tools/dev-database.sh --reset    # throw it away
 ```
+
+`dev-serve.sh` rather than `bootRun` directly, for a reason learned twice the hard way. A
+`bootRun` whose port is taken fails with `Port 8080 was already in use` and **leaves the old
+process serving** — which answers `/actuator/health` exactly as a new one would, serves the new
+static pages straight off disk, and 404s every endpoint added since it started. A stale server is
+therefore indistinguishable from a fresh one by the check everybody reaches for first. The script
+refuses to start when the port is busy, and `--check` asks the running process for its route table
+instead of asking whether it is alive. **A 404 from an endpoint you have just written is almost
+always this.**
 
 The database is left empty on purpose and Flyway fills it. `baseline-on-migrate` is false,
 so the service refuses a database that already has the schema but no Flyway history — which
@@ -187,10 +208,26 @@ export SIES_BACKUP_PASSWORD='the backup password'
     --import.file=$PWD/server/build/sample/sample-device.siesbak \
     --import.label='Dr Rao phone' \
     --import.node=41231 \
+    --import.account=1 \
     --import.dry-run=true"
 ```
 
 Then drop `--import.dry-run` to keep it. `--import.history=true` lists every run.
+
+All four lines of that matter, and three of them are easy to leave off:
+
+* **The `eval` and the `gradlew` have to be in the same shell.** A variable exported in one
+  shell does not reach the next one, and without `DB_OWNER_PASSWORD` the run fails with
+  `FATAL: password authentication failed for user "sies_owner"` — which reads as a wrong
+  password and is not one. The service refuses to start without the variables now and says
+  which; see the finding.
+* **`--import.account` is the administrator doing the import.** Without it the run dies on the
+  first lecture, because `lectures` and `attendance` are FORCEd and an import with no actor
+  cannot satisfy their `WITH CHECK`. `select account_id from app_account` has the number.
+* **`--import.node` is this phone, not the example's.** 41231 is the sample device's. A real
+  phone's assigned node is in `device_registration.node`, which is also the number the app's
+  diagnostics screen shows, and it has to be the same number every time that phone is imported
+  — `id_remap` is keyed by it.
 
 Paths are resolved against `server/`, because that is where `bootRun` puts the process, so
 give an absolute one.
@@ -799,9 +836,11 @@ says plainly that the two have not been joined on a phone.
 
 ## Findings
 
-Twenty-four things. The first four came out of the translation in Phase 2, the next three out of
-building the importer, three more out of Phase 4, two out of Phase 5, four out of Phase 5.5 and
-eight out of Phase 6. All but one of the first seven are about the app rather than the schema; the rest are
+Thirty-one things. The first four came out of the translation in Phase 2, the next three out of
+building the importer, three more out of Phase 4, two out of Phase 5, four out of Phase 5.5, nine
+out of Phase 6 — one of those found on a handset rather than by anything here — two from
+building the administration pages, and two from importing a real phone's backup and then letting
+that phone sync again. All but one of the first seven are about the app rather than the schema; the rest are
 about this schema and this service, which is what happens once they start making decisions of
 their own.
 
@@ -1006,6 +1045,40 @@ sqlite-jdbc answers an `Integer` for the same column, so a row read by what the 
 row whose keys may not compare equal to the ones the server sends back. Columns are read by what
 they *are* — `DeviceSql.readsAsText`, over `DeviceTables.Kind` — rather than by asking the cursor.
 
+**A variable nobody exported is indistinguishable from a wrong password.** `application.yml`
+writes the two database passwords as `${DB_APP_PASSWORD}` and `${DB_OWNER_PASSWORD}` with no
+default, which is right: a development default is a service that quietly connects to something.
+But Spring's binder passes a placeholder it cannot resolve through *unchanged*, so what Flyway
+offers PostgreSQL is the literal twenty characters `${DB_OWNER_PASSWORD}`, and PostgreSQL answers
+`FATAL: password authentication failed for user "sies_owner"` with SQLSTATE 28P01. Every instinct
+that message provokes is wrong — the roles are intact, the container is the right one, the
+password is the one it always was — because the shell running `./gradlew` simply was not the shell
+`dev-database.sh --env` was eval'd into. `main` now refuses to start without the credentials and
+names the ones it wants, before Spring builds a single bean; `StartupCredentialsTest` holds the
+rules, including the two cases where a password is legitimately absent: the `bootstrap` profile,
+which connects as the owner, and `spring.flyway.enabled=false`, which is how the tests run against
+a schema `psql` has already applied.
+
+**`INSERT OR REPLACE` is a delete, and a delete can be refused.** It is what Room's
+`OnConflictStrategy.REPLACE` compiles to, so it looked like the right way to write a pulled row:
+whatever is there, the server's version wins. REPLACE means *delete the row that is there, then
+insert this one* — and every foreign key on the device is `RESTRICT`, so deleting a row the
+device's own rows point at is refused. The phone could not accept the server's copy of a lecture
+it had marks against: `FOREIGN KEY constraint failed (code 1811 SQLITE_CONSTRAINT_TRIGGER)`, the
+1811 being the internal trigger RESTRICT is implemented with. The page rolled back, the watermark
+never moved, every later page queued behind it, and the only thing the phone could say was "sync
+failed" — the same shape as the `academic_years` jam, from a different cause. It appeared the
+moment a device's backup was imported here, because the importer keeps a structured key, so the
+next pull sent that phone its own lectures back. The pull now runs `UPDATE … WHERE` *key* first
+and inserts only when that matched nothing, which changes the row in place and leaves the
+children pointing at it. SQLite counts a row the `WHERE` matched as changed even when every
+value is identical, so "matched nothing" means "is not here" and nothing else; `ON CONFLICT … DO
+UPDATE` would say it in one statement and cannot be used, because it arrived in SQLite 3.24 and
+the app supports API 26. The three tables that are nothing but their key get `INSERT OR IGNORE`
+instead, since there is no column to set. `PullApplyTest` now runs with `PRAGMA foreign_keys =
+ON`, which is the actual reason it did not catch this: the fixture had them off, and with them
+off REPLACE is harmless.
+
 ## Where the importer deliberately differs from the merge
 
 Three places, each because the server knows something a phone does not. Each is a decision, not
@@ -1023,6 +1096,81 @@ The constraints go on an empty database, so nothing in them can damage existing 
 will, however, reject rows from the devices — that is their job. When Phase 3's importer
 stops on one, the thing to fix is the data, after looking at it. Relaxing a constraint to
 let a row in puts the contradiction back in the database where nobody will see it again.
+
+## Accounts, and the roles on them
+
+Five endpoints and one page. `/accounts.html`, served by the same service, is where the second
+administrator, the office account, an auditor and a head of department come into being.
+
+```
+GET  /api/v1/accounts                                    who exists and what they hold
+GET  /api/v1/accounts/options                            departments and sessions, from the database
+GET  /api/v1/accounts/people?kind=PROFESSOR|STUDENT      who an account can be attached to
+POST /api/v1/accounts                                    an account, and optionally a role with it
+POST /api/v1/accounts/{id}/roles                         a role
+POST /api/v1/accounts/{id}/roles/{grantId}/revoke        the end of one
+```
+
+An administrator and nobody else, and the rule is in SQL twice. Creating an account asks
+`actor_may_manage_accounts()` from V12, because `app_account` has no policies — V6 says why, and
+the short version is that a policy keyed on the current account would deny the lookup that
+establishes it. Granting and revoking a role is refused by `user_role`'s own policies, which admit
+only an admin; the endpoint asks the same function first so that a professor's attempt comes back
+as a 403 that says what the matter is rather than as a database error.
+
+**Why an admin and not the office**, when the office owns the roll: an account is not a record
+about a person, it is an authority. A `PROFESSOR` account can mark every register of every course
+that professor coordinates from the moment it exists, with no role grant at all, because
+`lectures_instructor` asks about `course_instructor` and not about `user_role`. Creating one is
+therefore closer to granting a role than to editing a roster. The argument for widening it is real
+— onboarding is office work in most colleges — which is why it is one line in V12 rather than a
+condition at three call sites, and why a test states the current answer rather than assuming it.
+
+Three things the endpoints deliberately cannot do:
+
+- **Set a password on another account.** A new account gets an opening password and `must_rotate`
+  is true from the insert, so whoever typed it is not the person who ends up knowing it.
+  `/auth/password` needs the current one. An administrator who could skip that could sign in as a
+  professor and mark a register in their name.
+- **Delete anything.** A role is revoked, never deleted; an account cannot be removed at all. Both
+  are pointed at by the audit log, which is the record of what they did.
+- **Create the first administrator.** That still needs `BootstrapCommand` and a shell on the
+  machine. This is how the second one arrives.
+
+The page holds the token in a variable and nothing else — not `localStorage`, which would outlive
+the person walking away from the machine — and writes everything into the DOM through
+`textContent`, because a display name is somebody's typed input. It also carries the password
+rotation, which is what a new account has to do first and what previously needed two `curl` calls.
+No framework and no build step: it calls the same endpoints the phone does.
+
+What is not tested: the HTML and its script. Every endpoint behind it is covered by `WireTest`
+over real HTTP, and a test asserts the page is served without a token and stores nothing — but no
+browser has opened it in this environment, and no JavaScript engine is installed here to parse it.
+
+## Reading the data in a browser
+
+`/data.html`, and two endpoints behind it:
+
+```
+GET /api/v1/data                             the tables, with the rows you can see in each
+GET /api/v1/data/{table}?after=&limit=       one page of one table
+```
+
+No authority rules of its own, which is the whole design. Every row comes back from a query run
+under the caller's own actor, so the policies decide: a professor browsing `students` sees the
+students on their own rolls, a head sees their department's, an auditor sees everybody's. A count
+of zero means "none you may see", which is not the same as "none", and the page says so.
+
+Readable tables are `synced_tables()` — the same function the sync pair reads, which since V11 is
+every table a device holds. That is not a coincidence: those are exactly the tables that carry
+policies, so they are exactly the tables it is safe to hand a generic reader. `app_account` is not
+among them (no policies, and a password hash is not something to render in a grid) and neither is
+`audit_log`, which the service holds no privilege on. A table name reaching SQL comes from that
+list and never from the request.
+
+Paging is by primary key, row-wise, the same mechanism the sync snapshot resumes with and for the
+same reason: an offset is wrong as soon as a row is inserted behind you. Values are rendered as
+text, provenance columns included — this is for reading, not a format for something to parse.
 
 ## The first administrator
 
@@ -1045,6 +1193,91 @@ whoever typed the first password is not also the person who ends up knowing it.
 The password is never an argument — arguments are readable by every process on the machine
 through `/proc` and are kept in shell history — so it comes from the environment or from a
 terminal prompt, exactly as the importer's does.
+
+### Rotating that password, which has to happen before anything else works
+
+`must_rotate` is enforced at the filter, not merely suggested: until it is cleared, that session
+reaches `/auth/password` and `/auth/logout` and **nothing else**. A phone will sign in, say so and
+sync nothing; the data page will sign in and show no tables. So this is the first thing to do with
+a new administrator, and with any account somebody else created.
+
+**In a browser.** `/accounts.html` notices and shows the rotation form instead of the rest of the
+page. This is the easy way and there is nothing else to know.
+
+**Over HTTP.** Both calls have to be in *one* shell: `$TOKEN` set in one command and used in the
+next is empty if the shell in between has gone, and the answer is then
+`{"code":"unauthenticated","message":"This endpoint needs a bearer token."}`, which reads like a
+server problem and is not.
+
+```bash
+BASE=http://localhost:8080/api/v1
+read -rsp 'current password: ' CURRENT; echo
+read -rsp 'new password (12 or more): ' FRESH; echo
+
+TOKEN=$(curl -sS --fail-with-body -X POST "$BASE/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d "$(python3 -c 'import json,sys; print(json.dumps({"email": sys.argv[1], "door": "STAFF", "password": sys.argv[2]}))' \
+          admin@sies.edu.in "$CURRENT")" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+
+curl -sS --fail-with-body -w '\nHTTP %{http_code}\n' -X POST "$BASE/auth/password" \
+    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -d "$(python3 -c 'import json,sys; print(json.dumps({"currentPassword": sys.argv[1], "newPassword": sys.argv[2]}))' \
+          "$CURRENT" "$FRESH")"
+```
+
+`read -rsp` rather than a literal, for the same reason the bootstrap takes none: a password in an
+argument is in `/proc` and in shell history. The bodies are built by `python3` so that a password
+containing a quote or a backslash is still valid JSON. `--fail-with-body` rather than `-s` alone:
+with plain `-s` a server that is not running prints nothing at all, `json.load` is handed an empty
+string, and the error you see is `JSONDecodeError: Expecting value: line 1 column 1` rather than
+"connection refused".
+
+What comes back is `{"otherSessionsRevoked":N}`. The change revokes every **other** session of that
+account and leaves the one in your hand alone: somebody rotating a password because they think
+somebody else has it has not finished until the other sign-ins are gone. The current password is
+required even though the session is already authenticated — a token lifted from an unlocked phone
+should not be enough to take the account over.
+
+Three refusals worth telling apart:
+
+| Answer | Meaning |
+|---|---|
+| `401 sign_in_refused` | the current password is wrong, or the account is locked |
+| `400 weak_password` | twelve characters minimum, and the message says so |
+| `400 incomplete` | one of the two fields was missing from the body |
+
+**If the password is lost.** There is no endpoint for setting somebody else's password, deliberately:
+an administrator who could skip the current-password check could sign in as a professor and mark a
+register in their name. The way back is to revoke the `ADMIN` grant and bootstrap again, which is
+possible only for somebody with a shell on the database host — the correct boundary for this
+system:
+
+```bash
+docker exec sies-pg psql -U postgres -d sies \
+    -c "UPDATE user_role SET revoked_at = now(), revoked_by = account_id
+        WHERE role = 'ADMIN' AND revoked_at IS NULL"
+```
+
+Then run the bootstrap command above with a fresh address. The old account stays, disabled by
+having no role, because the audit log names it as the author of things and deleting it would
+orphan them.
+
+Both halves leave a trace that says they happened outside the ordinary path, which is the point of
+doing it this way rather than by editing a password hash:
+
+```
+UPDATE | user_role   | actor_account |             | actor_label | system      <- the revoke, by hand
+INSERT | app_account | actor_account |             | actor_label | bootstrap   <- the replacement
+INSERT | user_role   | actor_account |             | actor_label | bootstrap
+```
+
+No `actor_account` on any of them: nobody signed in to do it. `system` is what a statement run
+straight against the database looks like, and `bootstrap` is the label that command announces
+itself under — see "pre-migration, and why the actor is not null" above for why there is a label
+at all rather than a null. A review that finds those three rows has found somebody with a shell on
+the database host taking the college's administrator account, which is exactly what it was, and
+exactly what should be visible.
 
 ## The importer now needs an account
 
@@ -1070,6 +1303,21 @@ account establishes is that somebody is accountable for having loaded them, and 
 where that is recorded.
 
 ## Not here yet
+
+**A way to add a professor was missing entirely, and a fresh server could not have one.** A
+professor's account has to name a `professors` row, and nothing in this service could write one:
+they arrived through a device backup import or by hand in `psql`. So a new server had no
+professors, could have no professor accounts, and the administration page could only say "nobody
+on file yet" — which is what it did when somebody tried. `POST /accounts` now takes an optional
+`person` for a professor and writes both rows in one transaction, keyed by `ServerIds` under node
+0 like every other row the server invents. Students are deliberately still not creatable that way:
+a student's identity is their roll number, it lives on their enrolment, and the roster CSV is the
+way in.
+
+**The conditional operator unboxed a null, again.** `body.profId() == null && … ? createProfessor(…)
+: body.profId()` has one `long` arm and one `Long` arm, so it promotes to `long` and throws on the
+null it was testing for. Same family as the `Double`/`Long` promotion in `SyncJson` that rounded a
+55-bit key, and the same fix: an `if`. Two existing tests caught it as a 500.
 
 **A roster screen.** V11's reachability predicate is evaluated per row and nothing is
 materialised, which is right for a dozen professors and a few thousand enrolments — an index scan
@@ -1115,6 +1363,88 @@ stopped in" and then `continue`d, so the remainder of that table was never read:
 delivered eight of nine rows and the ninth was lost for good. Caught by the test that pulls a whole
 fixture two rows at a time and asserts every row arrives exactly once — which is the only shape of
 test that could have caught it, since every page looked perfectly well-formed on its own.
+
+**Every row a phone made before it registered was refused, and the device then dropped them
+all.** The second defect a handset found, and the one that cost real data the longest. A phone
+issues keys from installation, so before it registers it picks a node for itself out of the
+self-picked half of the range and every row carries it. Registration assigns a real node — and V8
+records the provisional one precisely so this is knowable — but the push compared the key's node
+against the assigned node and nothing else. So a phone that had been taking attendance for a term
+and was only now pointed at a server had *every* row refused, and because V11 made a policy-style
+refusal final, the drain dropped the intents. The sync reported success and moved nothing.
+
+Measured on the handset: a Samsung SM-M315F registered as node 1, provisional node 37498. One row
+reached the server and it was `academic_years` — the one synced table whose key no device issues,
+so the node check never applied to it. That single row is what made the diagnosis quick.
+
+V13's `device_provisional_node()` is `SECURITY DEFINER`, because `device_registration`'s policies
+admit the account that registered the device and that is usually but not always the account
+pushing: a filtered-away row would read as "no provisional node", which is the
+LEFT-JOIN-onto-an-RLS-table trap that cost this project a day in Phase 5.5. The push now accepts
+either of the device's nodes, and another install's provisional node is still refused — both
+stated as tests.
+
+The dropped intents needed a way back, since the triggers fire on a write and those rows were
+written weeks ago: `AttendanceRepository.requeueEverythingForSync()`, behind a **Send everything
+again** button on the sync screen. Harmless twice over — the statement is `INSERT OR REPLACE` on
+the triggers' own key, so a row already waiting stays one intent.
+
+**A device whose data predates the id scheme cannot sync any of it, and said so a hundred times
+a minute.** The third thing a handset found. Keys issued before schema v7 were counted out from 1
+by SQLite in each file independently, so they mean nothing off the device — the push has always
+refused them, pointing at the backup importer, which can renumber. What it did not refuse was the
+rows that <em>point at</em> them: `student_year` and `batch_student_map` have no key of their own,
+so they got as far as the statement and came back as a foreign key violation. A missing parent is
+ordinarily worth waiting for, so the device kept every one and retried on the next sync. For a
+phone with a term's roster on it that is a hundred-odd rows refused for ever, with nothing in the
+message to say that waiting was hopeless.
+
+A refusal is now final when the parent is **both** missing and unpushable, with a sentence naming
+the reference and pointing at the importer. Both halves matter: a parent that is present must not
+be judged by the shape of its key, because a server whose rows came from a backup import or a
+roster CSV has them keyed under node 0 and a device holding such a key got it from a pull. Stated
+as two tests.
+
+What this does not do is get that data onto the server. Nothing in sync can: that is what
+"Importing a device" above is for, and doing it for a device that is already running is a cutover
+rather than an import — the server renumbers those rows, so a later pull would bring them back
+down beside the originals under different keys. Phase 7 is that work, done between sessions with a
+frozen backup and a rollback, and it is deliberately not something a button does.
+
+**And the phone had forgotten the number.** The other half of the same defect, found while fixing
+it: `IdGenerator.assignNodeID` overwrote the self-picked node, and `SyncSignIn` only reported one
+while it was still current. So a device that had registered could never say what its old keys
+meant — and a server whose `device_registration` row is gone (a rebuilt development database, a
+restore from before the registration) could never be told again. Three changes, because each
+covers a case the others do not:
+
+- `IdGenerator` keeps the provisional node in its own preference and never clears it, and reports
+  it on every registration rather than only the first.
+- For an install made before that preference existed, the number is still in the data: every row
+  written back then carries it in the low sixteen bits of its key. `DeviceSql.selfPickedNodes()`
+  reads it out, commonest first, over the tables with keys of their own.
+- `DeviceRegistry` fills a blank `provisional_node` on a later registration and never overwrites
+  a recorded one — a number reported while it was current is the better evidence, and the clash
+  count stays as it was counted, against the devices that existed then.
+
+**A pulled session could not be written at all, and it jammed every pull behind it.** Found by
+running the app, which is the first defect in this project that a test did not find first.
+`academic_years.startEpoch` and `endEpoch` are `NOT NULL` on the device and V1 deliberately
+dropped them from the server — they are the session's dates resolved at whichever device's zone
+happened to write the row, which is the bug this whole migration exists to remove. So a pulled
+row arrived without them, `INSERT OR REPLACE` violated the constraint, the page could not be
+applied, and because the watermark only moves when every row in a page lands, every later page was
+stuck behind that one for ever. The device reported `sync failed`.
+
+`DeviceDerived` now computes them from the dates that did travel, at the zone of the device doing
+the computing and with the zone as a parameter rather than ambient — the same arithmetic
+`EntityAcademicYear.setDates` uses, and a test holds the two to the second. `DeviceSql` names the
+columns in the statement, because filling a map the statement never reads changes nothing.
+
+Two tests close the class rather than the instance: `PullApplyTest` writes a server-shaped row for
+**every** table in the feed into a real device database, and a case in `SyncTest` compares
+PostgreSQL's own nullability against `DeviceTables` for every carried column — a column the server
+may send as null and the device declares `NOT NULL` is the same defect wearing a different hat.
 
 **The tenth migration broke a fourth lexicographic sort.** `sql_differ.py` applied migrations in
 `sorted(os.listdir(...))` order, so V10 ran before V2 and failed on a type V7 creates. The same

@@ -6,8 +6,10 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.sqlite.db.SupportSQLiteDatabase;
+import androidx.sqlite.db.SupportSQLiteStatement;
 
 import java.io.IOException;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -353,14 +355,75 @@ public final class OutboxDrain {
 			return;
 		}
 
-		List<DeviceTables.Column> columns = DeviceSql.upsertColumns(table);
+		// What the server sent, plus the columns this device needs and the server does not
+		// keep. Without this an academic_years row cannot be written at all -- startEpoch is
+		// NOT NULL here and absent there -- and a page that cannot be written is a watermark
+		// that never moves, so the one row jams every pull behind it.
+		Map<String, Object> row = DeviceDerived.fill(table, change.row(), ZoneId.systemDefault());
+
+		// Change it where it is, and only insert when it is not here. Not INSERT OR REPLACE:
+		// REPLACE deletes the row that is there first, and the device's own rows point at it
+		// with RESTRICT, so the server's copy of a lecture this phone has marks against could
+		// not be accepted at all. See DeviceSql.updateRow.
+		String update = DeviceSql.updateRow(table);
+
+		if (update != null
+				&& change(sqlite, update, bindings(DeviceSql.updateColumns(table), row)) > 0) {
+			return;
+		}
+
+		sqlite.execSQL(DeviceSql.insertRow(table),
+				bindings(DeviceSql.insertColumns(table), row));
+	}
+
+	/** A row's values in the order a statement's columns list them. */
+	@NonNull
+	private static Object[] bindings(@NonNull List<DeviceTables.Column> columns,
+	                                 @NonNull Map<String, Object> row) {
+
 		Object[] values = new Object[columns.size()];
 
 		for (int at = 0; at < columns.size(); at++) {
-			values[at] = change.row().get(columns.get(at).room());
+			values[at] = row.get(columns.get(at).room());
 		}
 
-		sqlite.execSQL(DeviceSql.upsertRow(table), values);
+		return values;
+	}
+
+	/**
+	 * Runs a statement and says how many rows it changed, which {@code execSQL} does not.
+	 * <p>
+	 * The count is the whole reason the update is run first: it is how the drain knows whether
+	 * the device already had this row without asking a second question about it.
+	 */
+	private static int change(@NonNull SupportSQLiteDatabase sqlite, @NonNull String sql,
+	                          @NonNull Object[] values) {
+
+		try (SupportSQLiteStatement statement = sqlite.compileStatement(sql)) {
+
+			for (int at = 0; at < values.length; at++) {
+
+				Object value = values[at];
+
+				if (value == null) {
+					statement.bindNull(at + 1);
+
+				} else if (value instanceof Long number) {
+					statement.bindLong(at + 1, number);
+
+				} else {
+					// Everything the device holds is a whole number or text; the server sends
+					// a boolean as 0 or 1, exactly as SQLite keeps it. See SyncJson.
+					statement.bindString(at + 1, String.valueOf(value));
+				}
+			}
+
+			return statement.executeUpdateDelete();
+
+		} catch (IOException closing) {
+			// SupportSQLiteStatement.close() declares it; a compiled statement does not do IO.
+			throw new IllegalStateException(closing);
+		}
 	}
 
 	@NonNull

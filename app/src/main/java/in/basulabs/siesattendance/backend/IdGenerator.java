@@ -123,6 +123,17 @@ public final class IdGenerator {
 
 	private static final String PREF_NODE_ID = "nodeID";
 
+	/**
+	 * The node this install picked for itself, kept after a real one is assigned.
+	 * <p>
+	 * Not an accident of history: it is the only thing that says what the keys written before
+	 * registration mean. The server accepts a push under it — V13's
+	 * {@code device_provisional_node()} — but only if the device can still say what it was, and
+	 * an earlier version of {@link #assignNodeID} simply overwrote it. A phone that had been
+	 * taking attendance for a term then had every row refused with nothing left to appeal to.
+	 */
+	private static final String PREF_PROVISIONAL_NODE_ID = "provisionalNodeID";
+
 	/** No node number yet, which is also what {@link #nodeID} holds before {@link #init}. */
 	private static final int UNASSIGNED = -1;
 
@@ -166,6 +177,10 @@ public final class IdGenerator {
 		if (stored < 0 || stored > MAX_NODE_ID) {
 			stored = MAX_ASSIGNED_NODE_ID + 1 + new SecureRandom().nextInt(MAX_ASSIGNED_NODE_ID + 1);
 			writeNodeID(prefs, stored);
+
+			// Written separately and never cleared, so that registration can still say what
+			// this install's keys meant before it had a number of its own.
+			prefs.edit().putInt(PREF_PROVISIONAL_NODE_ID, stored).commit();
 		}
 
 		nodeID = stored;
@@ -193,9 +208,44 @@ public final class IdGenerator {
 		}
 
 		if (nodeID != assignedNodeID) {
-			writeNodeID(prefs(context), assignedNodeID);
+
+			SharedPreferences prefs = prefs(context);
+
+			// The provisional node is remembered before it is replaced, if this install drew
+			// one and has not recorded it yet. PREF_PROVISIONAL_NODE_ID's own comment says
+			// why; the short version is that it is the only thing that explains the keys
+			// written before this moment.
+			if (nodeID > MAX_ASSIGNED_NODE_ID
+					&& prefs.getInt(PREF_PROVISIONAL_NODE_ID, UNASSIGNED) == UNASSIGNED) {
+				prefs.edit().putInt(PREF_PROVISIONAL_NODE_ID, nodeID).commit();
+			}
+
+			writeNodeID(prefs, assignedNodeID);
 			nodeID = assignedNodeID;
 		}
+	}
+
+	/**
+	 * The node this install issued keys under before it was given one, or {@link #UNASSIGNED}.
+	 * <p>
+	 * Sent with every registration, not only the first: a device re-registering against a
+	 * server that has lost its row — a rebuilt development database, a restore from before the
+	 * registration — has to be able to say it again, or the rows it wrote under that node
+	 * become unpushable.
+	 */
+	public static int provisionalNodeID(@NonNull Context context) {
+
+		int remembered = prefs(context).getInt(PREF_PROVISIONAL_NODE_ID, UNASSIGNED);
+
+		if (remembered != UNASSIGNED) {
+			return remembered;
+		}
+
+		// Nothing recorded, which is every install made before this preference existed. The
+		// current node answers only while it is still self-picked; once a real one has been
+		// assigned the number is gone from here, and the device's own keys are the only place
+		// left that knows it -- see SyncSignIn, which asks the database.
+		return nodeID > MAX_ASSIGNED_NODE_ID ? nodeID : UNASSIGNED;
 	}
 
 	/**

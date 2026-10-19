@@ -754,6 +754,7 @@
     <string name="action_sign_in">Sign in</string>
     <string name="action_sign_out">Sign out</string>
     <string name="action_sync_now">Sync now</string>
+    <string name="action_resend_everything">Send everything again</string>
     <string name="error_email_required">Enter your email address</string>
     <string name="error_sync_password_required">Enter your password</string>
     <string name="sync_no_server">This build has no server</string>

@@ -1,7 +1,9 @@
 package in.basulabs.siesattendance.backend.sync;
 
 import android.content.Context;
+import android.database.Cursor;
 import android.os.Build;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -19,6 +21,7 @@ import java.util.Map;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.IdGenerator;
+import in.basulabs.siesattendance.backend.MainDatabase;
 
 /**
  * Signing in, and registering this phone.
@@ -69,6 +72,8 @@ public final class SyncSignIn {
 			super(message);
 		}
 	}
+
+	private static final String TAG = "SyncSignIn";
 
 	private static final int CONNECT_TIMEOUT_MS = 15_000;
 
@@ -147,12 +152,15 @@ public final class SyncSignIn {
 		body.put("installId", DeviceIdentity.installId(context).toString());
 		body.put("label", Build.MANUFACTURER + " " + Build.MODEL);
 
-		int provisional = IdGenerator.nodeID();
+		int provisional = provisionalNode(context);
 
 		if (provisional > IdGenerator.MAX_ASSIGNED_NODE_ID) {
-			// The node this install chose for itself. Sent so that a clash with another install
-			// that chose the same one is recorded while there is still something to record it
-			// against.
+			// The node this install chose for itself, sent on every registration and not only
+			// the first. Two reasons, and the second was learned the hard way. It records a
+			// clash with another install that chose the same number, while there is still
+			// something to record it against. And it is what lets the server accept the rows
+			// this phone wrote before it had a number -- which, for a phone that has been
+			// taking attendance for a term, is all of them.
 			body.put("provisionalNode", provisional);
 		}
 
@@ -164,6 +172,42 @@ public final class SyncSignIn {
 		}
 
 		return node;
+	}
+
+	/**
+	 * The node this install issued keys under before it was given one, or
+	 * {@code IdGenerator.UNASSIGNED}.
+	 * <p>
+	 * Preferences first. An install made before that preference existed has nothing there, and
+	 * once a real node was assigned the number is gone from preferences for good — but not from
+	 * the data: every row written back then still carries it in its key. So the database is
+	 * asked, which is the one place left that knows.
+	 */
+	private static int provisionalNode(@NonNull Context context) {
+
+		int remembered = IdGenerator.provisionalNodeID(context);
+
+		if (remembered > IdGenerator.MAX_ASSIGNED_NODE_ID) {
+			return remembered;
+		}
+
+		try (Cursor cursor = MainDatabase.getInstance(context).getOpenHelper()
+				.getWritableDatabase().query(DeviceSql.selfPickedNodes())) {
+
+			// Commonest first, so a device that somehow shows two reports the one it wrote
+			// most of its rows under.
+			if (cursor.moveToFirst()) {
+				return cursor.getInt(0);
+			}
+
+		} catch (RuntimeException e) {
+			// A registration must not fail because this could not be worked out. Without it
+			// the pre-registration rows stay unpushable, which is recoverable; a sign-in that
+			// cannot complete is not.
+			Log.w(TAG, "could not read this device's own nodes", e);
+		}
+
+		return -1;
 	}
 
 	// ── One request ──────────────────────────────────────────────────────

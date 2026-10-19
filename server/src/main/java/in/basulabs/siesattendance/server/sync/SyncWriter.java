@@ -42,7 +42,14 @@ import in.basulabs.siesattendance.backend.sync.OutboxOp;
  * That is the whole reason the set is read from the database instead of being written down here —
  * widening it is a migration, not a release of this file.
  *
- * <h3>The node check, and why it only applies to a new row</h3>
+ * <h3>The node check, and the two nodes a device has</h3>
+ * A key a device issues has to carry one of <em>its</em> nodes, and a phone has had two: the one
+ * it picked for itself before it ever spoke to a server, and the one registration assigned it.
+ * Rows created in that first period are still that device's own work — for a phone that has been
+ * taking attendance for a term and is only now being pointed at a server, they are all of its
+ * work — so both are accepted. V8 records the provisional node at registration precisely so this
+ * is knowable, and V13 is the function that reads it.
+ * <p>
  * A key a device issues has to carry that device's node. It is the one rule here that is not the
  * database's: a phone must not be able to create rows claiming to be another phone's, and nothing
  * in SQL knows which phone is holding the token.
@@ -96,6 +103,16 @@ public final class SyncWriter {
 	/** PostgreSQL's {@code insufficient_privilege}: a policy refused the statement. */
 	private static final String INSUFFICIENT_PRIVILEGE = "42501";
 
+	/** {@code foreign_key_violation}: the row points at one that is not here. */
+	private static final String FOREIGN_KEY_VIOLATION = "23503";
+
+	/**
+	 * The tables whose refusals a professor is likely to meet, and which deserve a sentence
+	 * that says what to do rather than only what went wrong.
+	 */
+	private static final Set<String> ROSTER_TABLES =
+			Set.of("students", "student_year", "professors", "academic_years");
+
 	/**
 	 * The SQL states that mean "this row, as it stands, is not writable here" — as opposed to
 	 * "not yet" or "not just then".
@@ -108,13 +125,6 @@ public final class SyncWriter {
 	 * A policy refusal is in {@link #settled} rather than here, because it is the one that
 	 * depends on what else has arrived — see that method.
 	 */
-	/**
-	 * The tables whose refusals a professor is likely to meet, and which deserve a sentence
-	 * that says what to do rather than only what went wrong.
-	 */
-	private static final Set<String> ROSTER_TABLES =
-			Set.of("students", "student_year", "professors", "academic_years");
-
 	private static final Set<String> SETTLED_STATES = Set.of(
 			INSUFFICIENT_PRIVILEGE,
 			"23514",    // check_violation
@@ -136,11 +146,14 @@ public final class SyncWriter {
 	 * a phone that has been offline for a day sends everything at once, and a single bad intent
 	 * must not send the whole day back to the queue for ever.
 	 *
-	 * @param deviceNode the node of the device presenting the token; see the class notes
+	 * @param deviceNode  the node assigned to the device presenting the token
+	 * @param priorNode   the node that device issued keys under before it registered, or null.
+	 *                    Accepted equally: see the class notes
 	 */
 	@NonNull
 	public static Result apply(@NonNull Connection connection, @NonNull List<Intent> intents,
-	                           @Nullable Integer deviceNode) throws SQLException {
+	                           @Nullable Integer deviceNode, @Nullable Integer priorNode)
+			throws SQLException {
 
 		Set<String> allowed = syncedTables(connection);
 		Set<String> stamped = tablesWithProvenance(connection);
@@ -149,7 +162,7 @@ public final class SyncWriter {
 
 		for (Intent intent : inApplicationOrder(intents)) {
 
-			String refusal = unacceptable(connection, intent, allowed, deviceNode);
+			String refusal = unacceptable(connection, intent, allowed, deviceNode, priorNode);
 
 			if (refusal != null) {
 				// Every refusal from there is about the intent itself rather than about the
@@ -177,8 +190,7 @@ public final class SyncWriter {
 
 			} catch (SQLException e) {
 				connection.rollback(savepoint);
-				rejected.add(new Rejection(intent.table(), intent.key(),
-						explain(e, intent.table()), settled(connection, intent, e)));
+				rejected.add(rejectionFor(connection, intent, e));
 			}
 		}
 
@@ -215,6 +227,79 @@ public final class SyncWriter {
 				}));
 
 		return sorted;
+	}
+
+	/**
+	 * A failed intent as something to send back, and whether to send it again.
+	 * <p>
+	 * One case gets a sentence of its own, because a phone found it: a row pointing at a parent
+	 * whose key <em>predates the id scheme</em>. That parent can never be pushed — a key counted
+	 * out from 1 by SQLite means nothing outside the file it came from, which is why the check
+	 * below refuses it — so the child can never land either. What arrives without this is a
+	 * foreign key error naming a constraint, and a missing parent is ordinarily worth waiting
+	 * for, so the device keeps it and retries. For a device whose whole database predates the
+	 * scheme that is a hundred rows retried on every sync, for ever, with nothing in the message
+	 * to say that waiting is hopeless.
+	 */
+	@NonNull
+	private static Rejection rejectionFor(@NonNull Connection connection,
+	                                      @NonNull Intent intent, @NonNull SQLException e)
+			throws SQLException {
+
+		if (FOREIGN_KEY_VIOLATION.equals(String.valueOf(e.getSQLState()))) {
+
+			String unsyncable = unsyncableParent(connection, intent);
+
+			if (unsyncable != null) {
+				return new Rejection(intent.table(), intent.key(), unsyncable, true);
+			}
+		}
+
+		return new Rejection(intent.table(), intent.key(), explain(e, intent.table()),
+				settled(connection, intent, e));
+	}
+
+	/**
+	 * The sentence for a parent that is both missing and unpushable, or null.
+	 * <p>
+	 * Both halves matter. Missing alone is "not yet", which is kept. Unstructured alone is
+	 * nothing: a server whose own rows came from a backup import or a roster CSV has them
+	 * keyed under node 0, so a parent that is <em>here</em> is fine whatever its key looks
+	 * like — and a device holding that key got it from a pull.
+	 */
+	@Nullable
+	private static String unsyncableParent(@NonNull Connection connection,
+	                                       @NonNull Intent intent) throws SQLException {
+
+		DeviceTables.Table table = DeviceTables.of(intent.table());
+
+		for (Map.Entry<String, String> reference : table.foreignKeys().entrySet()) {
+
+			Object value = intent.row() == null ? null : intent.row().get(reference.getKey());
+
+			if (value == null && table.primaryKey().contains(reference.getKey())) {
+				// A key column that is also a foreign key, as both of attendance's are.
+				value = intent.key().get(table.primaryKey().indexOf(reference.getKey()));
+			}
+
+			if (!(value instanceof Number parent)) {
+				continue;
+			}
+
+			long key = parent.longValue();
+
+			if (StructuredId.isStructured(key)
+					|| exists(connection, DeviceTables.of(reference.getValue()),
+							List.of(key))) {
+				continue;
+			}
+
+			return reference.getKey() + " " + key + " predates the id scheme, so the "
+					+ reference.getValue() + " row it points at cannot be pushed and this one "
+					+ "cannot land. That data belongs in a backup import, not a sync.";
+		}
+
+		return null;
 	}
 
 	/**
@@ -282,7 +367,8 @@ public final class SyncWriter {
 	@Nullable
 	private static String unacceptable(@NonNull Connection connection, @NonNull Intent intent,
 	                                   @NonNull Set<String> allowed,
-	                                   @Nullable Integer deviceNode) throws SQLException {
+	                                   @Nullable Integer deviceNode,
+	                                   @Nullable Integer priorNode) throws SQLException {
 
 		if (!allowed.contains(intent.table())) {
 			return "this server does not accept " + intent.table() + " from a device";
@@ -325,14 +411,20 @@ public final class SyncWriter {
 			return "this session is not on a registered device, so it may not write rows";
 		}
 
-		if (StructuredId.nodeOf(key) != deviceNode && !exists(connection, table, intent.key())) {
-			// Another node's key, and no row here under it. Creating one would be this device
-			// claiming to be that one; amending an existing row would not, and is allowed above
-			// -- see the class notes. A row that exists but this actor cannot read reaches here
-			// too, and refusing it is the same answer by a different route: a row you cannot
-			// see is not one you may write.
-			return "key " + key + " was issued by node " + StructuredId.nodeOf(key)
-					+ " and there is no such row here for this device to amend";
+		int node = StructuredId.nodeOf(key);
+		boolean ours = node == deviceNode || (priorNode != null && node == priorNode);
+
+		if (!ours && !exists(connection, table, intent.key())) {
+			// Not one of this device's nodes, and no row here under the key. Creating one
+			// would be this device claiming to be another; amending an existing row would
+			// not, and is allowed above -- see the class notes. A row that exists but this
+			// actor cannot read reaches here too, and refusing it is the same answer by a
+			// different route: a row you cannot see is not one you may write.
+			return "key " + key + " was issued by node " + node + ", and this device issues "
+					+ "under " + deviceNode
+					+ (priorNode == null ? "" : " (and used " + priorNode + " before it "
+							+ "registered)")
+					+ "; there is no such row here for it to amend";
 		}
 
 		return null;

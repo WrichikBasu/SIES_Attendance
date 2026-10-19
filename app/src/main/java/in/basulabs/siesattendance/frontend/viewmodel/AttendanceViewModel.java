@@ -500,6 +500,30 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/** Asks for a sync now, rather than waiting for the hourly one. */
+	/**
+	 * Queues everything on this phone for sending, and asks for a sync.
+	 * <p>
+	 * For the case where the server refused rows and the device dropped the intents: the rows
+	 * are still here, and nothing else will offer them again. Harmless to run twice — an intent
+	 * already waiting stays one intent — and on a phone with a term's attendance on it, it is
+	 * a few thousand rows going up over a few minutes.
+	 */
+	public void resendEverything() {
+
+		busy.setValue(true);
+
+		NETWORK_TASK_EXECUTOR.execute(() -> {
+
+			int waiting = repository.requeueEverythingForSync();
+
+			SyncScheduler.requestSync(getApplication());
+
+			busy.postValue(false);
+			toastMessage.postValue(waiting + " change" + (waiting == 1 ? "" : "s")
+					+ " queued for the server");
+		});
+	}
+
 	public void syncNow() {
 		SyncScheduler.requestSync(getApplication());
 		toastMessage.setValue("Syncing");

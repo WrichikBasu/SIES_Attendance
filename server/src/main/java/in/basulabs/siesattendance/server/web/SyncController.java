@@ -10,6 +10,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -138,7 +141,8 @@ public final class SyncController {
 		return database.inTransaction(actor, connection -> {
 
 			SyncWriter.Result result = SyncWriter.apply(connection, intents,
-					actor.session().deviceNode());
+					actor.session().deviceNode(),
+					priorNodeOf(connection, actor.session().deviceId()));
 
 			List<RejectionBody> rejected = new ArrayList<>();
 
@@ -153,6 +157,40 @@ public final class SyncController {
 			// it is the trigger's doing rather than this endpoint's.
 			return new PushResponse(result.accepted(), rejected);
 		});
+	}
+
+	/**
+	 * The node this device used before it registered, or null.
+	 * <p>
+	 * V13's function, and {@code SECURITY DEFINER} for a reason that cost this project a day
+	 * once already: {@code device_registration}'s policies admit the account that registered
+	 * the device, which is usually but not always the account pushing, and a filtered-away row
+	 * would read as "no provisional node" rather than as an error. One statement per push, on
+	 * the push path only.
+	 */
+	@Nullable
+	private static Integer priorNodeOf(@NonNull Connection connection, @Nullable Long deviceId)
+			throws SQLException {
+
+		if (deviceId == null) {
+			return null;
+		}
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT device_provisional_node(?)")) {
+
+			statement.setLong(1, deviceId);
+
+			try (ResultSet results = statement.executeQuery()) {
+
+				if (!results.next()) {
+					return null;
+				}
+
+				int node = results.getInt(1);
+				return results.wasNull() ? null : node;
+			}
+		}
 	}
 
 	/**

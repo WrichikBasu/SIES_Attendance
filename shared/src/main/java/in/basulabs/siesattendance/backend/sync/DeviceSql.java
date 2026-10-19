@@ -1,7 +1,11 @@
 package in.basulabs.siesattendance.backend.sync;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
+import java.util.ArrayList;
+
+import in.basulabs.siesattendance.backend.StructuredId;
 import java.util.List;
 
 /**
@@ -51,21 +55,71 @@ public final class DeviceSql {
 	}
 
 	/**
-	 * Writes a row the server sent, replacing whatever is there.
+	 * Changes a row the server sent, where the device already has it, or null when there is
+	 * nothing a row of this table could change.
 	 * <p>
-	 * {@code INSERT OR REPLACE}, which is what Room's own {@code OnConflictStrategy.REPLACE}
-	 * compiles to, so a pulled row lands the same way a locally edited one does. It fires the
-	 * outbox triggers like any other write, which is why the pull has to set
-	 * {@code sync_state.applying} around it — otherwise the device would announce the server's
-	 * own rows straight back to it.
+	 * Half of the pair that writes a pulled row; {@link #insertRow} is the other. The caller
+	 * runs this one first and only inserts when it matched nothing, which is the whole point:
+	 * <p>
+	 * This used to be a single {@code INSERT OR REPLACE}, on the reasoning that it is what
+	 * Room's own {@code OnConflictStrategy.REPLACE} compiles to. It is — and REPLACE means
+	 * <em>delete the row that is there and insert this one</em>. Deleting a row the device's
+	 * own rows point at is refused, because every foreign key here is {@code RESTRICT}, so the
+	 * phone could not accept the server's copy of a lecture it already had marks against:
+	 * {@code FOREIGN KEY constraint failed (code 1811 SQLITE_CONSTRAINT_TRIGGER)}, raised by
+	 * the internal trigger RESTRICT is implemented with, and the whole page rolled back. A
+	 * watermark that cannot move jams every page behind it for ever.
+	 * <p>
+	 * An UPDATE changes the row in place, so the children keep pointing at it. SQLite counts a
+	 * row the WHERE matched as changed even when every value is identical, so "matched nothing"
+	 * means "is not here" and nothing else. {@code ON CONFLICT … DO UPDATE} would say this in
+	 * one statement, and cannot be used: it arrived in SQLite 3.24 and this app runs on API 26,
+	 * where the system's SQLite is older than that.
+	 * <p>
+	 * Null for a table that is nothing but its key — a membership either exists or does not,
+	 * and {@code UPDATE … SET} with no columns is not a statement. {@link #insertRow} ignores
+	 * the conflict for those instead.
+	 */
+	@Nullable
+	public static String updateRow(@NonNull DeviceTables.Table table) {
+
+		List<DeviceTables.Column> columns = changeableColumns(table);
+
+		if (columns.isEmpty()) {
+			return null;
+		}
+
+		StringBuilder sql = new StringBuilder("UPDATE `").append(table.name()).append("` SET ");
+
+		for (int at = 0; at < columns.size(); at++) {
+			sql.append(at == 0 ? "" : ", ").append('`').append(columns.get(at).room())
+					.append("` = ?");
+		}
+
+		return sql.append(" WHERE ").append(keyPredicate(table)).toString();
+	}
+
+	/**
+	 * Writes a row the server sent that the device does not have.
+	 * <p>
+	 * The other half of the pair, run when {@link #updateRow} matched nothing. A plain INSERT
+	 * on purpose: a row the server sends that will not go in is something to hear about, and
+	 * {@code OR IGNORE} would turn the {@code academic_years} defect a handset found — a
+	 * {@code NOT NULL} column the server does not keep — from a loud failure into a row that
+	 * silently is not there. Conflict resolution would not have hidden the constraint that
+	 * actually matters either way, since it never applies to foreign keys.
+	 * <p>
+	 * {@code OR IGNORE} for a table that is nothing but its key, where it is the only thing it
+	 * can mean: the row the server is describing is already exactly here.
 	 */
 	@NonNull
-	public static String upsertRow(@NonNull DeviceTables.Table table) {
+	public static String insertRow(@NonNull DeviceTables.Table table) {
 
-		StringBuilder sql = new StringBuilder("INSERT OR REPLACE INTO `")
-				.append(table.name()).append("` (");
+		StringBuilder sql = new StringBuilder("INSERT ")
+				.append(changeableColumns(table).isEmpty() ? "OR IGNORE " : "")
+				.append("INTO `").append(table.name()).append("` (");
 
-		List<DeviceTables.Column> columns = table.carriedColumns();
+		List<DeviceTables.Column> columns = insertColumns(table);
 
 		for (int at = 0; at < columns.size(); at++) {
 			sql.append(at == 0 ? "" : ", ").append('`').append(columns.get(at).room())
@@ -81,6 +135,90 @@ public final class DeviceSql {
 		return sql.append(")").toString();
 	}
 
+	/**
+	 * Queues every row of a table for sending, as one statement.
+	 * <p>
+	 * The recovery path, and it exists because of a real morning: a device that had been taking
+	 * attendance for a term was pointed at a server, every row it held was refused because the
+	 * keys carried the node it had picked for itself before registering, and the drain dropped
+	 * the intents as settled refusals. The rows were still on the phone and nothing would ever
+	 * send them again — the triggers only fire on a write, and these rows were written months
+	 * ago.
+	 * <p>
+	 * {@code INSERT OR REPLACE}, keyed the same way the triggers key it, so a row already
+	 * waiting keeps one intent rather than gaining a second. The unused key columns are zero,
+	 * which is what {@link OutboxTriggers#UNUSED_KEY} means.
+	 */
+	@NonNull
+	public static String requeueRows(@NonNull DeviceTables.Table table) {
+
+		StringBuilder sql = new StringBuilder("INSERT OR REPLACE INTO `")
+				.append(OutboxTriggers.OUTBOX)
+				.append("` (`tableName`, `key1`, `key2`, `key3`, `op`, `queuedAt`) SELECT '")
+				.append(table.name()).append("'");
+
+		for (int at = 0; at < 3; at++) {
+
+			sql.append(", ");
+
+			if (at < table.primaryKey().size()) {
+				sql.append('`').append(table.primaryKey().get(at)).append('`');
+			} else {
+				sql.append(OutboxTriggers.UNUSED_KEY);
+			}
+		}
+
+		return sql.append(", '").append(OutboxOp.UPSERT.name())
+				.append("', CAST(strftime('%s','now') AS INTEGER) * 1000 FROM `")
+				.append(table.name()).append('`').toString();
+	}
+
+	/**
+	 * The self-picked nodes appearing in this device's own keys, commonest first.
+	 * <p>
+	 * The last resort for an install made before the node it picked for itself was recorded in
+	 * preferences. The information is not lost while the rows are still here: a key carries its
+	 * node in the low sixteen bits, and a node above
+	 * {@link in.basulabs.siesattendance.backend.StructuredId#MAX_ASSIGNED_NODE_ID} can only
+	 * have been picked by a device for itself.
+	 * <p>
+	 * Ordered by how many rows carry each, because a device that somehow shows two should
+	 * report the one it wrote most of its data under. Only the tables with a key of their own
+	 * are asked: everywhere else the key belongs to another row.
+	 */
+	@NonNull
+	public static String selfPickedNodes() {
+
+		StringBuilder sql = new StringBuilder("SELECT `node`, SUM(`rows`) AS `rows` FROM (");
+		boolean first = true;
+
+		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
+
+			if (table.surrogate() == null) {
+				continue;
+			}
+
+			if (!first) {
+				sql.append(" UNION ALL ");
+			}
+			first = false;
+
+			// Nothing here comes from outside the program: the names are DeviceTables' and the
+			// numbers are StructuredId's.
+			sql.append("SELECT (`").append(table.surrogate()).append("` & ")
+					.append(StructuredId.MAX_NODE_ID).append(") AS `node`, count(*) AS `rows` ")
+					.append("FROM `").append(table.name()).append("` WHERE `")
+					.append(table.surrogate()).append("` >= ")
+					.append(StructuredId.FIRST_STRUCTURED_ID).append(" AND (`")
+					.append(table.surrogate()).append("` & ")
+					.append(StructuredId.MAX_NODE_ID).append(") > ")
+					.append(StructuredId.MAX_ASSIGNED_NODE_ID)
+					.append(" GROUP BY `node`");
+		}
+
+		return sql.append(") GROUP BY `node` ORDER BY `rows` DESC").toString();
+	}
+
 	/** Removes a row the server says is gone. */
 	@NonNull
 	public static String deleteRow(@NonNull DeviceTables.Table table) {
@@ -88,14 +226,75 @@ public final class DeviceSql {
 	}
 
 	/**
-	 * The columns an {@link #upsertRow} statement binds, in order.
+	 * The columns an {@link #insertRow} statement binds, in order.
 	 * <p>
 	 * Handed out so the caller cannot bind them in a different order from the one the statement
 	 * lists — which would compile, run, and write a student's roll number into their name.
+	 * <p>
+	 * The columns the server carries, and then the ones only the device has
+	 * ({@link DeviceDerived#columnsOf}). Those last are not optional: {@code startEpoch} is
+	 * {@code NOT NULL} on the device and absent from the server, so a statement that did not
+	 * name it could not write an {@code academic_years} row at all — and a row that cannot be
+	 * written is a watermark that never moves, which jams every later page behind it.
 	 */
 	@NonNull
-	public static List<DeviceTables.Column> upsertColumns(@NonNull DeviceTables.Table table) {
-		return table.carriedColumns();
+	public static List<DeviceTables.Column> insertColumns(@NonNull DeviceTables.Table table) {
+
+		List<DeviceTables.Column> columns = new ArrayList<>(table.carriedColumns());
+		columns.addAll(DeviceDerived.columnsOf(table));
+
+		return columns;
+	}
+
+	/**
+	 * The columns an {@link #updateRow} statement binds, in order: what it sets, then the key
+	 * it finds the row by.
+	 */
+	@NonNull
+	public static List<DeviceTables.Column> updateColumns(@NonNull DeviceTables.Table table) {
+
+		List<DeviceTables.Column> columns = new ArrayList<>(changeableColumns(table));
+
+		for (String key : table.primaryKey()) {
+			columns.add(columnNamed(table, key));
+		}
+
+		return columns;
+	}
+
+	/**
+	 * Everything {@link #insertColumns} has that is not part of the key.
+	 * <p>
+	 * The key is what the row is; these are what it says. A table with none of them is a
+	 * membership, and the two statements treat it differently for that reason.
+	 */
+	@NonNull
+	private static List<DeviceTables.Column> changeableColumns(
+			@NonNull DeviceTables.Table table) {
+
+		List<DeviceTables.Column> columns = new ArrayList<>();
+
+		for (DeviceTables.Column column : insertColumns(table)) {
+			if (!table.primaryKey().contains(column.room())) {
+				columns.add(column);
+			}
+		}
+
+		return columns;
+	}
+
+	/** One column of a table by its Room name. */
+	@NonNull
+	private static DeviceTables.Column columnNamed(@NonNull DeviceTables.Table table,
+	                                               @NonNull String room) {
+
+		for (DeviceTables.Column column : insertColumns(table)) {
+			if (column.room().equals(room)) {
+				return column;
+			}
+		}
+
+		throw new IllegalArgumentException(table.name() + " has no column " + room);
 	}
 
 	/**

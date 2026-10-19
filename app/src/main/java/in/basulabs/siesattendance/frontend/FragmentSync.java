@@ -91,6 +91,11 @@ public class FragmentSync extends Fragment {
 		view.<MaterialButton>findViewById(R.id.btnSignIn).setOnClickListener(v -> signIn());
 		view.<MaterialButton>findViewById(R.id.btnSyncNow)
 				.setOnClickListener(v -> viewModel.syncNow());
+
+		// The way back from a queue the server emptied by refusing it: the rows are still
+		// here, and the triggers will not offer them again because they fire on a write.
+		view.<MaterialButton>findViewById(R.id.btnResendEverything)
+				.setOnClickListener(v -> viewModel.resendEverything());
 		view.<MaterialButton>findViewById(R.id.btnSignOut).setOnClickListener(v ->
 				viewModel.signOut(() -> Ui.onMain(this, this::refresh)));
 

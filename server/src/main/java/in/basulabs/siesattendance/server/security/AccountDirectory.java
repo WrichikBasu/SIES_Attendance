@@ -9,7 +9,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import javax.sql.DataSource;
 
@@ -442,6 +444,54 @@ public final class AccountDirectory {
 		} finally {
 			Arrays.fill(password, '\0');
 		}
+	}
+
+	/** One account, as the administration screen shows it. Never the hash. */
+	public record Summary(long accountId, @NonNull AccountKind kind, @Nullable Long profId,
+	                      @Nullable Long studentId, @NonNull String displayName,
+	                      @NonNull String loginEmail, boolean mustRotate,
+	                      @Nullable Timestamp lockedUntil, @Nullable Timestamp disabledAt,
+	                      @Nullable Timestamp lastLoginAt) {
+	}
+
+	/**
+	 * Every account, oldest first.
+	 * <p>
+	 * No password hash and no filtering: app_account has no policies, so the caller's authority
+	 * to see this is checked before the call, by {@code actor_may_manage_accounts()}. Ordered by
+	 * id because that is the order they were created in and the administrator who made them
+	 * reads it that way.
+	 */
+	@NonNull
+	public static List<Summary> list(@NonNull Connection connection) throws SQLException {
+
+		List<Summary> accounts = new ArrayList<>();
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				     "SELECT account_id, kind::text, prof_id, student_id, display_name, "
+						     + "login_email, must_rotate, locked_until, disabled_at, "
+						     + "last_login_at FROM app_account ORDER BY account_id");
+		     ResultSet results = statement.executeQuery()) {
+
+			while (results.next()) {
+
+				Number prof = (Number) results.getObject("prof_id");
+				Number student = (Number) results.getObject("student_id");
+
+				accounts.add(new Summary(
+						results.getLong("account_id"),
+						AccountKind.valueOf(results.getString("kind")),
+						prof == null ? null : prof.longValue(),
+						student == null ? null : student.longValue(),
+						results.getString("display_name"),
+						results.getString("login_email"),
+						results.getBoolean("must_rotate"),
+						results.getTimestamp("locked_until"),
+						results.getTimestamp("disabled_at"),
+						results.getTimestamp("last_login_at")));
+			}
+		}
+		return accounts;
 	}
 
 	// ── Internals ────────────────────────────────────────────────────────
