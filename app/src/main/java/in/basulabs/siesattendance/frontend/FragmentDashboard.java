@@ -84,6 +84,9 @@ public class FragmentDashboard extends Fragment {
 		view.findViewById(R.id.btnBackup).setOnClickListener(v ->
 				Navigation.findNavController(v).navigate(R.id.action_dashboard_to_backup));
 
+		view.findViewById(R.id.btnSync).setOnClickListener(v ->
+				Navigation.findNavController(v).navigate(R.id.action_dashboard_to_sync));
+
 		observe();
 	}
 

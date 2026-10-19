@@ -57,6 +57,13 @@ import in.basulabs.siesattendance.backend.util.AttendanceRecordImporter;
 import in.basulabs.siesattendance.backend.util.BreakdownFilter;
 import in.basulabs.siesattendance.backend.util.CourseGroup;
 import in.basulabs.siesattendance.backend.util.ExportFilter;
+import in.basulabs.siesattendance.backend.IdGenerator;
+import in.basulabs.siesattendance.backend.repo.AttendanceRepository;
+import in.basulabs.siesattendance.backend.repo.RoomAttendanceRepository;
+import in.basulabs.siesattendance.backend.sync.DeviceIdentity;
+import in.basulabs.siesattendance.backend.sync.SyncClient;
+import in.basulabs.siesattendance.backend.sync.SyncScheduler;
+import in.basulabs.siesattendance.backend.sync.SyncSignIn;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
 import in.basulabs.siesattendance.backend.util.BackupContainer;
 import in.basulabs.siesattendance.backend.util.DatabaseBackup;
@@ -98,7 +105,15 @@ import in.basulabs.siesattendance.backend.util.MarkSheetExporter;
  */
 public class AttendanceViewModel extends AndroidViewModel {
 
-	private final MainDatabase db;
+	/**
+	 * Everything the screens read and write, behind one interface.
+	 * <p>
+	 * Constructed here rather than injected because the framework constructs this class. When
+	 * the data moves to the server, this one line is what changes: a different implementation of
+	 * {@link AttendanceRepository}, with an outbox behind it, and nothing else in this file or in
+	 * any fragment has to know.
+	 */
+	private final AttendanceRepository repository;
 
 	/** Current academic year, as the starting calendar year (2025 means 2025-26). */
 	private final MutableLiveData<Integer> academicYear =
@@ -137,7 +152,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	public AttendanceViewModel(@NonNull Application application) {
 		super(application);
-		db = MainDatabase.getInstance(application);
+		repository = new RoomAttendanceRepository(MainDatabase.getInstance(application));
 		resolveCurrentSession();
 	}
 
@@ -166,15 +181,15 @@ public class AttendanceViewModel extends AndroidViewModel {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 
 			long now = System.currentTimeMillis() / 1000L;
-			EntityAcademicYear session = db.daoAcademicYear().findContainingSync(now);
+			EntityAcademicYear session = repository.academicYearContainingSync(now);
 
 			if (session == null) {
-				session = db.daoAcademicYear().getLatestSync();
+				session = repository.latestAcademicYearSync();
 			}
 
 			if (session == null) {
 				session = EntityAcademicYear.defaultFor(provisionalYear());
-				db.daoAcademicYear().upsert(session);
+				repository.upsertAcademicYear(session);
 			}
 
 			currentSession = session;
@@ -238,7 +253,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	private int sessionYearFor(@NonNull ZonedDateTime when) {
 
 		EntityAcademicYear session =
-				db.daoAcademicYear().findContainingSync(when.toEpochSecond());
+				repository.academicYearContainingSync(when.toEpochSecond());
 
 		return session == null ? academicYearValue() : session.academicYear;
 	}
@@ -246,12 +261,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 	// ── Academic sessions ────────────────────────────────────────────────
 
 	public LiveData<List<EntityAcademicYear>> getAcademicYears() {
-		return db.daoAcademicYear().getAll();
+		return repository.observeAcademicYears();
 	}
 
 	public void loadAcademicYearsSync(
 			@NonNull java.util.function.Consumer<List<EntityAcademicYear>> cb) {
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoAcademicYear().getAllSync()));
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.academicYearsSync()));
 	}
 
 	/**
@@ -260,7 +275,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * rather than letting the totals quietly under-count.
 	 */
 	public LiveData<Integer> getOrphanLectureCount() {
-		return db.daoAcademicYear().countOrphanLectures();
+		return repository.observeOrphanLectureCount();
 	}
 
 	/**
@@ -284,7 +299,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				}
 
 				if (creating) {
-					EntityAcademicYear clash = db.daoAcademicYear().getByIdSync(year);
+					EntityAcademicYear clash = repository.academicYearSync(year);
 
 					if (clash != null) {
 						toastMessage.postValue("The " + clash.label()
@@ -295,7 +310,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 				// Overlapping sessions would make a lecture's session ambiguous, and the join
 				// would silently pick one, so the clash is refused up front.
-				for (EntityAcademicYear existing : db.daoAcademicYear().getAllSync()) {
+				for (EntityAcademicYear existing : repository.academicYearsSync()) {
 					if (existing.academicYear == year) {
 						continue;
 					}
@@ -306,7 +321,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 					}
 				}
 
-				db.daoAcademicYear().upsert(EntityAcademicYear.of(year, start, end));
+				repository.upsertAcademicYear(EntityAcademicYear.of(year, start, end));
 				toastMessage.postValue("Session saved");
 				resolveCurrentSession();
 				onDone.run();
@@ -323,14 +338,14 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void loadSessionDeletionImpact(@NonNull EntityAcademicYear year,
 	                                      @NonNull java.util.function.Consumer<SessionImpact> cb) {
 
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoAcademicYear()
-				.deletionImpactSync(year.academicYear, year.startEpoch, year.endEpoch)));
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.sessionDeletionImpactSync(
+				year.academicYear, year.startEpoch, year.endEpoch)));
 	}
 
 	public void deleteAcademicYear(@NonNull EntityAcademicYear year, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoAcademicYear().delete(year);
+				repository.deleteAcademicYear(year);
 				toastMessage.postValue("Session removed");
 				resolveCurrentSession();
 				onDone.run();
@@ -368,6 +383,115 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	public void clearImportResult() {
 		importResult.setValue(null);
+	}
+
+	// ── Syncing with the server ──────────────────────────────────────────
+
+	/**
+	 * Network work, on a thread of its own.
+	 * <p>
+	 * Not the database pool, which would mean a sign-in with no signal occupying a query thread
+	 * for thirty seconds while the screens wait; and not the file pool, which is single-threaded
+	 * so that two restores cannot race. Signing in is rare and user-initiated, and the draining
+	 * is WorkManager's business rather than this class's.
+	 */
+	private static final ExecutorService NETWORK_TASK_EXECUTOR =
+			Executors.newSingleThreadExecutor();
+
+	/** How many local changes are waiting to reach the server. */
+	public LiveData<Integer> getPendingChanges() {
+		return repository.observePendingChangeCount();
+	}
+
+	/** Whether this device holds a session at all. Not LiveData: it changes only here. */
+	public boolean isSignedIn() {
+		return DeviceIdentity.hasToken(getApplication());
+	}
+
+	/** The last thing that went wrong while syncing, or null. */
+	@Nullable
+	public String lastSyncError() {
+		return DeviceIdentity.lastSyncError(getApplication());
+	}
+
+	/** The node this device issues keys under, or 0 before it has been told one. */
+	public int deviceNode() {
+		return IdGenerator.nodeID();
+	}
+
+	/**
+	 * Signs in, registers this device if the server has not seen it before, and asks for a
+	 * sync.
+	 * <p>
+	 * The password array is wiped by {@code SyncSignIn}, however this ends.
+	 *
+	 * @param onDone run on a background thread with the display name on success, or null on
+	 *               failure. What to show the user goes to {@link #getToastMessage()}, which
+	 *               the activity shows wherever the user has got to by then — the same channel
+	 *               every other background result in this app reports through
+	 */
+	public void signIn(@NonNull String email, @NonNull SyncSignIn.Door door,
+	                   @NonNull char[] password,
+	                   @NonNull java.util.function.Consumer<String> onDone) {
+
+		busy.setValue(true);
+
+		NETWORK_TASK_EXECUTOR.execute(() -> {
+			try {
+				SyncSignIn.Session session = SyncSignIn.signIn(getApplication(), email, door,
+						password);
+
+				// The node has to reach IdGenerator before the next key is issued, and
+				// SyncSignIn has already applied it; this only tells the user.
+				toastMessage.postValue(session.mustRotate()
+						? "Signed in. This account's password has to be changed before "
+								+ "anything else will work."
+						: "Signed in as " + session.displayName() + ", device "
+								+ session.node());
+
+				SyncScheduler.requestSync(getApplication());
+				onDone.accept(session.displayName());
+
+			} catch (java.io.IOException e) {
+				// The server's own sentence where there is one: every refusal to sign in reads
+				// identically by design, and inventing a different one here would undo that.
+				toastMessage.postValue(e.getMessage() == null
+						? "Could not sign in" : e.getMessage());
+				onDone.accept(null);
+
+			} finally {
+				busy.postValue(false);
+			}
+		});
+	}
+
+	/**
+	 * Ends the session, on the server as well as here.
+	 * <p>
+	 * The queue is left alone. A phone signed out with marks still waiting keeps them, and they
+	 * go up when somebody signs in again — losing them would be the one outcome worse than a
+	 * stuck queue.
+	 */
+	public void signOut(@NonNull Runnable onDone) {
+
+		NETWORK_TASK_EXECUTOR.execute(() -> {
+			try {
+				new SyncClient(getApplication()).logout();
+			} catch (java.io.IOException e) {
+				// Best effort: see SyncClient.logout. The token is forgotten either way.
+			}
+
+			DeviceIdentity.forgetToken(getApplication());
+			DeviceIdentity.recordSyncError(getApplication(), null);
+			toastMessage.postValue("Signed out");
+			onDone.run();
+		});
+	}
+
+	/** Asks for a sync now, rather than waiting for the hourly one. */
+	public void syncNow() {
+		SyncScheduler.requestSync(getApplication());
+		toastMessage.setValue("Syncing");
 	}
 
 	// ── Attendance sheet export ──────────────────────────────────────────
@@ -547,10 +671,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 
-			LectureDetails lecture = db.daoLecture().getDetailsByIdSync(lectureID);
+			LectureDetails lecture = repository.lectureDetailsSync(lectureID);
 			boolean unsaved = false;
 
-			for (EntityAttendance stored : db.daoAttendance().getForLectureSync(lectureID)) {
+			for (EntityAttendance stored : repository.attendanceForLectureSync(lectureID)) {
 				Boolean shown = onScreen.get(stored.studentID);
 				if (shown != null && shown != stored.present) {
 					unsaved = true;
@@ -739,7 +863,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 */
 	public LiveData<List<ClassKey>> getClasses() {
 		return Transformations.switchMap(studentFilterYear,
-				db.daoStudent()::getClassesForYear);
+				repository::observeClassesForYear);
 	}
 
 	/**
@@ -815,7 +939,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		final String q = f.query;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> filteredStudents.postValue(
-				db.daoStudent().filterStudentsSync(acadYear, y, st, major, minor, oe, div,
+				repository.filterStudentsSync(acadYear, y, st, major, minor, oe, div,
 						batch, q)));
 	}
 
@@ -826,7 +950,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			@NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
 		final int acadYear = studentFilter().academicYear;
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoBatch().getAllForYearSync(acadYear)));
+				cb.accept(repository.batchesForYearSync(acadYear)));
 	}
 
 	public void addStudent(@NonNull EntityStudent student, @NonNull String rollNo,
@@ -841,7 +965,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoStudent().upsertStudentWithYear(student, acadYear, rollNo, year, stream,
+				repository.upsertStudentWithYear(student, acadYear, rollNo, year, stream,
 						majorDept, minorDept, oeDept, semester, division);
 				toastMessage.postValue("Student saved");
 				refreshStudents();
@@ -960,13 +1084,13 @@ public class AttendanceViewModel extends AndroidViewModel {
 	// ── Professors ───────────────────────────────────────────────────────
 
 	public LiveData<List<EntityProfessor>> getProfessors() {
-		return db.daoProfessor().getAll();
+		return repository.observeProfessors();
 	}
 
 	public void addProfessor(@NonNull EntityProfessor professor, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoProfessor().insert(professor);
+				repository.insertProfessor(professor);
 				toastMessage.postValue("Professor saved");
 				onDone.run();
 			} catch (Exception e) {
@@ -978,7 +1102,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	// ── Courses ──────────────────────────────────────────────────────────
 
 	public LiveData<List<EntityCourse>> getCourses() {
-		return db.daoCourse().getAll();
+		return repository.observeCourses();
 	}
 
 	/**
@@ -991,8 +1115,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                      @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoCourse().insert(course);
-				db.daoCourse().setInstructors(course.courseID, instructorIDs);
+				repository.insertCourse(course);
+				repository.setCourseInstructors(course.courseID, instructorIDs);
 				toastMessage.postValue("Course saved");
 				onDone.run();
 			} catch (Exception e) {
@@ -1009,7 +1133,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * Anything that is about to record new work wants {@link #loadActiveCoursesSync} instead.
 	 */
 	public void loadCoursesSync(@NonNull java.util.function.Consumer<List<EntityCourse>> cb) {
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoCourse().getAllSync()));
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.coursesSync()));
 	}
 
 	/**
@@ -1021,7 +1145,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 */
 	public void loadActiveCoursesSync(
 			@NonNull java.util.function.Consumer<List<EntityCourse>> cb) {
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoCourse().getActiveSync()));
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.activeCoursesSync()));
 	}
 
 	/**
@@ -1040,7 +1164,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 
-			List<EntityCourse> courses = new ArrayList<>(db.daoCourse().getActiveSync());
+			List<EntityCourse> courses = new ArrayList<>(repository.activeCoursesSync());
 
 			boolean present = false;
 			for (EntityCourse course : courses) {
@@ -1051,7 +1175,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			}
 
 			if (!present) {
-				EntityCourse discontinued = db.daoCourse().getByIdSync(mustInclude);
+				EntityCourse discontinued = repository.courseSync(mustInclude);
 				if (discontinued != null) {
 					courses.add(discontinued);
 					// getActiveSync orders by code; keep the appended row in that order
@@ -1066,17 +1190,17 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	public void loadProfessorsSync(
 			@NonNull java.util.function.Consumer<List<EntityProfessor>> cb) {
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoProfessor().getAllSync()));
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.professorsSync()));
 	}
 
 	// ── Batches ──────────────────────────────────────────────────────────
 
 	public LiveData<List<EntityBatchDesc>> getBatches() {
-		return Transformations.switchMap(academicYear, db.daoBatch()::getAllForYear);
+		return Transformations.switchMap(academicYear, repository::observeBatchesForYear);
 	}
 
 	public void loadBatchesSync(@NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoBatch().getAllSync()));
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.batchesSync()));
 	}
 
 	/**
@@ -1091,7 +1215,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				EntityBatchDesc batch = new EntityBatchDesc(batchName, acadYear, description);
-				db.daoBatch().createBatchFromStudents(batch, studentIDs);
+				repository.createBatchFromStudents(batch, studentIDs);
 				toastMessage.postValue("Batch created with " + studentIDs.size() + " students");
 				onDone.run();
 			} catch (Exception e) {
@@ -1103,7 +1227,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	// ── Lectures ─────────────────────────────────────────────────────────
 
 	public LiveData<List<LectureDetails>> getAllLectures() {
-		return db.daoLecture().getAllDetails();
+		return repository.observeAllLectures();
 	}
 
 	// ── Lecture list filtering ───────────────────────────────────────────
@@ -1158,7 +1282,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 			LectureFilter f = filter == null ? new LectureFilter() : filter;
 
-			return db.daoLecture().getFilteredDetails(f.fromEpoch(), f.toEpoch(), f.courseID,
+			return repository.observeFilteredLectures(f.fromEpoch(), f.toEpoch(), f.courseID,
 					f.professorID, f.department, f.batchID, f.courseType);
 		});
 	}
@@ -1171,7 +1295,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		ZoneId zone = ZoneId.systemDefault();
 		long from = date.atStartOfDay(zone).toEpochSecond();
 		long to = date.plusDays(1).atStartOfDay(zone).toEpochSecond() - 1;
-		return db.daoLecture().getDetailsBetween(from, to);
+		return repository.observeLecturesBetween(from, to);
 	}
 
 	/**
@@ -1183,7 +1307,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		LocalDate today = LocalDate.now();
 		long from = today.atStartOfDay(zone).toEpochSecond();
 		long to = today.plusDays(1).atStartOfDay(zone).toEpochSecond() - 1;
-		return db.daoLecture().countLecturesBetween(from, to);
+		return repository.observeLectureCountBetween(from, to);
 	}
 
 	/**
@@ -1225,8 +1349,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			List<StudentWithYear> students = batchID == null
-					? db.daoStudent().getRollForCourseSync(courseID, acadYear)
-					: db.daoStudent().getRollForBatchSync(batchID, acadYear);
+					? repository.rollForCourseSync(courseID, acadYear)
+					: repository.rollForBatchSync(batchID, acadYear);
 
 			List<AttendanceRow> rows = new ArrayList<>();
 			for (StudentWithYear student : students) {
@@ -1283,26 +1407,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.runInTransaction(() -> {
-
-					Long existing = db.daoLecture().findExisting(courseID, batchID, start, end);
-
-					long lectureID;
-					if (existing != null) {
-						lectureID = existing;
-						db.daoAttendance().clearForLecture(lectureID);
-					} else {
-						lectureID = db.daoLecture().insert(
-								new EntityLecture(courseID, batchID, start, end, notes));
-					}
-
-					List<EntityAttendance> records = new ArrayList<>();
-					for (AttendanceRow row : snapshot) {
-						records.add(new EntityAttendance(lectureID, row.studentID,
-								row.present));
-					}
-					db.daoAttendance().insertAll(records);
-				});
+				// One repository call, because it is one transaction: see
+				// AttendanceRepository.recordLectureWithMarks.
+				repository.recordLectureWithMarks(courseID, batchID, start, end, notes,
+						snapshot);
 
 				toastMessage.postValue("Attendance recorded");
 				onDone.run();
@@ -1341,7 +1449,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		busy.setValue(true);
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
-			LectureDetails details = db.daoLecture().getDetailsByIdSync(lectureID);
+			LectureDetails details = repository.lectureDetailsSync(lectureID);
 			currentLecture = details;
 
 			if (details == null) {
@@ -1353,12 +1461,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 			// A lecture with no batch was taken for the course's whole class, so the roll is
 			// rebuilt from the course rather than from batch membership.
 			List<StudentWithYear> students = details.batchID == null
-					? db.daoStudent().getRollForCourseSync(details.courseID,
+					? repository.rollForCourseSync(details.courseID,
 					sessionYearFor(details.startDateTime))
-					: db.daoBatch().getStudentsInBatchSync(details.batchID);
-			List<Long> presentIds = db.daoAttendance().getPresentIdsSync(lectureID);
+					: repository.studentsInBatchSync(details.batchID);
+			List<Long> presentIds = repository.presentStudentIdsSync(lectureID);
 
-			List<EntityAttendance> existing = db.daoAttendance().getForLectureSync(lectureID);
+			List<EntityAttendance> existing = repository.attendanceForLectureSync(lectureID);
 			List<Long> markedIds = new ArrayList<>();
 			for (EntityAttendance record : existing) {
 				markedIds.add(record.studentID);
@@ -1427,7 +1535,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoAttendance().saveSheet(lectureID, records);
+				repository.saveAttendanceSheet(lectureID, records);
 				toastMessage.postValue("Attendance saved");
 				onDone.run();
 			} catch (Exception e) {
@@ -1448,13 +1556,13 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * browsed left the header blank for any student who is not enrolled in both.
 	 */
 	public LiveData<StudentWithYear> getStudent(long studentID, int academicYear) {
-		return db.daoStudent().getOne(studentID, academicYear);
+		return repository.observeStudent(studentID, academicYear);
 	}
 
 	public LiveData<List<StudentCourseStat>> getStudentCourseBreakdown(
 			long studentID, @NonNull BreakdownFilter filter) {
 
-		return db.daoStudent().getCourseBreakdown(studentID, filter.fromEpoch(),
+		return repository.observeCourseBreakdown(studentID, filter.fromEpoch(),
 				filter.toEpoch(), filter.courseTypes.isEmpty(),
 				new ArrayList<>(filter.courseTypes), filter.courseIDs.isEmpty(),
 				new ArrayList<>(filter.courseIDs));
@@ -1468,7 +1576,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void loadStudentCourses(long studentID,
 	                               @NonNull java.util.function.Consumer<List<EntityCourse>> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoStudent().getAttendedCoursesSync(studentID)));
+				cb.accept(repository.attendedCoursesSync(studentID)));
 	}
 
 	/**
@@ -1504,13 +1612,13 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                                                                 long courseID,
 	                                                                 @Nullable Long fromEpoch,
 	                                                                 @Nullable Long toEpoch) {
-		return db.daoStudent().getLectureMarks(studentID, courseID, fromEpoch, toEpoch);
+		return repository.observeLectureMarks(studentID, courseID, fromEpoch, toEpoch);
 	}
 
 	public void loadStudentSync(long studentID, int academicYear,
 	                            @NonNull java.util.function.Consumer<StudentWithYear> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoStudent().getOneSync(studentID, academicYear)));
+				cb.accept(repository.studentSync(studentID, academicYear)));
 	}
 
 	/**
@@ -1520,7 +1628,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void loadDeletionImpact(long studentID, int academicYear,
 	                               @NonNull java.util.function.Consumer<DeletionImpact> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoStudent().deletionImpact(studentID, academicYear)));
+				cb.accept(repository.studentDeletionImpactSync(studentID, academicYear)));
 	}
 
 	/**
@@ -1531,7 +1639,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoStudent().withdrawFromSession(studentID, academicYear);
+				repository.withdrawFromSession(studentID, academicYear);
 				toastMessage.postValue("Student removed from this session");
 				refreshStudents();
 				onDone.run();
@@ -1548,7 +1656,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoStudent().deleteStudentCascade(studentID);
+				repository.deleteStudentCascade(studentID);
 				toastMessage.postValue("Student deleted");
 				refreshStudents();
 				onDone.run();
@@ -1571,7 +1679,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoStudent().updateStudentWithYear(student, academicYear, rollNo, year,
+				repository.updateStudentWithYear(student, academicYear, rollNo, year,
 						stream, majorDept, minorDept, oeDept, semester, division);
 				toastMessage.postValue("Student updated");
 				refreshStudents();
@@ -1587,7 +1695,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void updateProfessor(@NonNull EntityProfessor professor, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoProfessor().update(professor);
+				repository.updateProfessor(professor);
 				toastMessage.postValue("Professor updated");
 				onDone.run();
 			} catch (Exception e) {
@@ -1599,7 +1707,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void loadProfessorSync(long profID,
 	                              @NonNull java.util.function.Consumer<EntityProfessor> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoProfessor().getByIdSync(profID)));
+				cb.accept(repository.professorSync(profID)));
 	}
 
 	/**
@@ -1608,14 +1716,14 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * cannot be saved.
 	 */
 	public void countProfessors(@NonNull java.util.function.Consumer<Integer> cb) {
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoProfessor().countSync()));
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.professorCountSync()));
 	}
 
 	// ── Course edit and delete ───────────────────────────────────────────
 
 	public void loadCourseSync(long courseID,
 	                           @NonNull java.util.function.Consumer<EntityCourse> cb) {
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoCourse().getByIdSync(courseID)));
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.courseSync(courseID)));
 	}
 
 	/** @see #addCourse for what {@code instructorIDs} does and does not have to contain */
@@ -1623,8 +1731,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                         @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoCourse().update(course);
-				db.daoCourse().setInstructors(course.courseID, instructorIDs);
+				repository.updateCourse(course);
+				repository.setCourseInstructors(course.courseID, instructorIDs);
 				toastMessage.postValue("Course updated");
 				onDone.run();
 			} catch (Exception e) {
@@ -1639,7 +1747,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void loadCourseInstructorIdsSync(long courseID,
 	                                        @NonNull java.util.function.Consumer<List<Long>> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoCourse().getInstructorIdsSync(courseID)));
+				cb.accept(repository.courseInstructorIdsSync(courseID)));
 	}
 
 	/**
@@ -1649,7 +1757,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void discontinueCourse(long courseID, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoCourse().setDiscontinued(courseID, ZonedDateTime.now());
+				repository.setCourseDiscontinued(courseID, ZonedDateTime.now());
 				toastMessage.postValue("Course marked as discontinued");
 				onDone.run();
 			} catch (Exception e) {
@@ -1680,7 +1788,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				EntityLecture source = db.daoLecture().getByIdSync(sourceLectureID);
+				EntityLecture source = repository.lectureSync(sourceLectureID);
 
 				if (source == null) {
 					toastMessage.postValue("That lecture no longer exists");
@@ -1698,7 +1806,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 					return;
 				}
 
-				if (db.daoLecture().findExisting(source.courseID, source.batchID, start, end)
+				if (repository.findLecture(source.courseID, source.batchID, start, end)
 						!= null) {
 					toastMessage.postValue(
 							"A lecture is already recorded for that course and time");
@@ -1708,16 +1816,11 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 				// One transaction: a lecture that exists without its copied marks would look
 				// like a session where nobody was recorded, which is not what was asked for.
-				final long[] created = new long[1];
-
-				db.runInTransaction(() -> {
-					created[0] = db.daoLecture().insert(new EntityLecture(
-							source.courseID, source.batchID, start, end, source.notes));
-					db.daoAttendance().copyMarks(sourceLectureID, created[0]);
-				});
+				long created = repository.duplicateLecture(sourceLectureID, source.courseID,
+						source.batchID, start, end, source.notes);
 
 				toastMessage.postValue("Attendance duplicated");
-				onDone.accept(created[0]);
+				onDone.accept(created);
 
 			} catch (Exception e) {
 				toastMessage.postValue("Could not duplicate: " + e.getMessage());
@@ -1730,7 +1833,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void loadLectureForEdit(long lectureID,
 	                               @NonNull java.util.function.Consumer<EntityLecture> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoLecture().getByIdSync(lectureID)));
+				cb.accept(repository.lectureSync(lectureID)));
 	}
 
 	/**
@@ -1752,7 +1855,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                               @NonNull java.util.function.Consumer<Integer> cb) {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
-			List<Long> marked = db.daoAttendance().getMarkedIdsSync(lectureID);
+			List<Long> marked = repository.markedStudentIdsSync(lectureID);
 			Set<Long> onRoll = rollIds(courseID, batchID, sessionYearFor(start));
 
 			int stranded = 0;
@@ -1769,8 +1872,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 	private Set<Long> rollIds(long courseID, @Nullable Long batchID, int acadYear) {
 
 		List<StudentWithYear> roll = batchID == null
-				? db.daoStudent().getRollForCourseSync(courseID, acadYear)
-				: db.daoStudent().getRollForBatchSync(batchID, acadYear);
+				? repository.rollForCourseSync(courseID, acadYear)
+				: repository.rollForBatchSync(batchID, acadYear);
 
 		Set<Long> ids = new HashSet<>();
 		for (StudentWithYear student : roll) {
@@ -1799,7 +1902,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 				// The unique index would reject this anyway, but as a constraint violation
 				// rather than something the user can act on.
-				Long clash = db.daoLecture().findExisting(courseID, batchID, start, end);
+				Long clash = repository.findLecture(courseID, batchID, start, end);
 
 				if (clash != null && clash != lectureID) {
 					toastMessage.postValue(
@@ -1807,7 +1910,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 					return;
 				}
 
-				db.daoLecture().updateLecture(lectureID, courseID, batchID, start, end, notes);
+				repository.updateLecture(lectureID, courseID, batchID, start, end, notes);
 
 				if (dropStranded) {
 					// Read against the session the lecture is being moved into, matching
@@ -1821,9 +1924,9 @@ public class AttendanceViewModel extends AndroidViewModel {
 					// clear the sheet by accident rather than by decision. Doing it
 					// explicitly is what an empty roll actually means.
 					if (onRoll.isEmpty()) {
-						db.daoAttendance().clearForLecture(lectureID);
+						repository.clearAttendanceForLecture(lectureID);
 					} else {
-						db.daoAttendance().deleteForLectureExcept(lectureID,
+						repository.deleteAttendanceExcept(lectureID,
 								new ArrayList<>(onRoll));
 					}
 				}
@@ -1846,7 +1949,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void clearAttendanceForLecture(long lectureID, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoAttendance().clearForLecture(lectureID);
+				repository.clearAttendanceForLecture(lectureID);
 				toastMessage.postValue("Attendance record deleted");
 				onDone.run();
 			} catch (Exception e) {
@@ -1863,12 +1966,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void deleteLecture(long lectureID, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				EntityLecture lecture = db.daoLecture().getByIdSync(lectureID);
+				EntityLecture lecture = repository.lectureSync(lectureID);
 				if (lecture == null) {
 					toastMessage.postValue("Lecture not found");
 					return;
 				}
-				db.daoLecture().deleteLectureCascade(lecture);
+				repository.deleteLectureCascade(lecture);
 				toastMessage.postValue("Lecture deleted");
 				onDone.run();
 			} catch (Exception e) {
@@ -1881,7 +1984,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void loadLectureSync(long lectureID,
 	                            @NonNull java.util.function.Consumer<LectureDetails> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoLecture().getDetailsByIdSync(lectureID)));
+				cb.accept(repository.lectureDetailsSync(lectureID)));
 	}
 
 	// ── Batch edit and delete ────────────────────────────────────────────
@@ -1889,7 +1992,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	/** Reads one batch. The callback runs off the main thread. */
 	public void loadBatchSync(long batchID,
 	                          @NonNull java.util.function.Consumer<EntityBatchDesc> cb) {
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(db.daoBatch().getByIdSync(batchID)));
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.batchSync(batchID)));
 	}
 
 	/**
@@ -1928,7 +2031,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			int acadYear = batchID > 0 ? batchSessionYear(batchID, fallbackYear) : fallbackYear;
 
 			List<StudentWithYear> all =
-					db.daoStudent().getClassSync(acadYear, null, null, null);
+					repository.classRollSync(acadYear, null, null, null);
 
 			if (batchID <= 0) {
 				List<Long> seed = batchSeed == null ? new ArrayList<>() : batchSeed;
@@ -1937,8 +2040,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 				return;
 			}
 
-			EntityBatchDesc batch = db.daoBatch().getByIdSync(batchID);
-			List<Long> members = db.daoBatch().getMemberIdsSync(batchID, acadYear);
+			EntityBatchDesc batch = repository.batchSync(batchID);
+			List<Long> members = repository.batchMemberIdsSync(batchID, acadYear);
 			cb.onLoaded(batch, all, members);
 		});
 	}
@@ -1953,7 +2056,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			List<Long> ids = new ArrayList<>();
-			for (StudentWithYear student : db.daoStudent().filterStudentsSync(
+			for (StudentWithYear student : repository.filterStudentsSync(
 					f.academicYear, f.year, f.stream, f.majorDept, f.minorDept, f.oeDept,
 					f.division, f.batchID, f.query)) {
 				ids.add(student.studentID);
@@ -1967,7 +2070,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * read. Reads the database, so it must be called off the main thread.
 	 */
 	private int batchSessionYear(long batchID, int fallbackYear) {
-		EntityBatchDesc batch = db.daoBatch().getByIdSync(batchID);
+		EntityBatchDesc batch = repository.batchSync(batchID);
 		return batch == null ? fallbackYear : batch.academicYear;
 	}
 
@@ -1984,7 +2087,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				int acadYear = batchSessionYear(batchID, fallbackYear);
-				db.daoBatch().updateBatch(batchID, name, description, acadYear, studentIDs);
+				repository.updateBatch(batchID, name, description, acadYear, studentIDs);
 				toastMessage.postValue("Batch updated");
 				onDone.run();
 			} catch (Exception e) {
@@ -2000,7 +2103,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void deleteBatch(long batchID, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				db.daoBatch().deleteBatchChecked(batchID);
+				repository.deleteBatchChecked(batchID);
 				toastMessage.postValue("Batch deleted");
 				onDone.run();
 			} catch (Exception e) {
@@ -2020,7 +2123,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			@NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
 		final int acadYear = academicYearValue();
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(db.daoBatch().getAllForYearSync(acadYear)));
+				cb.accept(repository.batchesForYearSync(acadYear)));
 	}
 
 	/**
@@ -2042,7 +2145,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 
 			List<EntityBatchDesc> batches =
-					new ArrayList<>(db.daoBatch().getAllForYearSync(acadYear));
+					new ArrayList<>(repository.batchesForYearSync(acadYear));
 
 			if (mustInclude != null) {
 
@@ -2055,7 +2158,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				}
 
 				if (!present) {
-					EntityBatchDesc older = db.daoBatch().getByIdSync(mustInclude);
+					EntityBatchDesc older = repository.batchSync(mustInclude);
 					if (older != null) {
 						batches.add(older);
 						batches.sort((a, b) -> a.batchName.compareToIgnoreCase(b.batchName));
@@ -2072,29 +2175,29 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * arrives null on every row; see {@code DaoBatch.getStudentsInBatch}.
 	 */
 	public LiveData<List<StudentWithYear>> getStudentsInBatch(long batchID) {
-		return db.daoBatch().getStudentsInBatch(batchID);
+		return repository.observeStudentsInBatch(batchID);
 	}
 
 	// ── Statistics ───────────────────────────────────────────────────────
 
 	public LiveData<List<StudentAttendanceStat>> getStudentStats() {
-		return Transformations.switchMap(academicYear, db.daoAttendance()::getStudentStats);
+		return Transformations.switchMap(academicYear, repository::observeStudentStats);
 	}
 
 	public LiveData<List<CourseAttendanceStat>> getCourseStats() {
-		return db.daoAttendance().getCourseStats();
+		return repository.observeCourseStats();
 	}
 
 	public LiveData<Double> getOverallPercentage() {
-		return db.daoAttendance().getOverallPercentage();
+		return repository.observeOverallPercentage();
 	}
 
 	public LiveData<Integer> countStudents() {
-		return Transformations.switchMap(academicYear, db.daoStudent()::countStudents);
+		return Transformations.switchMap(academicYear, repository::observeStudentCount);
 	}
 
 	public LiveData<Integer> countCourses() {
-		return db.daoCourse().countCourses();
+		return repository.observeCourseCount();
 	}
 
 	// ── Flexible statistics ──────────────────────────────────────────────
@@ -2207,9 +2310,9 @@ public class AttendanceViewModel extends AndroidViewModel {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				List<StatRow> rows =
-						db.daoStats().runGrouped(StatsQueryBuilder.grouped(snapshot));
+						repository.statRowsSync(StatsQueryBuilder.grouped(snapshot));
 				StatsSummary summary =
-						db.daoStats().runSummary(StatsQueryBuilder.summary(snapshot));
+						repository.statsSummarySync(StatsQueryBuilder.summary(snapshot));
 
 				// The groups partition the same rows, so counting the ones below the threshold
 				// here is exactly what a third aggregate query would have returned, without
@@ -2241,9 +2344,9 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 */
 	public void loadStatsFilterOptions(@NonNull StatsOptionsCallback cb) {
 		MainDatabase.DB_EXECUTOR.execute(() -> cb.onLoaded(
-				db.daoCourse().getAllSync(),
-				db.daoBatch().getAllSync(),
-				db.daoProfessor().getAllSync()));
+				repository.coursesSync(),
+				repository.batchesSync(),
+				repository.professorsSync()));
 	}
 
 	public interface StatsOptionsCallback {

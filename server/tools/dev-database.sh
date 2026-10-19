@@ -116,7 +116,9 @@ fi
 # says what it costs.
 if [[ "${MIGRATE:-0}" == "1" ]]; then
     echo "Applying migrations directly as sies_owner"
-    for file in "$SERVER"/src/main/resources/db/migration/V*.sql; do
+    # By version, not by name: a lexicographic glob puts V10 before V2.
+    for file in $(ls "$SERVER"/src/main/resources/db/migration/V*.sql \
+            | sort -t V -k2 -n); do
         docker exec -i "$NAME" psql -U sies_owner -d sies -q -v ON_ERROR_STOP=1 \
             -f - < "$file"
         echo "  $(basename "$file")"

@@ -73,4 +73,6 @@ public final class Migrations {
 
 	/** Moves six departments' master's rows from {@code MSc} to {@code MSc_unaided}. */
 	public static final Migration MIGRATION_9_10 = adapt(9);
+
+	public static final Migration MIGRATION_10_11 = adapt(10);
 }

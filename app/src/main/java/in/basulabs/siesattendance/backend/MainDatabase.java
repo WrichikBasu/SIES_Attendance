@@ -14,6 +14,8 @@ import java.io.File;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import in.basulabs.siesattendance.backend.sync.OutboxTriggers;
+
 /**
  * The Room database, and the single place that decides where it lives on disk.
  * <p>
@@ -40,7 +42,12 @@ import java.util.concurrent.Executors;
 		EntityLecture.class,
 		EntityAttendance.class,
 		EntityProfessor.class,
-		EntityAcademicYear.class
+		EntityAcademicYear.class,
+		// Not attendance data: the queue of local changes and the device's own sync
+		// bookkeeping. They are in this database rather than beside it because the outbox is
+		// filled by triggers on the tables above, and a trigger cannot write to another file.
+		EntityOutbox.class,
+		EntitySyncState.class
 }, version = ConstantsAndStatics.DATABASE_VERSION, exportSchema = false)
 @TypeConverters({TypeConvertors.class})
 public abstract class MainDatabase extends RoomDatabase {
@@ -102,8 +109,10 @@ public abstract class MainDatabase extends RoomDatabase {
 						Migrations.MIGRATION_3_4,
 						Migrations.MIGRATION_4_5, Migrations.MIGRATION_5_6,
 						Migrations.MIGRATION_6_7, Migrations.MIGRATION_7_8,
-						Migrations.MIGRATION_8_9, Migrations.MIGRATION_9_10)
-				.addCallback(PRIME_IDS);
+						Migrations.MIGRATION_8_9, Migrations.MIGRATION_9_10,
+						Migrations.MIGRATION_10_11)
+				.addCallback(PRIME_IDS)
+				.addCallback(INSTALL_SYNC_TRIGGERS);
 	}
 
 	/**
@@ -123,6 +132,37 @@ public abstract class MainDatabase extends RoomDatabase {
 			IdGenerator.prime(db);
 		}
 	};
+
+	/**
+	 * Creates the outbox triggers, on every open.
+	 * <p>
+	 * Every open rather than once at creation, and {@code IF NOT EXISTS} rather than a migration
+	 * step, because three different files have to end up with the same triggers: one this build
+	 * created, one an older build created and this build migrated, and one restored from a backup
+	 * written by a phone that may have been on any version at all. "Created when the database was
+	 * created" is a claim about a creation this build may never have seen.
+	 * <p>
+	 * It also means the triggers are re-created after a restore has replaced the file, which is
+	 * the case that would otherwise leave a device writing attendance that is never queued.
+	 *
+	 * @see in.basulabs.siesattendance.backend.sync.OutboxTriggers
+	 */
+	private static final RoomDatabase.Callback INSTALL_SYNC_TRIGGERS =
+			new RoomDatabase.Callback() {
+				@Override
+				public void onOpen(@NonNull SupportSQLiteDatabase db) {
+
+					// The guard row the triggers read. Without it they still queue -- the
+					// condition coalesces -- but the pull would have nothing to set.
+					db.execSQL("INSERT OR IGNORE INTO `" + EntitySyncState.TABLE_NAME
+							+ "` (`id`, `applying`, `lastPullAt`, `lastPushAt`) "
+							+ "VALUES (1, 0, 0, 0)");
+
+					for (String statement : OutboxTriggers.statements()) {
+						db.execSQL(statement);
+					}
+				}
+			};
 
 	/**
 	 * The context the database actually lives under.
@@ -220,4 +260,10 @@ public abstract class MainDatabase extends RoomDatabase {
 	public abstract DaoStats daoStats();
 
 	public abstract DaoAcademicYear daoAcademicYear();
+
+	/**
+	 * The outbox and the sync state. Not an attendance DAO: it reads the queue the triggers
+	 * fill and the one row of bookkeeping beside it.
+	 */
+	public abstract DaoOutbox daoOutbox();
 }

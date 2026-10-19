@@ -360,9 +360,14 @@ public final class TestPostgres implements AutoCloseable {
 
 		try (var stream = Files.list(directory)) {
 			stream.filter(path -> path.getFileName().toString().matches("V\\d+__.*\\.sql"))
-					.sorted()
 					.forEach(files::add);
 		}
+
+		// By version number, not by name. Sorting the paths is lexicographic, which puts V10
+		// before V2 -- and the failure that produces is a migration complaining about a type
+		// an earlier migration had not created yet, which reads like a broken migration.
+		// Flyway orders by version; so does this.
+		files.sort(java.util.Comparator.comparingInt(TestPostgres::versionOf));
 
 		if (files.isEmpty()) {
 			throw new IllegalStateException("no migrations found in " + directory);
@@ -387,6 +392,13 @@ public final class TestPostgres implements AutoCloseable {
 						+ applied.output);
 			}
 		}
+	}
+
+	/** The version a migration's file name declares. */
+	private static int versionOf(Path file) {
+
+		String name = file.getFileName().toString();
+		return Integer.parseInt(name.substring(1, name.indexOf("__")));
 	}
 
 	/** Runs one statement batch inside the container, as the superuser. */

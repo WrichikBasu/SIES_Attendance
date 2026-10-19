@@ -494,14 +494,31 @@ public class PostgresSchemaDriftTest {
 	@Test
 	public void importRunAcceptsExactlyTheSchemaVersionsTheMigrationsCover() throws IOException {
 
-		String sql = normalise(read("V3__import_bookkeeping.sql"));
+		// Across every migration, not just V3's, and the LAST one wins: a range cannot be
+		// edited in place once V3 has been applied somewhere, so widening it means a new
+		// migration that drops the constraint and adds it again. Reading only V3 would fail
+		// the day the device schema moves, which is exactly the day this test should pass.
+		String expected = "CHECK (backup_schema BETWEEN "
+				+ SchemaMigrations.FIRST_SUPPORTED_VERSION + " AND "
+				+ SchemaMigrations.CURRENT_VERSION + ")";
 
-		assertTrue("import_run.backup_schema must span "
-						+ SchemaMigrations.FIRST_SUPPORTED_VERSION + ".."
-						+ SchemaMigrations.CURRENT_VERSION,
-				sql.contains("CHECK (backup_schema BETWEEN "
-						+ SchemaMigrations.FIRST_SUPPORTED_VERSION + " AND "
-						+ SchemaMigrations.CURRENT_VERSION + ")"));
+		String last = null;
+
+		for (String file : migrationFileNames()) {
+
+			String sql = normalise(read(file));
+
+			if (sql.contains("CHECK (backup_schema BETWEEN ")) {
+				last = file;
+			}
+		}
+
+		assertTrue("no migration constrains import_run.backup_schema at all", last != null);
+
+		assertTrue("the last migration to set import_run.backup_schema (" + last + ") must "
+						+ "span " + SchemaMigrations.FIRST_SUPPORTED_VERSION + ".."
+						+ SchemaMigrations.CURRENT_VERSION + ", as:\n  " + expected,
+				normalise(read(last)).contains(expected));
 	}
 
 	/** Each value wrapped in single quotes, as the SQL writes them. */

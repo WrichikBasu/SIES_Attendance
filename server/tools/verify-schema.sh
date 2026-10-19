@@ -48,7 +48,16 @@ psql_run() {
   docker exec -i "$NAME" psql -U postgres -d sies -v ON_ERROR_STOP=1 -q "$@"
 }
 
-for file in "$MIGRATIONS"/V*.sql; do
+# Ordered by version number, not by name. The shell's glob is
+# lexicographic, which put V10 before V2 the moment a tenth migration
+# existed -- and the symptom was "type audit_action does not exist",
+# which reads like a broken migration rather than a broken sort. Flyway
+# itself orders by version, so this only ever bit the scripts.
+migrations_in_order() {
+  ls "$MIGRATIONS"/V*.sql | sort -t V -k2 -n
+}
+
+for file in $(migrations_in_order); do
   echo "==> applying $(basename "$file")"
   psql_run -f - < "$file"
 done

@@ -24,6 +24,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 
 import in.basulabs.siesattendance.backend.StructuredId;
+import in.basulabs.siesattendance.backend.migration.SchemaMigrations;
 import in.basulabs.siesattendance.server.testing.TestPostgres;
 
 /**
@@ -90,7 +91,12 @@ class BackupImporterTest {
 		BackupImporter.Outcome outcome = importIt(backup, "device A", DEVICE_A, false);
 
 		assertTrue(outcome.succeeded(), () -> "failed: " + outcome.failure());
-		assertEquals(10, outcome.schemaVersionAsFound(), "a current backup");
+		// The version the fixture packed at, not a literal: a backup from a phone on the
+		// current release says whatever the current release is, and pinning the number here
+		// makes the next schema bump fail in a test about importing rather than about
+		// versions.
+		assertEquals(SchemaMigrations.CURRENT_VERSION, outcome.schemaVersionAsFound(),
+				"a current backup");
 
 		assertRowCount("professors", 1);
 		assertRowCount("academic_years", 1);

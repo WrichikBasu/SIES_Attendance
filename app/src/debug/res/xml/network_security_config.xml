@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug overlay. Replaces the pinned, https-only configuration in
+    src/main/res/xml for debug builds only; a release APK contains that
+    file and never this one.
+
+    Two differences from it, and both are about the development server
+    rather than about convenience:
+
+    Cleartext is permitted, because the development server has no
+    certificate. Pinning the certificate it does not have is not
+    possible, and giving it a self-signed one would mean a trust anchor
+    in the app for a key on somebody's laptop.
+
+    There is no pin-set, for the same reason.
+
+    What is NOT different: this is still the real network stack talking
+    to the real service over the real wire. A debug build is how the
+    airplane-mode test gets run, so it has to be the thing that is
+    tested, not a mock.
+-->
+<network-security-config>
+
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

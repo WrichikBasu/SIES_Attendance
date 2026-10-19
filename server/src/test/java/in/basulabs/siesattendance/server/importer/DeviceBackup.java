@@ -161,6 +161,16 @@ final class DeviceBackup implements AutoCloseable {
 		}
 	}
 
+	/**
+	 * The open connection, for a test that has to look at the file itself rather than seed it.
+	 * <p>
+	 * One caller: {@code OutboxTriggerTest}, which installs the app's outbox triggers on a
+	 * migrated device database and watches them fire.
+	 */
+	Connection connection() {
+		return connection;
+	}
+
 	// ── Finishing ────────────────────────────────────────────────────────
 
 	/**

@@ -7,10 +7,11 @@ yet; the two query builders are translations of the app's own, checked by runnin
 comparing the rows; the importer reads a device's own encrypted backup and folds it in,
 resolving every row before it writes one.
 
-The service now answers four endpoints under `/api/v1` — sign in, register a device, export a
-register, load a roster — and a bearer token is the only way to reach any of them. The sync pair
-that Phase 6's client will need, the outbox drain and the watermark pull, is deliberately still
-absent: its shape is the outbox's shape.
+The service answers eight endpoints under `/api/v1` — sign in, change a password, sign out,
+register a device, export a register, load a roster, push a device's changes, pull what it has not
+seen — and a bearer token is the only way to reach any of them. The app is behind one interface
+now, keeps Room as its cache, and queues every local change in an outbox its own database fills
+with triggers.
 
 ```
 server/
@@ -25,6 +26,7 @@ server/
     web/DeviceController.java           a node number per install, idempotently
     web/ExportController.java           the register, narrowed to what you may export
     web/RosterController.java           a CSV in, students and student_year out
+    web/SyncController.java             push what a phone has, pull what it has not
     web/LoginRateLimiter.java           attempts per address, in memory
     web/ApiAdvice.java                  every error as one shape
     web/WebBeans.java                   what the service is made of
@@ -48,6 +50,9 @@ server/
     security/Sessions.java              opaque bearer tokens, revocable
     security/DeviceRegistry.java        which install is which
     importer/RosterImporter.java        the shared CSV parser, into PostgreSQL
+    sync/DeviceValue.java               what a device's value means, both ways
+    sync/SyncWriter.java                a batch of intents, applied by primary key
+    sync/SyncReader.java                a snapshot, or everything since a watermark
   src/main/resources/
     application.yml                     every credential from the environment
     application-import.yml              the importer is a command, not a service
@@ -60,6 +65,8 @@ server/
     db/migration/V6__row_level_security.sql   which rows each of them reaches
     db/migration/V7__audit_log.sql      append-only by privilege, not by convention
     db/migration/V8__the_wire.sql       sessions, devices, and who may export what
+    db/migration/V9__device_schema_v11.sql    a backup may now say 11
+    db/migration/V10__sync.sql          the change feed, over the audit log
   src/test/java/.../sql/SqlDumpTest.java         writes every statement for the differ
   src/test/java/.../importer/BackupImporterTest.java   14 tests, against a real database
   src/test/java/.../importer/DeviceBackup.java   builds a genuine .siesbak
@@ -69,6 +76,9 @@ server/
   src/test/java/.../audit/AuditLogTest.java      15 tests, as a role that may not tidy up
   src/test/java/.../web/WireTest.java            35 tests, the whole service over HTTP
   src/test/java/.../web/LoginRateLimiterTest.java   6 tests, no container needed
+  src/test/java/.../web/SyncTest.java            24 tests, the server half of sync
+  src/test/java/.../importer/OutboxTriggerTest.java   11 tests, against real SQLite
+  src/test/java/.../importer/DeviceSqlTest.java  5 tests, the phone's own statements
   src/test/java/.../testing/TestPostgres.java    the throwaway container, shared
   src/test/sql/constraint_smoke_test.sql    52 assertions, 35 of them rejections
   tools/verify-schema.sh                a throwaway container, checked and removed
@@ -76,6 +86,7 @@ server/
   tools/verify-rls.sh                   the policies, as a role they apply to
   tools/verify-audit.sh                 the trail, and that nobody can edit it
   tools/verify-wire.sh                  the endpoints, over real HTTP
+  tools/verify-sync.sh                  both halves of sync, as far as a JVM reaches
   tools/dev-database.sh                 a local database that survives a restart
   tools/roles.sql                       the three roles and what each may do
 ```
@@ -128,6 +139,10 @@ python3 app/src/test/sql/sql_differ.py
 # The Phase 5.5 gate. Boots the whole service on a random port against a throwaway
 # database and talks to it over HTTP, as sies_app.
 ./server/tools/verify-wire.sh
+
+# Phase 6's gate, in the two halves a machine with no handset can run: the server
+# side over HTTP, and the device's queue and statements against real SQLite.
+./server/tools/verify-sync.sh
 ```
 
 `PG_IMAGE` overrides the PostgreSQL version for both the verify script and the differ.
@@ -533,6 +548,171 @@ password against Argon2id on every request is a way to make the server do expens
 nothing — so it leaves no entry. Nothing reached an account, so there would be nothing to
 attribute it to.
 
+## Sync, and what the device does
+
+Two endpoints, `/sync/push` and `/sync/pull`, and the half of the work that is on the phone. The device code is in `:app` under `backend/sync`; the format and the statements both sides
+rely on are in `:shared`, which is what keeps one definition of what a row is.
+
+```
+POST /api/v1/sync/push      the rows this phone has that the server does not
+GET  /api/v1/sync/pull      everything since this phone's watermark
+```
+
+### The outbox is filled by triggers, not by code
+
+Every write to an attendance table queues its own key, in the same statement, through a trigger
+generated from `DeviceTables`. The obvious alternative — appending an intent next to each write in
+the repository — is wrong twice over. It misses writers: a roster CSV, an attendance-record CSV and
+a restored backup all have their own code, and so will whatever is written next by somebody who has
+not read this note. And it is not atomic: an append in Java is a second statement, and the window
+between the two is exactly the moment an app is most likely to be killed, because the user has just
+tapped Save and is putting the phone in their pocket. A mark saved locally and never queued is the
+failure this whole phase exists to prevent, and it would be invisible — the screen would show the
+attendance and the server would never hear of it.
+
+An intent is a **dirty key**, not a diff: the table, up to three key columns, and `UPSERT` or
+`DELETE`. The sender reads the row as it stands when it drains, so three edits before the phone
+finds a signal cost one message, and a replay after a lost response sends the current state rather
+than an older one. The unique index on the key is how the collapse happens, and the unused key
+columns are `0` rather than null because SQLite treats nulls as distinct in a unique index.
+
+Applying what the server sends is also a write, so each trigger is conditioned on
+`sync_state.applying`, which the pull sets inside its own transaction — a crash takes the flag back
+with the writes rather than leaving a device that silently queues nothing. That condition is
+written with `COALESCE(…, 0)` deliberately: without it a missing `sync_state` row makes it
+`NULL = 0`, which is not true, which would stop every intent from being recorded. A queued row too
+many is recoverable; a mark nobody receives is not.
+
+### The change feed is the audit log
+
+A pull asks "what has changed since I last looked", and nothing on the server could answer that:
+the tables carry a `row_version` but no ordering to resume from, and a deleted row carries nothing
+at all. V7's audit log already is that answer — every insert, update and delete, in order, with its
+table and key — so `changes_since()` reads it and the pull turns those keys into rows. The
+alternative was a `sync_seq` column and a bump trigger on each of eleven tables plus a tombstone
+table for the deletions: three new mechanisms to keep in step, where this is one function over a
+record that is already tested and already relied upon.
+
+The service holds no privilege on `audit_log` at all, so the function is `SECURITY DEFINER` and
+hands back keys rather than entries: no actor, no label, no images. A feed, not the record.
+
+The rows themselves are then read **under the caller's own actor**, so the policies decide what
+comes back. The feed is a list of keys; the policies are what make it a list of the caller's keys.
+One thing does leak: a `DELETE` has no row left to apply a policy to, so a deletion is passed on by
+key alone. That is stated rather than papered over — a key is a number that names no person, and
+the alternative is a device that never hears about a deleted lecture and shows it for ever.
+
+### Two tables, and why so few
+
+`synced_tables()` says `lectures` and `attendance`, and that is the whole list. Both are under
+`FORCE ROW LEVEL SECURITY`, so every push is policed by the policies rather than by the service: a
+professor pushing another department's lecture is refused by the database, and the refusal arrives
+as something to report rather than a decision to make.
+
+The other nine are refused outright. `courses`, `students` and `student_year` have no read
+policies — V6's header says why at length — so accepting them would mean this service deciding who
+may rewrite a roster, which is exactly what the design keeps out of Java; and pulling them would
+realise a gap that currently has no endpoint to come through. The consequence worth knowing: a
+brand-new install cannot populate itself from the server. It needs its roster, and the roster needs
+the reachability policy that is still unwritten.
+
+### The node check is the one rule that is not the database's
+
+A row whose key the device issued has to carry that device's node, and nothing in SQL knows which
+phone is holding the token. So the push checks it: a key from another node is refused, and so is a
+key from before the ID scheme existed — those rows reach the server through the backup importer,
+which can renumber them, and a sync push cannot. Attendance has no key of its own to check, and
+needs none: its key is a lecture and a student, both issued elsewhere, and a CR marking a register
+the professor created is the ordinary case.
+
+### Idempotent in both directions
+
+Every upsert is `INSERT … ON CONFLICT (primary key) DO UPDATE … WHERE the row is distinct from
+what is being written`. The `WHERE` is the part worth noticing: without it an upsert always writes,
+`updated_at` and `row_version` move, and the audit trigger records a change — so a device that
+re-sent a batch because it never saw the response would put a "changed" line in the record against
+every row in it, describing a change that did not happen.
+
+A delete of a row that is not there is not an error. A pull is resumable from its watermark, and
+the watermark only moves when every row in the page landed.
+
+### What the phone needs and does not have
+
+The transport is complete: a token in the Android Keystore, an install identifier, pinning declared
+in `network_security_config.xml` so the platform applies it to every request rather than only the
+ones that remembered the right socket factory, and a WorkManager job triggered by Room's
+invalidation tracker whenever the outbox changes.
+
+### Pointing a phone at a development server
+
+A debug build and a release build get different resources, and that is the whole mechanism — no
+flag to forget and no code that asks which build it is.
+
+```
+app/src/main/res/values/strings.xml      sync_base_url is EMPTY: no server
+app/src/main/res/xml/…                   https only, pinned, placeholder pins
+app/src/debug/res/values/strings.xml     http://10.0.2.2:8080/api/v1
+app/src/debug/res/xml/…                  cleartext allowed, no pin-set
+```
+
+`10.0.2.2` is how the emulator reaches the machine it runs on. For a real device on the same
+network, put that machine's address in the debug overlay instead:
+
+```sh
+ip route get 1 | awk '{print $7; exit}'      # e.g. 10.14.0.2
+```
+
+Then: start the database and the service, open **Sync with the server** on the dashboard, and sign
+in. The screen shows the device's node once it has one and how many changes are waiting.
+
+An empty `sync_base_url` in a release build is deliberate twice over. It means every release is a
+local app until somebody configures one — `SyncClient.isConfigured()` is false, nothing is
+scheduled, and the sync screen says so rather than offering a form with nowhere to send it. And it
+disarms the placeholder pins, which would otherwise refuse every connection: setting the address
+without setting real pins makes the first request fail loudly, which is the right order for those
+two jobs to be done in.
+
+Cleartext is permitted in the debug configuration only. The development server has no certificate,
+pinning one it does not have is not possible, and giving it a self-signed one would mean a trust
+anchor in the app for a key on somebody's laptop.
+
+### The path a phone takes, by hand
+
+Worth having, because it is the thing to try when the phone cannot sync and it tells you which
+half is wrong:
+
+```sh
+INSTALL=$(python3 -c 'import uuid; print(uuid.uuid4())')
+
+# 1. Sign in, with the install id. deviceNode comes back null for an install
+#    the server has not seen, which is what makes SyncSignIn register next.
+curl -s -X POST localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d "{\"email\":\"you@sies.edu.in\",\"door\":\"STAFF\",\"password\":\"…\",\"installId\":\"$INSTALL\"}"
+
+# 2. Register it. The node comes back here, and signing in again returns it
+#    rather than issuing another.
+curl -s -X POST localhost:8080/api/v1/devices -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"installId\":\"$INSTALL\",\"provisionalNode\":41234,\"label\":\"Pixel 7a\"}"
+
+# 3. Push a row, keyed under that node, and pull it back.
+curl -s -X POST localhost:8080/api/v1/sync/push -H "Authorization: Bearer $TOKEN" \
+  -H "X-Device-Install: $INSTALL" -H 'Content-Type: application/json' -d @batch.json
+curl -s -H "Authorization: Bearer $TOKEN" -H "X-Device-Install: $INSTALL" \
+  localhost:8080/api/v1/sync/pull
+```
+
+A key has to carry the device's node or the push refuses it, which is the one rule the database
+cannot enforce: `(counter << 16) | node`, with the counter at least `1 << 39`.
+
+**The airplane-mode gate has still not been run.** It needs a handset: there is now a sign-in
+screen and a debug build that reaches a local server, so the test is runnable, but running it is
+somebody holding a phone with the network off. What has been run is each half:
+`SyncTest` pushes three lectures' marks over real HTTP and checks the rows, the replay, the forged
+node, the policy refusal and the audit entries; `OutboxTriggerTest` and `DeviceSqlTest` exercise
+the queue and the device's own statements against real SQLite. `tools/verify-sync.sh` runs both and
+says plainly that the two have not been joined on a phone.
+
 ## What the device schema loses, and why
 
 | Room | Here | Why |
@@ -545,9 +725,9 @@ attribute it to.
 
 ## Findings
 
-Sixteen things. The first four came out of the translation in Phase 2, the next three out of
-building the importer, three more out of Phase 4, two out of Phase 5 and four out of
-Phase 5.5. All but one of the first seven are about the app rather than the schema; the rest are
+Twenty-one things. The first four came out of the translation in Phase 2, the next three out of
+building the importer, three more out of Phase 4, two out of Phase 5, four out of Phase 5.5 and
+five out of Phase 6. All but one of the first seven are about the app rather than the schema; the rest are
 about this schema and this service, which is what happens once they start making decisions of
 their own.
 
@@ -717,6 +897,40 @@ than in a report: `client_ip::text` on an audit entry is not the address somebod
 it to, and `host(client_ip)` is. Worth knowing before writing the first query over
 `audit_log.client_ip`, which is otherwise a query that returns nothing and looks like a logging
 bug.
+
+**The tenth migration broke a sort nobody had looked at.** `verify-schema.sh`, `dev-database.sh`
+and the test harness all applied migrations in the order the shell or `Files.list` gave them, which
+is lexicographic — so `V10__sync.sql` ran first, before `V2`, and failed with *type audit_action
+does not exist*. That message reads like a broken migration, and the broken thing was the sort. Nine
+migrations had hidden it; Flyway itself was right all along, because it orders by version. All three
+now do too.
+
+**A Room column with no default makes a trigger's insert fail, and takes the write with it.**
+`outbox.attempts` was `INTEGER NOT NULL` — Room does not give a primitive a default unless it is
+asked — and the triggers insert the table, the key and the operation and nothing else. So the
+insert violated `NOT NULL`, and because a trigger runs inside the statement that fired it, *every
+write in the app* failed. The first draft of the outbox made the app unable to save attendance at
+all. `OutboxTriggerTest` found it on its first run, which is the whole argument for testing the
+triggers against real SQLite rather than reading them.
+
+**`cond ? Double.valueOf(x) : Long.valueOf(y)` is a `Double`.** Java's conditional operator applies
+binary numeric promotion to its branches, so the type of that expression is `double` and the result
+is boxed as a `Double` — which meant every integer in a parsed sync message came back as one, and a
+55-bit structured key came back rounded. A key one away from the one the phone issued is a different
+lecture. The test that found it asserted on a key that is not exactly representable; one that used a
+round number would have passed.
+
+**An upsert that always writes turns a replay into a recorded change.** `ON CONFLICT DO UPDATE`
+with `updated_at = now()` moves the row every time, and a row that changed is a row the audit
+trigger records — so a phone re-sending a batch because it never saw the response would put a
+"changed" line in the record against every row in it, describing a change that did not happen. The
+fix is a `WHERE ROW(…) IS DISTINCT FROM ROW(EXCLUDED.…)` on the update, which makes a replay touch
+nothing at all.
+
+**Two SQLite drivers disagree about `getObject`.** Android's cursor answers a `Long` where
+sqlite-jdbc answers an `Integer` for the same column, so a row read by what the driver guessed is a
+row whose keys may not compare equal to the ones the server sends back. Columns are read by what
+they *are* — `DeviceSql.readsAsText`, over `DeviceTables.Kind` — rather than by asking the cursor.
 
 ## Where the importer deliberately differs from the merge
 

@@ -43,7 +43,7 @@ public final class SchemaMigrations {
 	 * against. The app asserts this equals its own {@code DATABASE_VERSION}: if a migration is
 	 * added and this is not raised, that test is what says so.
 	 */
-	public static final int CURRENT_VERSION = 10;
+	public static final int CURRENT_VERSION = 11;
 
 	private SchemaMigrations() {
 	}
@@ -108,6 +108,7 @@ public final class SchemaMigrations {
 		steps.add(step(7, 8, SchemaMigrations::v7ToV8));
 		steps.add(step(8, 9, SchemaMigrations::v8ToV9));
 		steps.add(step(9, 10, SchemaMigrations::v9ToV10));
+		steps.add(step(10, 11, SchemaMigrations::v10ToV11));
 
 		return steps;
 	}
@@ -511,6 +512,60 @@ public final class SchemaMigrations {
 
 		db.exec("UPDATE `courses` SET `stream` = 'MSc_unaided' "
 				+ "WHERE `stream` = 'MSc' AND `offeringDepartment` IN " + departments);
+	}
+
+	/**
+	 * Adds the outbox and the device's sync state.
+	 * <p>
+	 * The first migration that adds nothing to the attendance data. Both tables are device
+	 * bookkeeping — a queue of local changes, and where the last pull from the server got to —
+	 * and the schema version moves anyway, because they are in this database rather than beside
+	 * it: the outbox is filled by triggers on the attendance tables, and a SQLite trigger cannot
+	 * write to another file. That atomicity is the whole point of it, so the version bump is the
+	 * price.
+	 * <p>
+	 * The statements are Room's own, copied from the generated {@code MainDatabase_Impl} rather
+	 * than written by hand. Room validates every table against what it expected on each open, so
+	 * a migration that produces so much as a different column order fails the next launch — and
+	 * copying is the only way to be sure. The triggers are deliberately <em>not</em> here: they
+	 * are created on every open, because an upgraded file, a fresh one and a restored one all
+	 * have to end up with them. See {@code OutboxTriggers}.
+	 * <p>
+	 * Nothing is backfilled. An existing database's rows are not queued for sending, because
+	 * this device's history reaches the server through its backup and the importer, not through
+	 * the outbox — and queueing four years of attendance as "local changes" would be a claim
+	 * that every row was marked today.
+	 */
+	private static void v10ToV11(@NonNull SqliteDb db, @NonNull MigrationContext context) {
+
+		db.exec("CREATE TABLE IF NOT EXISTS `outbox` ("
+				+ "`seq` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+				+ "`tableName` TEXT NOT NULL, "
+				+ "`key1` INTEGER NOT NULL, "
+				+ "`key2` INTEGER NOT NULL, "
+				+ "`key3` INTEGER NOT NULL, "
+				+ "`op` TEXT NOT NULL, "
+				+ "`queuedAt` INTEGER NOT NULL, "
+				+ "`attempts` INTEGER NOT NULL DEFAULT 0, "
+				+ "`lastError` TEXT)");
+
+		db.exec("CREATE UNIQUE INDEX IF NOT EXISTS "
+				+ "`index_outbox_tableName_key1_key2_key3` "
+				+ "ON `outbox` (`tableName`, `key1`, `key2`, `key3`)");
+
+		db.exec("CREATE TABLE IF NOT EXISTS `sync_state` ("
+				+ "`id` INTEGER NOT NULL, "
+				+ "`applying` INTEGER NOT NULL, "
+				+ "`watermark` TEXT, "
+				+ "`lastPullAt` INTEGER NOT NULL, "
+				+ "`lastPushAt` INTEGER NOT NULL, "
+				+ "PRIMARY KEY(`id`))");
+
+		// The row the triggers read. OR IGNORE so that running this against a database that
+		// somehow already has it is not an error -- which is also what makes the step safe to
+		// re-run on a staged backup.
+		db.exec("INSERT OR IGNORE INTO `sync_state` "
+				+ "(`id`, `applying`, `lastPullAt`, `lastPushAt`) VALUES (1, 0, 0, 0)");
 	}
 
 	// ── Helpers ──────────────────────────────────────────────────────────

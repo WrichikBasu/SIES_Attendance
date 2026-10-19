@@ -718,4 +718,54 @@
         <item quantity="other">%d attendance marks saved</item>
     </plurals>
 
+    <!--
+        Where the server is, and the one thing that has to be set for a
+        build to sync.
+
+        EMPTY ON PURPOSE. This build has no server, so the app works
+        entirely on its own: SyncClient.isConfigured() is false, nothing
+        is scheduled, and no screen offers to sign in to anything. That
+        is what every install does today and what a release does until
+        somebody sets an address here.
+
+        It also disarms the placeholder pins in
+        network_security_config.xml, which would otherwise refuse every
+        connection. Setting this without setting those means the first
+        request fails loudly, which is the right order for those two
+        things to be done in.
+
+        https only: that file refuses cleartext, and the pins in it are
+        for the host named here. A debug build overrides this with a
+        local http address; see src/debug/res.
+    -->
+    <string name="sync_base_url" translatable="false"></string>
+
+    <!-- ── Syncing ───────────────────────────────────────────────── -->
+
+    <string name="action_sync">Sync with the server</string>
+    <string name="title_sync">Server</string>
+    <string name="hint_password">Password</string>
+    <string name="hint_sync_door">Signing in as</string>
+    <string name="hint_sync_door_explained">Professors and office staff sign in as staff.
+        Class representatives sign in as students. One address can be both, and the server keeps
+        them separate, so this has to be set correctly.</string>
+    <string name="door_staff">Staff</string>
+    <string name="door_student">Student</string>
+    <string name="action_sign_in">Sign in</string>
+    <string name="action_sign_out">Sign out</string>
+    <string name="action_sync_now">Sync now</string>
+    <string name="error_email_required">Enter your email address</string>
+    <string name="error_sync_password_required">Enter your password</string>
+    <string name="sync_no_server">This build has no server</string>
+    <string name="sync_not_signed_in">Not signed in</string>
+    <string name="sync_signed_in">Signed in · device %1$d</string>
+    <string name="sync_nothing_waiting">Everything has reached the server</string>
+    <plurals name="sync_changes_waiting">
+        <item quantity="one">%d change waiting to be sent</item>
+        <item quantity="other">%d changes waiting to be sent</item>
+    </plurals>
+    <string name="sync_explained">Attendance is saved on this phone first and sent when there
+        is a connection, so marking a register never needs a signal. Nothing is removed from
+        this phone until the server has it.</string>
+
 </resources>

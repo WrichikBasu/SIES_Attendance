@@ -46,6 +46,9 @@ dependencies {
     implementation(project(":shared"))
 
     implementation(libs.room.runtime)
+    // Draining the outbox. The only new runtime dependency Phase 6 adds: everything else
+    // the sync path needs -- HTTP, JSON, AES-GCM through the Keystore -- is in the platform.
+    implementation(libs.work.runtime)
     implementation(libs.lifecycle.livedata.ktx)
     implementation(libs.lifecycle.viewmodel.ktx)
     annotationProcessor(libs.room.compiler)

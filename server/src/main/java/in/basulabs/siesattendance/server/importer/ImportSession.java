@@ -21,6 +21,8 @@ import in.basulabs.siesattendance.backend.PostgresEnumTypes;
 import in.basulabs.siesattendance.backend.StoredTimes;
 import in.basulabs.siesattendance.backend.StructuredId;
 import in.basulabs.siesattendance.backend.sync.DeviceTables;
+import in.basulabs.siesattendance.server.sync.DeviceValue;
+import in.basulabs.siesattendance.server.sync.DeviceValue.Field;
 
 /**
  * One run of the importer: reads every table out of a staged backup and folds it into
@@ -70,15 +72,6 @@ import in.basulabs.siesattendance.backend.sync.DeviceTables;
  */
 final class ImportSession {
 
-	/** One PostgreSQL column and the value bound into it. */
-	private record Field(@NonNull String column, @Nullable Object value, @NonNull String cast) {
-
-		/** The placeholder this field contributes, carrying its cast if it needs one. */
-		@NonNull
-		String placeholder() {
-			return "?" + cast;
-		}
-	}
 
 	/** A server row the generic engine found, and the parents it currently points at. */
 	private record Local(@Nullable Long surrogate, @NonNull Map<String, Long> foreignKeys) {
@@ -707,92 +700,23 @@ final class ImportSession {
 		return new Field(column.postgres(), mapped, "");
 	}
 
-	/** One ordinary column, converted from the way SQLite stored it to the way PostgreSQL will. */
+	/**
+	 * One ordinary column, converted from the way SQLite stored it to the way PostgreSQL will.
+	 * <p>
+	 * The conversion itself is {@link DeviceValue}'s, because the sync endpoint reads the same
+	 * values out of a JSON body and the two must agree about what the device meant. What is left
+	 * here is the translation of its refusal into this class's own: a value nothing wrote is a
+	 * row this import skips, with the reason reported against it.
+	 */
 	@NonNull
 	private List<Field> convert(@NonNull DeviceTables.Table table,
 	                            @NonNull DeviceTables.Column column, @Nullable Object raw) {
 
-		String name = column.postgres();
-
-		switch (column.kind()) {
-
-			case TEXT -> {
-				return List.of(new Field(name, raw == null ? null : String.valueOf(raw), ""));
-			}
-
-			case INTEGER -> {
-				return List.of(new Field(name,
-						raw == null ? null : ((Number) raw).longValue(), ""));
-			}
-
-			case BOOLEAN -> {
-				// SQLite has no boolean; Room wrote 0 or 1 into an INTEGER column.
-				return List.of(new Field(name,
-						raw == null ? null : ((Number) raw).longValue() != 0L, ""));
-			}
-
-			case EPOCH_DAY -> {
-				return List.of(new Field(name,
-						raw == null ? null
-								: StoredTimes.parseDate(((Number) raw).longValue()), ""));
-			}
-
-			case ENUM -> {
-				String stored = raw == null ? null : String.valueOf(raw);
-				String cast = "::" + PostgresEnumTypes.of(column.enumType());
-
-				if (stored != null) {
-					requireKnownConstant(table, column, stored);
-				}
-				return List.of(new Field(name, stored, cast));
-			}
-
-			case ZONED_DATE_TIME -> {
-
-				if (raw == null) {
-					return List.of(new Field(name, null, ""),
-							new Field(column.zoneColumn(), null, ""));
-				}
-
-				ZonedDateTime value;
-
-				try {
-					value = StoredTimes.parse(String.valueOf(raw));
-				} catch (IllegalArgumentException e) {
-					throw new SkipRow(column.room() + " holds " + raw
-							+ ", which is not a timestamp any release of this app wrote.");
-				}
-
-				return List.of(
-						new Field(name, value.toOffsetDateTime(), ""),
-						new Field(column.zoneColumn(), value.getZone().getId(), ""));
-			}
-
-			default -> throw new IllegalStateException("Unhandled kind " + column.kind());
+		try {
+			return DeviceValue.convert(table, column, raw);
+		} catch (DeviceValue.Unconvertible e) {
+			throw new SkipRow(e.getMessage());
 		}
-	}
-
-	/**
-	 * Refuses an enum value no longer in the Java enum.
-	 * <p>
-	 * PostgreSQL would refuse it too, on the cast, but the error would name a type and a string
-	 * and not the row. A constant can be added freely and must never be renamed or removed once
-	 * rows exist that use it, so a value that does not resolve means the data and the code have
-	 * diverged and somebody has to decide what the row should say.
-	 */
-	private void requireKnownConstant(@NonNull DeviceTables.Table table,
-	                                  @NonNull DeviceTables.Column column,
-	                                  @NonNull String stored) {
-
-		for (Object constant : column.enumType().getEnumConstants()) {
-			if (((Enum<?>) constant).name().equals(stored)) {
-				return;
-			}
-		}
-
-		throw new SkipRow(column.room() + " holds '" + stored + "', which is not a "
-				+ column.enumType().getSimpleName() + " this build knows. The row cannot be "
-				+ "imported until somebody decides what it should say.");
 	}
 
 	// ── Writing ──────────────────────────────────────────────────────────

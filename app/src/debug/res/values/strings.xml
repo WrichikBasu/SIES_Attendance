@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug overlay. These replace the values in src/main/res for a debug
+    build and are not in a release APK at all, which is the whole reason
+    they are here rather than behind a flag: there is no code path that
+    checks which build this is and so none to get wrong.
+-->
+<resources>
+
+    <!--
+        Where a debug build syncs to. 10.0.2.2 is how the Android emulator
+        reaches the machine it is running on; the service listens on 8080.
+
+        FOR A REAL DEVICE on the same network, put this machine's address
+        here instead, with the same port:
+
+            ip route get 1 | awk '{print $7; exit}'
+
+        http, not https, and that is why the network config beside this
+        file permits cleartext for debug builds. The development server
+        has no certificate, and pinning one that does not exist is not a
+        thing that can be done.
+    -->
+    <string name="sync_base_url" translatable="false">http://10.0.2.2:8080/api/v1</string>
+
+</resources>

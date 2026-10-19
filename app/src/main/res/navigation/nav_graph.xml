@@ -26,6 +26,9 @@
         <action
             android:id="@+id/action_dashboard_to_backup"
             app:destination="@id/fragmentBackup" />
+        <action
+            android:id="@+id/action_dashboard_to_sync"
+            app:destination="@id/fragmentSync" />
     </fragment>
 
     <fragment
@@ -281,6 +284,12 @@
             android:defaultValue="-1L"
             app:argType="long" />
     </fragment>
+
+    <fragment
+        android:id="@+id/fragmentSync"
+        android:name="in.basulabs.siesattendance.frontend.FragmentSync"
+        android:label="@string/title_sync"
+        tools:layout="@layout/fragment_sync" />
 
     <fragment
         android:id="@+id/fragmentBackup"
