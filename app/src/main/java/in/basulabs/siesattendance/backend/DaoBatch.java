@@ -141,6 +141,37 @@ public abstract class DaoBatch {
 		}
 	}
 
+	/** The courses this batch is linked to, for pre-ticking them when it is edited. */
+	@Query("SELECT courseID FROM course_batch_map WHERE batchID = :batchID")
+	public abstract List<Long> getLinkedCourseIdsSync(long batchID);
+
+	@Query("DELETE FROM course_batch_map WHERE batchID = :batchID "
+			+ "AND courseID NOT IN (:courseIDs)")
+	abstract void unlinkCoursesExcept(long batchID, List<Long> courseIDs);
+
+	@Insert(onConflict = OnConflictStrategy.IGNORE)
+	abstract void linkCourses(List<EntityCourseBatchMap> links);
+
+	/**
+	 * Makes these the courses this batch is for.
+	 * <p>
+	 * Diffed, unlike the membership: a link that stays is left alone, so saving a batch whose
+	 * courses did not change sends nothing about them. Every write here is a row the outbox
+	 * carries to the server, and clearing and reinserting would send each link twice.
+	 */
+	@Transaction
+	public void setCourseLinks(long batchID, List<Long> courseIDs) {
+
+		unlinkCoursesExcept(batchID, courseIDs);
+
+		List<EntityCourseBatchMap> links = new java.util.ArrayList<>();
+
+		for (long courseID : courseIDs) {
+			links.add(new EntityCourseBatchMap(courseID, batchID));
+		}
+		linkCourses(links);
+	}
+
 	/**
 	 * Removes a batch along with its membership and course links. Lectures hold a RESTRICT key
 	 * onto batches, so a batch that still has lectures is refused with a count.

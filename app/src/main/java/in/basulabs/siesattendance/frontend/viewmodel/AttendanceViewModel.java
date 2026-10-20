@@ -1387,14 +1387,16 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * years, streams and departments within the academic year.
 	 */
 	public void createBatch(@NonNull String batchName, @Nullable String description,
-	                        @NonNull List<Long> studentIDs, @NonNull Runnable onDone) {
+	                        @NonNull List<Long> studentIDs, @NonNull List<Long> courseIDs,
+	                        @NonNull Runnable onDone) {
 
 		final int acadYear = studentFilter().academicYear;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				EntityBatchDesc batch = new EntityBatchDesc(batchName, acadYear, description);
-				repository.createBatchFromStudents(batch, studentIDs);
+				long batchID = repository.createBatchFromStudents(batch, studentIDs);
+				repository.setBatchCourses(batchID, courseIDs);
 				toastMessage.postValue("Batch created with " + studentIDs.size() + " students");
 				onDone.run();
 			} catch (Exception e) {
@@ -2253,13 +2255,96 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return batch == null ? fallbackYear : batch.academicYear;
 	}
 
+	/**
+	 * The courses a batch may be linked to, and the ones it is linked to now.
+	 * <p>
+	 * Every course, discontinued ones included: a batch for a course that has since been retired
+	 * still says who sat it, and an edit must not drop that link just because the course is no
+	 * longer offered. Empty links for a batch being created.
+	 */
+	public void loadBatchCourseLinks(long batchID,
+	                                 @NonNull java.util.function.BiConsumer<List<EntityCourse>,
+			                                 List<Long>> cb) {
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(visible(repository.coursesSync()),
+				batchID > 0 ? repository.batchCourseIdsSync(batchID) : new ArrayList<>()));
+	}
+
+	/**
+	 * A batch as somebody who may not change it is shown it: its members, and the courses it is
+	 * for out of the ones this account is shown.
+	 */
+	public void loadBatchDetails(long batchID, @NonNull BatchDetailsCallback cb) {
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+
+			EntityBatchDesc batch = repository.batchSync(batchID);
+
+			if (batch == null) {
+				return;
+			}
+
+			List<Long> linked = repository.batchCourseIdsSync(batchID);
+			List<EntityCourse> courses = new ArrayList<>();
+
+			for (EntityCourse course : visible(repository.coursesSync())) {
+				if (linked.contains(course.courseID)) {
+					courses.add(course);
+				}
+			}
+
+			cb.onLoaded(batch, repository.studentsInBatchSync(batchID), courses);
+		});
+	}
+
+	public interface BatchDetailsCallback {
+		void onLoaded(@NonNull EntityBatchDesc batch, @NonNull List<StudentWithYear> members,
+		              @NonNull List<EntityCourse> courses);
+	}
+
+	/** A course as somebody who may not change it is shown it: who teaches it, which batches. */
+	public void loadCourseDetails(long courseID, @NonNull CourseDetailsCallback cb) {
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+
+			EntityCourse course = repository.courseSync(courseID);
+
+			if (course == null) {
+				return;
+			}
+
+			List<Long> teaching = repository.courseInstructorIdsSync(courseID);
+			List<EntityProfessor> instructors = new ArrayList<>();
+
+			for (EntityProfessor professor : repository.professorsSync()) {
+				if (teaching.contains(professor.profID)) {
+					instructors.add(professor);
+				}
+			}
+
+			List<EntityBatchDesc> batches = new ArrayList<>();
+
+			for (long batchID : repository.courseBatchIdsSync(courseID)) {
+				EntityBatchDesc batch = repository.batchSync(batchID);
+				if (batch != null) {
+					batches.add(batch);
+				}
+			}
+
+			cb.onLoaded(course, instructors, batches);
+		});
+	}
+
+	public interface CourseDetailsCallback {
+		void onLoaded(@NonNull EntityCourse course, @NonNull List<EntityProfessor> instructors,
+		              @NonNull List<EntityBatchDesc> batches);
+	}
+
 	public interface BatchEditorCallback {
 		void onLoaded(@Nullable EntityBatchDesc batch, @NonNull List<StudentWithYear> allStudents,
 		              @NonNull List<Long> memberIDs);
 	}
 
 	public void updateBatch(long batchID, @NonNull String name, @Nullable String description,
-	                        @NonNull List<Long> studentIDs, @NonNull Runnable onDone) {
+	                        @NonNull List<Long> studentIDs, @NonNull List<Long> courseIDs,
+	                        @NonNull Runnable onDone) {
 
 		final int fallbackYear = studentFilter().academicYear;
 
@@ -2267,6 +2352,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			try {
 				int acadYear = batchSessionYear(batchID, fallbackYear);
 				repository.updateBatch(batchID, name, description, acadYear, studentIDs);
+				repository.setBatchCourses(batchID, courseIDs);
 				toastMessage.postValue("Batch updated");
 				onDone.run();
 			} catch (Exception e) {

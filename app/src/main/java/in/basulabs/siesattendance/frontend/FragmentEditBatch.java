@@ -8,6 +8,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AutoCompleteTextView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -20,6 +21,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
@@ -32,6 +34,7 @@ import java.util.Set;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
@@ -39,6 +42,7 @@ import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.frontend.adapter.AdapterHeader;
 import in.basulabs.siesattendance.frontend.adapter.AdapterSelectableStudent;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
+import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -55,6 +59,10 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * the user can tick some FY BSc students, switch the filters to TY BCom, tick more, and keep
  * both. Tying selection to the visible rows would silently drop anyone scrolled or filtered out
  * of view, and that loss would only surface weeks later as missing attendance.
+ * <p>
+ * The courses a batch is for are chosen here too, from every course on the phone. That is
+ * what a course's roll will be read from — the practical half of a class, the students who chose
+ * an open elective — so it belongs beside the students rather than on the course.
  */
 public class FragmentEditBatch extends Fragment {
 
@@ -68,7 +76,7 @@ public class FragmentEditBatch extends Fragment {
 
 	private AutoCompleteTextView actvYear, actvStream, actvDept, actvDivision;
 
-	private TextView selectedCount, emptyMessage, filtersActive;
+	private TextView selectedCount, emptyMessage, filtersActive, linkedCourses;
 
 	private Chip chipShowSelected;
 
@@ -87,6 +95,12 @@ public class FragmentEditBatch extends Fragment {
 
 	/** Insertion-ordered so repeated saves write membership in a stable order. */
 	private final Set<Long> selected = new LinkedHashSet<>();
+
+	/** Every course a batch may be linked to, in the order the picker lists them. */
+	private final List<EntityCourse> courses = new ArrayList<>();
+
+	/** The courses this batch is for, by ID. */
+	private final Set<Long> linked = new LinkedHashSet<>();
 
 	private Year filterYear;
 
@@ -111,6 +125,15 @@ public class FragmentEditBatch extends Fragment {
 		super.onViewCreated(view, savedInstanceState);
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
+
+		// The list and the students screen both ask before coming here; this is for every
+		// other way in, including the ones not written yet.
+		if (!viewModel.may(Permissions.Capability.BATCHES)) {
+			viewModel.sayNotPermitted();
+			Navigation.findNavController(view).popBackStack();
+			return;
+		}
+
 		batchID = getArguments() == null ? -1L : getArguments().getLong("batchID", -1L);
 		anyLabel = getString(R.string.filter_any);
 
@@ -159,6 +182,9 @@ public class FragmentEditBatch extends Fragment {
 		actvDivision = header.findViewById(R.id.actvFilterDivision);
 		filtersActive = header.findViewById(R.id.tvFiltersActive);
 
+		linkedCourses = header.findViewById(R.id.tvLinkedCourses);
+		header.findViewById(R.id.btnChooseCourses).setOnClickListener(v -> chooseCourses());
+
 		selectedCount = header.findViewById(R.id.tvSelectedCount);
 		emptyMessage = header.findViewById(R.id.tvNoMatches);
 		chipShowSelected = header.findViewById(R.id.chipShowSelected);
@@ -179,6 +205,7 @@ public class FragmentEditBatch extends Fragment {
 		// The data may already have loaded before the header existed.
 		applyFilter();
 		updateCount();
+		updateLinkedCourses();
 	}
 
 	private boolean isCreating() {
@@ -274,6 +301,82 @@ public class FragmentEditBatch extends Fragment {
 				updateCount();
 			});
 		});
+
+		viewModel.loadBatchCourseLinks(batchID, (all, current) -> {
+			if (!isAdded()) {
+				return;
+			}
+			Ui.onMain(this, () -> {
+				courses.clear();
+				courses.addAll(all);
+
+				linked.clear();
+				linked.addAll(current);
+
+				updateLinkedCourses();
+			});
+		});
+	}
+
+	// ── Courses ──────────────────────────────────────────────────────────
+
+	/** Picks the courses this batch is for. Nothing is written until the batch is saved. */
+	private void chooseCourses() {
+
+		if (courses.isEmpty()) {
+			Toast.makeText(requireContext(), R.string.helper_no_courses_to_link,
+					Toast.LENGTH_SHORT).show();
+			return;
+		}
+
+		String[] labels = new String[courses.size()];
+		boolean[] checked = new boolean[courses.size()];
+
+		for (int at = 0; at < courses.size(); at++) {
+			labels[at] = describe(courses.get(at));
+			checked[at] = linked.contains(courses.get(at).courseID);
+		}
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_batch_courses_title)
+				.setMultiChoiceItems(labels, checked, (d, at, on) -> checked[at] = on)
+				.setPositiveButton(R.string.action_done, (d, w) -> {
+					linked.clear();
+					for (int at = 0; at < courses.size(); at++) {
+						if (checked[at]) {
+							linked.add(courses.get(at).courseID);
+						}
+					}
+					updateLinkedCourses();
+				})
+				.setNegativeButton(R.string.action_cancel, null)
+				.show();
+	}
+
+	/** The line under the heading: which courses, or that there are none yet. */
+	private void updateLinkedCourses() {
+
+		if (linkedCourses == null) {
+			return;
+		}
+
+		List<String> names = new ArrayList<>();
+
+		for (EntityCourse course : courses) {
+			if (linked.contains(course.courseID)) {
+				names.add(course.courseCode);
+			}
+		}
+
+		linkedCourses.setText(names.isEmpty()
+				? getString(R.string.label_no_linked_courses)
+				: String.join(", ", names));
+	}
+
+	@NonNull
+	private static String describe(@NonNull EntityCourse course) {
+		return course.courseCode + " · " + course.courseTopic
+				+ (course.dateDiscontinued != null ? " (discontinued)" : "");
 	}
 
 	// ── Selection ────────────────────────────────────────────────────────
@@ -436,15 +539,16 @@ public class FragmentEditBatch extends Fragment {
 		String desc = description.isEmpty() ? null : description;
 
 		List<Long> ids = new ArrayList<>(selected);
+		List<Long> courseIDs = new ArrayList<>(linked);
 
 		Runnable navigateBack = () -> Ui.onMain(this, () -> {
 			Navigation.findNavController(button).navigateUp();
 		});
 
 		if (isCreating()) {
-			viewModel.createBatch(name, desc, ids, navigateBack);
+			viewModel.createBatch(name, desc, ids, courseIDs, navigateBack);
 		} else {
-			viewModel.updateBatch(batchID, name, desc, ids, navigateBack);
+			viewModel.updateBatch(batchID, name, desc, ids, courseIDs, navigateBack);
 		}
 	}
 }

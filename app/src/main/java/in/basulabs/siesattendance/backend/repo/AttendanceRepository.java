@@ -179,6 +179,14 @@ public interface AttendanceRepository {
 	void updateBatch(long batchID, String name, String description, int academicYear,
 	                 @NonNull List<Long> studentIDs);
 
+	@NonNull
+	List<Long> batchCourseIdsSync(long batchID);
+
+	@NonNull
+	List<Long> courseBatchIdsSync(long courseID);
+
+	void setBatchCourses(long batchID, @NonNull List<Long> courseIDs);
+
 
 	// ── Students ─────────────────────────────────────────────────────────
 	@NonNull

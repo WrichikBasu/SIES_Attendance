@@ -273,6 +273,23 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 		db.daoBatch().updateBatch(batchID, name, description, academicYear, studentIDs);
 	}
 
+	@Override
+	@NonNull
+	public List<Long> batchCourseIdsSync(long batchID) {
+		return db.daoBatch().getLinkedCourseIdsSync(batchID);
+	}
+
+	@Override
+	@NonNull
+	public List<Long> courseBatchIdsSync(long courseID) {
+		return db.daoCourse().getLinkedBatchIdsSync(courseID);
+	}
+
+	@Override
+	public void setBatchCourses(long batchID, @NonNull List<Long> courseIDs) {
+		db.daoBatch().setCourseLinks(batchID, courseIDs);
+	}
+
 	// ── Students ─────────────────────────────────────────────────────────
 	@Override
 	@NonNull

@@ -206,6 +206,14 @@
 
     <string name="title_edit_batch">Edit batch</string>
     <string name="section_batch_members">Members</string>
+    <string name="section_batch_courses">Courses</string>
+    <string name="section_course_instructors">Taught by</string>
+    <string name="label_no_linked_batches">No batch linked yet</string>
+    <string name="label_semester_number">Semester %1$d</string>
+    <string name="action_close">Close</string>
+    <string name="label_no_linked_courses">Not linked to any course yet</string>
+    <string name="dialog_batch_courses_title">Courses this batch is for</string>
+    <string name="helper_no_courses_to_link">There are no courses on this phone to link to.</string>
     <string name="action_discontinue">Mark discontinued</string>
     <string name="label_discontinued">Discontinued</string>
 

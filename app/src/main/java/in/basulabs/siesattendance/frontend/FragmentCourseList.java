@@ -20,6 +20,8 @@ import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.frontend.adapter.AdapterCourse;
 import in.basulabs.siesattendance.frontend.util.Permissions;
+import in.basulabs.siesattendance.frontend.util.ReadOnlyDetails;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -51,8 +53,10 @@ public class FragmentCourseList extends Fragment {
 			@Override
 			public void onEdit(EntityCourse course) {
 
+				// Read rather than refused: a class representative needs to see who teaches
+				// the course they mark and which batches sit it.
 				if (!viewModel.may(Permissions.Capability.COURSES)) {
-					viewModel.sayNotPermitted();
+					showReadOnly(course);
 					return;
 				}
 
@@ -68,7 +72,7 @@ public class FragmentCourseList extends Fragment {
 				// Discontinuing is an edit, and the gentlest-looking one: it changes what
 				// every later register offers without changing anything already recorded.
 				if (!viewModel.may(Permissions.Capability.COURSES)) {
-					viewModel.sayNotPermitted();
+					showReadOnly(course);
 					return;
 				}
 
@@ -91,6 +95,13 @@ public class FragmentCourseList extends Fragment {
 		}
 
 		viewModel.getCourses().observe(getViewLifecycleOwner(), adapter::submitList);
+	}
+
+	/** The course, who teaches it and its batches, with nothing to change. */
+	private void showReadOnly(@NonNull EntityCourse course) {
+		viewModel.loadCourseDetails(course.courseID, (loaded, instructors, batches) ->
+				Ui.onMain(this, () -> ReadOnlyDetails.showCourse(requireContext(), loaded,
+						instructors, batches)));
 	}
 
 	/**

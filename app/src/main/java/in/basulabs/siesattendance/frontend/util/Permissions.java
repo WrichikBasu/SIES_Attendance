@@ -62,7 +62,13 @@ public final class Permissions {
 		PROFESSORS,
 
 		/** Adding a course, correcting one, or marking one discontinued. */
-		COURSES
+		COURSES,
+
+		/**
+		 * Making a batch, changing who is in it and which courses it is for, or removing it.
+		 * A professor's, whichever course it is for: see V22.
+		 */
+		BATCHES
 	}
 
 	private Permissions() {
@@ -100,6 +106,10 @@ public final class Permissions {
 		return switch (what) {
 			// The three roster screens, which are now one authority.
 			case STUDENTS, PROFESSORS, COURSES -> mayKeepARoll;
+
+			// Any professor, and only a professor: not the office, not an administrator.
+			// Unknown is permitted for the reason in the class notes.
+			case BATCHES -> who == null || who == AccountKind.PROFESSOR;
 		};
 	}
 

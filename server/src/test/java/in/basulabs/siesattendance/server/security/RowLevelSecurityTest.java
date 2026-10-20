@@ -790,6 +790,49 @@ class RowLevelSecurityTest {
 		}
 	}
 
+	@Test
+	void batchesAndTheirCoursesAreAnyProfessorsAndNobodyElses() throws Exception {
+
+		String batch = "INSERT INTO batch_desc (batch_id, batch_name, academic_year) VALUES ";
+
+		// A Chemistry professor makes a batch and links it to a Computer Science course they
+		// do not teach: an open elective's batch is often put together by somebody else.
+		try (Connection as = postgres.actingAs(accountProfChem, PROF_CHEM, null)) {
+			execute(as, batch + "(5001, 'OE takers', " + SESSION + ")");
+			execute(as, "INSERT INTO course_batch_map (course_id, batch_id) VALUES ("
+					+ COURSE_CS + ", 5001)");
+
+			// actingAs is one transaction; the next actor has to see these rows.
+			as.commit();
+		}
+
+		// And the CS professor may undo it, on a batch they did not make.
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals(1, update(as, "DELETE FROM course_batch_map WHERE batch_id = 5001"));
+			assertEquals(1, update(as, "UPDATE batch_desc SET batch_name = 'renamed' "
+					+ "WHERE batch_id = 5001"));
+		}
+
+		// Each refusal on a connection of its own: a refused statement aborts the transaction,
+		// and the next one would then fail for that reason rather than for its own.
+		assertRefused(accountOffice, null, null, batch + "(5002, 'by the office', " + SESSION
+				+ ")", "the office keeps the roll and not the batches");
+
+		try (Connection as = postgres.actingAs(accountOffice, null, null)) {
+			assertEquals(0, update(as, "UPDATE batch_desc SET batch_name = 'no' "
+					+ "WHERE batch_id = 5001"), "nor renames one");
+		}
+
+		assertRefused(accountAdmin, null, null, "INSERT INTO course_batch_map (course_id, "
+				+ "batch_id) VALUES (" + COURSE_CS + ", 5001)", "nor does an administrator");
+
+		assertRefused(accountCr, null, STUDENT_CR, batch + "(5003, 'by a CR', " + SESSION + ")",
+				"and a class representative makes none");
+
+		assertRefused(accountCr, null, STUDENT_CR, "INSERT INTO course_batch_map (course_id, "
+				+ "batch_id) VALUES (" + COURSE_CS + ", 5001)", "nor links one");
+	}
+
 	// ── Fixture helpers ──────────────────────────────────────────────────
 
 	/** Creates an account as the superuser and returns the id the sequence gave it. */
@@ -846,6 +889,15 @@ class RowLevelSecurityTest {
 	}
 
 	// ── Query helpers ────────────────────────────────────────────────────
+
+	/** That statement, as that actor, is refused outright. */
+	private void assertRefused(long account, Long prof, Long student, String sql,
+	                           String why) throws SQLException {
+
+		try (Connection as = postgres.actingAs(account, prof, student)) {
+			assertThrows(SQLException.class, () -> execute(as, sql), why);
+		}
+	}
 
 	private static long count(Connection connection, String sql) throws SQLException {
 

@@ -432,7 +432,14 @@ public class FragmentStudents extends Fragment {
 
 		view.findViewById(R.id.btnCsvFormat).setOnClickListener(v -> showFormatHelp());
 
-		view.findViewById(R.id.btnMakeBatch).setOnClickListener(v -> seedBatchFromFilter());
+		// Making a batch is a professor's, whoever else may read the roll.
+		View makeBatch = view.findViewById(R.id.btnMakeBatch);
+
+		if (viewModel.may(Permissions.Capability.BATCHES)) {
+			makeBatch.setOnClickListener(v -> seedBatchFromFilter());
+		} else {
+			makeBatch.setVisibility(View.GONE);
+		}
 
 		toggleFilters.setOnClickListener(v -> {
 			boolean showing = filterPanel.getVisibility() == View.VISIBLE;

@@ -45,7 +45,13 @@ public class PermissionsTest {
 	private static final Map<String, String> EDITORS = Map.of(
 			"FragmentAddStudent.java", "STUDENTS",
 			"FragmentAddProfessor.java", "PROFESSORS",
-			"FragmentAddCourse.java", "COURSES");
+			"FragmentAddCourse.java", "COURSES",
+			"FragmentEditBatch.java", "BATCHES");
+
+	/** The capabilities that are the roll, and so follow the server's mayKeepARoll answer. */
+	private static final List<Permissions.Capability> ROSTER = List.of(
+			Permissions.Capability.STUDENTS, Permissions.Capability.PROFESSORS,
+			Permissions.Capability.COURSES);
 
 	@Test
 	public void aStudentChangesNoneOfTheCollegesRecords() {
@@ -129,9 +135,24 @@ public class PermissionsTest {
 	}
 
 	@Test
+	public void batchesAreAProfessorsAndNobodyElses() {
+
+		Permissions.Capability batches = Permissions.Capability.BATCHES;
+
+		assertTrue("any professor, whether or not they keep the roll",
+				Permissions.may(AccountKind.PROFESSOR, false, batches));
+		assertTrue(Permissions.may(AccountKind.PROFESSOR, true, batches));
+
+		assertFalse("not a class representative",
+				Permissions.may(AccountKind.STUDENT, true, batches));
+		assertFalse("and not the office or an administrator, who keep the roll but not batches",
+				Permissions.may(AccountKind.STAFF, true, batches));
+	}
+
+	@Test
 	public void whoKeepsTheRollIsTheServersAnswer() {
 
-		for (Permissions.Capability what : Permissions.Capability.values()) {
+		for (Permissions.Capability what : ROSTER) {
 
 			// actor_may_keep_a_roll(): the office, an administrator, or the head of a
 			// department. A professor who heads one is offered the screens; one who does not
@@ -228,7 +249,8 @@ public class PermissionsTest {
 			boolean leadsToAnEditor = source.contains("_to_addStudent")
 					|| source.contains("_to_addProfessor")
 					|| source.contains("_to_addCourse")
-					|| source.contains("_to_editStudent");
+					|| source.contains("_to_editStudent")
+					|| source.contains("_to_editBatch");
 
 			if (leadsToAnEditor && !source.contains("Permissions.Capability")) {
 				unguarded.add(name);

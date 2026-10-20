@@ -19,6 +19,9 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.frontend.adapter.AdapterBatch;
+import in.basulabs.siesattendance.frontend.util.Permissions;
+import in.basulabs.siesattendance.frontend.util.ReadOnlyDetails;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -49,6 +52,14 @@ public class FragmentBatchList extends Fragment {
 
 			@Override
 			public void onEdit(EntityBatchDesc batch) {
+
+				// Somebody who may not change a batch may still read it: a class
+				// representative needs to know who is in the one they mark.
+				if (!viewModel.may(Permissions.Capability.BATCHES)) {
+					showReadOnly(batch);
+					return;
+				}
+
 				Bundle args = new Bundle();
 				args.putLong("batchID", batch.batchID);
 				Navigation.findNavController(requireParentFragment().requireView())
@@ -57,6 +68,12 @@ public class FragmentBatchList extends Fragment {
 
 			@Override
 			public void onLongPress(EntityBatchDesc batch) {
+
+				if (!viewModel.may(Permissions.Capability.BATCHES)) {
+					showReadOnly(batch);
+					return;
+				}
+
 				confirmDelete(batch);
 			}
 		});
@@ -64,16 +81,28 @@ public class FragmentBatchList extends Fragment {
 		recyclerView.setAdapter(adapter);
 
 		FloatingActionButton fab = view.findViewById(R.id.fabAddBatch);
-		fab.setOnClickListener(v -> {
-			// -1 puts the editor in create mode with nothing preselected.
-			Bundle args = new Bundle();
-			args.putLong("batchID", -1L);
-			viewModel.setBatchSeed(null);
-			Navigation.findNavController(requireParentFragment().requireView())
-					.navigate(R.id.action_coursesHub_to_editBatch, args);
-		});
+
+		if (viewModel.may(Permissions.Capability.BATCHES)) {
+			fab.setOnClickListener(v -> {
+				// -1 puts the editor in create mode with nothing preselected.
+				Bundle args = new Bundle();
+				args.putLong("batchID", -1L);
+				viewModel.setBatchSeed(null);
+				Navigation.findNavController(requireParentFragment().requireView())
+						.navigate(R.id.action_coursesHub_to_editBatch, args);
+			});
+		} else {
+			fab.setVisibility(View.GONE);
+		}
 
 		viewModel.getBatches().observe(getViewLifecycleOwner(), adapter::submitList);
+	}
+
+	/** The batch, its members and its courses, with nothing to change. */
+	private void showReadOnly(@NonNull EntityBatchDesc batch) {
+		viewModel.loadBatchDetails(batch.batchID, (loaded, members, courses) ->
+				Ui.onMain(this, () -> ReadOnlyDetails.showBatch(requireContext(), loaded,
+						members, courses)));
 	}
 
 	/**
