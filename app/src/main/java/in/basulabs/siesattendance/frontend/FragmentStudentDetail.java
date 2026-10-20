@@ -54,6 +54,7 @@ import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.backend.util.BreakdownFilter;
 import in.basulabs.siesattendance.frontend.adapter.AdapterStudentCourseStat;
 import in.basulabs.siesattendance.frontend.util.Ui;
+import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -777,6 +778,14 @@ public class FragmentStudentDetail extends Fragment {
 
 			@Override
 			public void onCreateMenu(@NonNull Menu menu, @NonNull MenuInflater inflater) {
+
+				// Edit and remove are the whole menu, and both change the roll. A class
+				// representative reads this screen -- whose attendance is where, and how much
+				// of it -- and changes nothing on it.
+				if (!viewModel.may(Permissions.Capability.STUDENTS)) {
+					return;
+				}
+
 				inflater.inflate(R.menu.menu_edit, menu);
 			}
 

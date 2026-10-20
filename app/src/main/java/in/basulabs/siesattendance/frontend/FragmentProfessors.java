@@ -18,6 +18,7 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.frontend.adapter.AdapterProfessor;
+import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -54,6 +55,12 @@ public class FragmentProfessors extends Fragment {
 
 			@Override
 			public void onEdit(EntityProfessor professor) {
+
+				if (!viewModel.may(Permissions.Capability.PROFESSORS)) {
+					viewModel.sayNotPermitted();
+					return;
+				}
+
 				Bundle args = new Bundle();
 				args.putLong("profID", professor.profID);
 				Navigation.findNavController(view)
@@ -70,8 +77,13 @@ public class FragmentProfessors extends Fragment {
 		recyclerView.setAdapter(adapter);
 
 		FloatingActionButton fab = view.findViewById(R.id.fabAddProfessor);
-		fab.setOnClickListener(v -> Navigation.findNavController(v)
-				.navigate(R.id.action_professors_to_addProfessor));
+
+		if (viewModel.may(Permissions.Capability.PROFESSORS)) {
+			fab.setOnClickListener(v -> Navigation.findNavController(v)
+					.navigate(R.id.action_professors_to_addProfessor));
+		} else {
+			fab.setVisibility(View.GONE);
+		}
 
 		observeList();
 	}

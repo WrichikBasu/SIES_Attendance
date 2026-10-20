@@ -19,6 +19,7 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.frontend.adapter.AdapterCourse;
+import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -49,6 +50,12 @@ public class FragmentCourseList extends Fragment {
 
 			@Override
 			public void onEdit(EntityCourse course) {
+
+				if (!viewModel.may(Permissions.Capability.COURSES)) {
+					viewModel.sayNotPermitted();
+					return;
+				}
+
 				Bundle args = new Bundle();
 				args.putLong("courseID", course.courseID);
 				Navigation.findNavController(requireParentFragment().requireView())
@@ -57,6 +64,14 @@ public class FragmentCourseList extends Fragment {
 
 			@Override
 			public void onLongPress(EntityCourse course) {
+
+				// Discontinuing is an edit, and the gentlest-looking one: it changes what
+				// every later register offers without changing anything already recorded.
+				if (!viewModel.may(Permissions.Capability.COURSES)) {
+					viewModel.sayNotPermitted();
+					return;
+				}
+
 				confirmDiscontinue(course);
 			}
 		});
@@ -64,11 +79,16 @@ public class FragmentCourseList extends Fragment {
 		recyclerView.setAdapter(adapter);
 
 		FloatingActionButton fab = view.findViewById(R.id.fabAddCourse);
-		// The FAB lives inside a ViewPager2 page, so navigation must go through the parent
-		// fragment's NavController rather than this view's.
-		fab.setOnClickListener(v -> Navigation.findNavController(
-						requireParentFragment().requireView())
-				.navigate(R.id.action_coursesHub_to_addCourse));
+
+		if (viewModel.may(Permissions.Capability.COURSES)) {
+			// The FAB lives inside a ViewPager2 page, so navigation must go through the parent
+			// fragment's NavController rather than this view's.
+			fab.setOnClickListener(v -> Navigation.findNavController(
+							requireParentFragment().requireView())
+					.navigate(R.id.action_coursesHub_to_addCourse));
+		} else {
+			fab.setVisibility(View.GONE);
+		}
 
 		viewModel.getCourses().observe(getViewLifecycleOwner(), adapter::submitList);
 	}

@@ -24,6 +24,7 @@ import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
+import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -72,6 +73,15 @@ public class FragmentAddProfessor extends Fragment {
 		super.onViewCreated(view, savedInstanceState);
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
+
+		if (!viewModel.may(Permissions.Capability.PROFESSORS)) {
+			// On the screen itself, as well as at the controls that lead here. The controls
+			// are the courtesy; this is the one check that cannot be forgotten when somebody
+			// adds a fourth way in -- which is exactly what happened to the sign-in gate.
+			viewModel.sayNotPermitted();
+			Navigation.findNavController(view).popBackStack();
+			return;
+		}
 
 		editingProfID = getArguments() == null ? -1L : getArguments().getLong("profID", -1L);
 

@@ -12,6 +12,8 @@ import java.security.KeyStore;
 import java.util.Base64;
 import java.util.UUID;
 
+import in.basulabs.siesattendance.backend.AccountKind;
+
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -62,6 +64,8 @@ public final class DeviceIdentity {
 	private static final String WATERMARK_HINT = "lastSyncError";
 
 	private static final String MUST_ROTATE = "mustRotate";
+
+	private static final String ACCOUNT_KIND = "accountKind";
 
 	/** The Keystore entry the token is encrypted with. One per installation. */
 	private static final String KEY_ALIAS = "sies_sync_token";
@@ -175,6 +179,31 @@ public final class DeviceIdentity {
 
 	public static void recordSyncError(@NonNull Context context, @Nullable String error) {
 		prefs(context).edit().putString(WATERMARK_HINT, error).apply();
+	}
+
+	/**
+	 * What kind of account is signed in, as the server named it, or null.
+	 * <p>
+	 * Not a credential and not an authority: the authority is the policy on the table, and this
+	 * is what the screens consult so as not to offer a button that leads to a refusal. See
+	 * {@code Permissions}. Null on an install that signed in before this was recorded, and on a
+	 * build with no server — both of which {@code Permissions} treats as permitted, because the
+	 * alternative is an app that can do nothing.
+	 */
+	@Nullable
+	public static AccountKind accountKind(@NonNull Context context) {
+
+		String stored = prefs(context).getString(ACCOUNT_KIND, null);
+
+		return stored == null ? null : AccountKind.fromAny(stored);
+	}
+
+	public static void recordAccountKind(@NonNull Context context,
+	                                     @Nullable AccountKind kind) {
+
+		prefs(context).edit()
+				.putString(ACCOUNT_KIND, kind == null ? null : kind.name())
+				.apply();
 	}
 
 	/**

@@ -61,6 +61,7 @@ import in.basulabs.siesattendance.backend.IdGenerator;
 import in.basulabs.siesattendance.backend.repo.AttendanceRepository;
 import in.basulabs.siesattendance.backend.repo.RoomAttendanceRepository;
 import in.basulabs.siesattendance.backend.sync.DeviceIdentity;
+import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.backend.sync.SyncClient;
 import in.basulabs.siesattendance.backend.sync.SyncScheduler;
 import in.basulabs.siesattendance.backend.sync.SyncSignIn;
@@ -459,6 +460,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 				DeviceIdentity.recordPasswordChangeRequired(getApplication(),
 						session.mustRotate());
 
+				// What the screens consult before offering to change a student, a professor
+				// or a course. Written on every sign-in, including null, so a phone passed
+				// from a professor to a class representative does not keep the first one's
+				// permissions.
+				DeviceIdentity.recordAccountKind(getApplication(), session.kind());
+
 				// The node has to reach IdGenerator before the next key is issued, and
 				// SyncSignIn has already applied it; this only tells the user.
 				toastMessage.postValue(session.mustRotate()
@@ -534,6 +541,22 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void syncNow() {
 		SyncScheduler.requestSync(getApplication());
 		toastMessage.setValue("Syncing");
+	}
+
+	/**
+	 * Whether the signed-in account may change that kind of record.
+	 * <p>
+	 * The screens ask this rather than reading preferences themselves, the same way they ask
+	 * {@link #isSignedIn()}: a fragment that reached for the stored kind would be a fragment
+	 * with its own copy of the rule. {@code Permissions} is the rule and says what it is not.
+	 */
+	public boolean may(@NonNull Permissions.Capability what) {
+		return Permissions.may(DeviceIdentity.accountKind(getApplication()), what);
+	}
+
+	/** Why a control is missing, for a screen that has to say something. */
+	public void sayNotPermitted() {
+		toastMessage.setValue(getApplication().getString(R.string.not_permitted_records));
 	}
 
 	/** Whether the server has said this account's password must be changed before anything. */

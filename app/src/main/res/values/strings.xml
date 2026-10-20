@@ -769,6 +769,14 @@
         is a connection, so marking a register never needs a signal. Nothing is removed from
         this phone until the server has it.</string>
 
+    <!--
+        Shown when a student account taps something that changes the college's records.
+        Says what they can do rather than only what they cannot, because a class
+        representative's account exists for the first half of that sentence.
+    -->
+    <string name="not_permitted_records">Only staff can change students, professors and
+        courses. You can take attendance, look at the registers and read the lists.</string>
+
     <!-- ── The door ──────────────────────────────────────────────── -->
 
     <string name="title_sign_in">Sign in</string>

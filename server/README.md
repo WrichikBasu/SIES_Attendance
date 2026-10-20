@@ -429,6 +429,30 @@ Two rules the table cannot state, both in `attendance_delegate_authorised()`:
 `granted_as` is stored rather than recomputed, so an HOD who stops being one in 2027 does not
 retroactively change the authority a 2025 grant was made under.
 
+**Appointing one is an endpoint now**, and until it was, nothing in the service could write that
+row at all — which made a student account a login that sees its own enrolment and stops. A phone
+signed in to one and asked to sync, and nothing came down; nothing was wrong with the sync. A
+student's reach *is* its delegations.
+
+```
+GET  /api/v1/accounts/courses                              the courses you may appoint for
+POST /api/v1/accounts/{id}/delegations                     courseId, academicYear, reason
+POST /api/v1/accounts/{id}/delegations/revoke              courseId, academicYear
+```
+
+The one pair of endpoints here that is **not** administrators only, because appointing the
+representative of a course is the instructor's business before it is anybody else's.
+`Delegates.capacityFor` asks the database which of the three capacities the caller actually holds
+— instructor, head of the offering department for that session, administrator, in that order —
+and stamps it on the grant; a caller holding none gets a 403 saying who may. The two refusals the
+trigger would otherwise return as `check_violation` are checked first so they can be said
+properly: *"That student is not on this course's roll for 2025, so they cannot be its class
+representative. The roll comes from their enrolment, which is the office's."*
+
+Re-appointing after a revocation revives the row rather than adding one, because the key is the
+student, the course and the session. The history is not lost: the audit trigger records the UPDATE
+with both images.
+
 ### `roll_for_course`, written once
 
 The second rule needs the roster, which until now existed only as the `@Query` on
@@ -1199,8 +1223,9 @@ let a row in puts the contradiction back in the database where nobody will see i
 
 ## Accounts, and the roles on them
 
-Five endpoints and one page. `/accounts.html`, served by the same service, is where the second
-administrator, the office account, an auditor and a head of department come into being.
+Eight endpoints and one page. `/accounts.html`, served by the same service, is where the second
+administrator, the office account, an auditor, a head of department and a class representative
+come into being.
 
 ```
 GET  /api/v1/accounts                                    who exists and what they hold
@@ -1209,6 +1234,9 @@ GET  /api/v1/accounts/people?kind=PROFESSOR|STUDENT      who an account can be a
 POST /api/v1/accounts                                    an account, and optionally a role with it
 POST /api/v1/accounts/{id}/roles                         a role
 POST /api/v1/accounts/{id}/roles/{grantId}/revoke        the end of one
+GET  /api/v1/accounts/courses                            the courses you may appoint a CR for
+POST /api/v1/accounts/{id}/delegations                   a class representative
+POST /api/v1/accounts/{id}/delegations/revoke            the end of one
 ```
 
 An administrator and nobody else, and the rule is in SQL twice. Creating an account asks

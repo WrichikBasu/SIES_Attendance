@@ -291,6 +291,10 @@ class WireTest {
 
 		assertEquals(200, reply.status(), reply::toString);
 		assertEquals(STUDENT_CR, reply.body().get("account").get("studentId").longValue());
+
+		// The phone reads this field and keeps it: a student account is not offered the
+		// screens that change students, professors or courses. See the app's Permissions.
+		// Renaming it here would quietly give a class representative the roster back.
 		assertEquals("STUDENT", reply.body().get("account").get("kind").stringValue());
 	}
 
@@ -1245,6 +1249,175 @@ class WireTest {
 				"the token lives in a variable and is meant to die with the tab");
 	}
 
+	// ── Class representatives ───────────────────────────────────────────
+
+	/**
+	 * The gap this closed: a student account with no delegation sees nothing of any course, so
+	 * a first sync brought down the student's own enrolment and stopped. Nothing was wrong with
+	 * the sync; a student's reach <em>is</em> its delegations, and nothing in the service could
+	 * create one. This is that, end to end: the account cannot see the course, somebody
+	 * appoints them, it can.
+	 */
+	@Test
+	void appointingARepresentativeIsWhatMakesAStudentAccountUseful() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		// A student account with nothing granted to it. S SHAH takes the chemistry course.
+		Reply made = post("/accounts", json(
+				"kind", "STUDENT",
+				"studentId", Long.toString(STUDENT_OTHER),
+				"displayName", "S SHAH",
+				"loginEmail", "s.shah@sies.edu.in",
+				"password", "an opening password here"), admin, null);
+
+		assertEquals(200, made.status(), made::toString);
+
+		long account = made.body().get("accountId").longValue();
+		String student = rotated("s.shah@sies.edu.in", "an opening password here");
+
+		assertEquals(0, get("/data/courses", student, null).body().get("rows").size(),
+				"a student with no appointment sees no course at all, which is the whole of "
+						+ "the complaint this feature answers");
+
+		Reply appointed = post("/accounts/" + account + "/delegations", json(
+				"courseId", Long.toString(COURSE_CHEM),
+				"academicYear", SESSION,
+				"reason", "class representative"), admin, null);
+
+		assertEquals(200, appointed.status(), appointed::toString);
+		assertEquals("CH-101", appointed.body().get("courseCode").stringValue());
+		assertEquals("ADMIN", appointed.body().get("grantedAs").stringValue(),
+				"stamped with the capacity it was made in, not recomputed later");
+		assertTrue(appointed.body().get("live").booleanValue());
+
+		// And now the course is there. The marks and the roll follow it, which is what the
+		// phone needs to call a register.
+		assertEquals(1, get("/data/courses", student, null).body().get("rows").size(),
+				"the appointment is what the policies read");
+
+		// Ended, and the row kept: the registers marked under it stay explainable.
+		Reply ended = post("/accounts/" + account + "/delegations/revoke", json(
+				"courseId", Long.toString(COURSE_CHEM),
+				"academicYear", SESSION), admin, null);
+
+		assertEquals(200, ended.status(), ended::toString);
+		assertFalse(ended.body().get("live").booleanValue());
+
+		assertEquals(1, count("SELECT count(*) FROM attendance_delegate "
+				+ "WHERE student_id = " + STUDENT_OTHER + " AND revoked_at IS NOT NULL"));
+
+		assertEquals(0, get("/data/courses", student, null).body().get("rows").size(),
+				"and the reach goes with it");
+	}
+
+	@Test
+	void theCoursesInstructorMayAppointAndAnotherProfessorMayNot() throws Exception {
+
+		// The ordinary case, and the reason GrantAuthority.INSTRUCTOR exists: appointing a
+		// representative is the instructor's business, not only an administrator's.
+		String instructor = tokenFor("a.cs@sies.edu.in", "STAFF");
+
+		Reply ended = post("/accounts/" + accountCr + "/delegations/revoke", json(
+				"courseId", Long.toString(COURSE_CS),
+				"academicYear", SESSION), instructor, null);
+
+		assertEquals(200, ended.status(), ended::toString);
+
+		Reply again = post("/accounts/" + accountCr + "/delegations", json(
+				"courseId", Long.toString(COURSE_CS),
+				"academicYear", SESSION), instructor, null);
+
+		assertEquals(200, again.status(), again::toString);
+		assertEquals("INSTRUCTOR", again.body().get("grantedAs").stringValue());
+		assertTrue(again.body().get("live").booleanValue(), "a revoked grant is revived");
+
+		// One row, not two: the key is the student, the course and the session, and the
+		// history of both grants is in the audit log.
+		assertEquals(1, count("SELECT count(*) FROM attendance_delegate WHERE student_id = "
+				+ STUDENT_CR + " AND course_id = " + COURSE_CS));
+
+		// A professor of another department teaches none of this, and is told what the rule is
+		// rather than being told the server broke.
+		String otherProfessor = tokenFor("b.chem@sies.edu.in", "STAFF");
+
+		Reply refused = post("/accounts/" + accountCr + "/delegations", json(
+				"courseId", Long.toString(COURSE_CS),
+				"academicYear", SESSION), otherProfessor, null);
+
+		assertEquals(403, refused.status(), refused::toString);
+		assertEquals("not_yours_to_grant", refused.body().get("code").stringValue());
+	}
+
+	@Test
+	void theHeadOfTheDepartmentMayAppointForItsCourses() throws Exception {
+
+		String head = tokenFor("c.head@sies.edu.in", "STAFF");
+
+		post("/accounts/" + accountCr + "/delegations/revoke", json(
+				"courseId", Long.toString(COURSE_CS),
+				"academicYear", SESSION), head, null);
+
+		Reply appointed = post("/accounts/" + accountCr + "/delegations", json(
+				"courseId", Long.toString(COURSE_CS),
+				"academicYear", SESSION), head, null);
+
+		assertEquals(200, appointed.status(), appointed::toString);
+		assertEquals("HOD", appointed.body().get("grantedAs").stringValue(),
+				"the capacity is the one actually held, and a head who is not the instructor "
+						+ "holds this one");
+	}
+
+	@Test
+	void aRepresentativeHasToBeOnTheCoursesRoll() throws Exception {
+
+		// R RAO takes the Computer Science course; the chemistry one is not on her roll. The
+		// trigger refuses this with check_violation, which would have reached the page as
+		// "the server would not accept one of those values".
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply refused = post("/accounts/" + accountCr + "/delegations", json(
+				"courseId", Long.toString(COURSE_CHEM),
+				"academicYear", SESSION), admin, null);
+
+		assertEquals(409, refused.status(), refused::toString);
+		assertEquals("not_on_the_roll", refused.body().get("code").stringValue());
+		assertTrue(refused.body().get("message").stringValue().contains("enrolment"),
+				"and it says where a roll comes from: " + refused.raw());
+	}
+
+	@Test
+	void onlyAStudentCanRepresentACourse() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply refused = post("/accounts/" + accountProfCs + "/delegations", json(
+				"courseId", Long.toString(COURSE_CS),
+				"academicYear", SESSION), admin, null);
+
+		assertEquals(409, refused.status(), refused::toString);
+		assertEquals("not_a_student", refused.body().get("code").stringValue());
+	}
+
+	@Test
+	void thePickerOffersTheCoursesTheCallerCanSee() throws Exception {
+
+		Reply all = get("/accounts/courses", tokenFor("admin@sies.edu.in", "STAFF"), null);
+
+		assertEquals(200, all.status(), all::toString);
+		assertEquals(2, all.body().size(), "both courses, for an administrator");
+		assertTrue(all.raw().contains("CS-101"), all.raw());
+
+		// Keys as text, as everywhere a browser can see them.
+		assertTrue(all.raw().contains("\"value\":\"" + COURSE_CS + "\""), all.raw());
+
+		// A professor sees the one they teach, because this reads under their own actor.
+		Reply mine = get("/accounts/courses", tokenFor("b.chem@sies.edu.in", "STAFF"), null);
+
+		assertEquals(1, mine.body().size(), mine::toString);
+		assertTrue(mine.raw().contains("CH-101"), mine.raw());
+	}
+
 	// ── What a person reads ─────────────────────────────────────────────
 
 	@Test
@@ -1782,6 +1955,33 @@ class WireTest {
 
 		assertEquals(200, reply.status(), reply::toString);
 		return reply.body().get("token").stringValue();
+	}
+
+	/**
+	 * A usable token for an account that was just created, which starts under
+	 * {@code must_rotate} and may therefore do exactly two things.
+	 * <p>
+	 * The same token is returned rather than a second login's: {@code Sessions} reads
+	 * {@code app_account.must_rotate} live on every lookup, so the token in hand starts
+	 * working the moment the password changes. A test that signed in again would pass without
+	 * proving that.
+	 */
+	private String rotated(String email, String opening) throws Exception {
+
+		Reply signedIn = login(email, "STUDENT", opening, null);
+
+		assertEquals(200, signedIn.status(), signedIn::toString);
+		assertTrue(signedIn.body().get("mustRotate").booleanValue(),
+				"a new account's password was typed by whoever created it");
+
+		String token = signedIn.body().get("token").stringValue();
+
+		Reply changed = post("/auth/password", json(
+				"currentPassword", opening,
+				"newPassword", "a password of their own choosing"), token, null);
+
+		assertEquals(200, changed.status(), changed::toString);
+		return token;
 	}
 
 	private Reply register(String token, UUID header, UUID install, Integer provisional,

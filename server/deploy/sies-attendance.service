@@ -1,4 +1,4 @@
-# The service, as systemd runs it.
+ ma# The service, as systemd runs it.
 #
 #   install -D -m 644 server/deploy/sies-attendance.service \
 #       /etc/systemd/system/sies-attendance.service

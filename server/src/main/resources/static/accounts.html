@@ -172,7 +172,8 @@
         <h2>Accounts</h2>
         <table>
             <thead><tr>
-                <th>#</th><th>Name</th><th>Email</th><th>Kind</th><th>Roles</th><th>State</th>
+                <th>#</th><th>Name</th><th>Email</th><th>Kind</th><th>Roles</th>
+                <th>Represents</th><th>State</th>
             </tr></thead>
             <tbody id="rows"></tbody>
         </table>
@@ -194,6 +195,26 @@
             <div><label for="grantSession">Session</label><select id="grantSession"></select></div>
         </div>
         <button id="grant">Grant</button>
+    </section>
+
+    <section id="delegateCard" hidden>
+        <h2>Appoint a class representative</h2>
+        <p class="note">A role is held over the college; this is held over one course in one
+            session. It is what makes a student account useful: without it a student signs in,
+            sees their own enrolment and nothing else. The student has to be on that course's
+            roll, which comes from their enrolment, and the appointment is recorded in the
+            capacity you hold — instructor, head of department, or administrator.</p>
+        <div class="row">
+            <div><label for="delegateAccount">Student account</label>
+                 <select id="delegateAccount"></select></div>
+            <div><label for="delegateCourse">Course</label>
+                 <select id="delegateCourse"></select></div>
+            <div><label for="delegateSession">Session</label>
+                 <select id="delegateSession"></select></div>
+            <div><label for="delegateReason">Reason (optional)</label>
+                 <input id="delegateReason"></div>
+        </div>
+        <button id="delegate">Appoint</button>
     </section>
 </main>
 
@@ -376,12 +397,25 @@ async function load() {
         departments.map((d) => d.label));
     fill($("newSession"), options.sessions);
     fill($("grantSession"), options.sessions);
+    fill($("delegateSession"), options.sessions);
+
+    // The courses this caller may see, which for an administrator is all of them. Discontinued
+    // ones are left out: appointing a representative for a course nobody is being taught is a
+    // mistake the form should not offer.
+    const courses = await api("GET", "/accounts/courses");
+
+    if (courses.length === 0) {
+        fill($("delegateCourse"), [""], ["No courses on the server yet"]);
+    } else {
+        fill($("delegateCourse"), courses.map((c) => c.value), courses.map((c) => c.label));
+    }
 
     if (options.sessions.length === 0) {
         // No academic year on file, so a head cannot be appointed for one. Said here rather
         // than left to a 400 about a field that has nothing in it.
         fill($("newSession"), [""], ["No session on file"]);
         fill($("grantSession"), [""], ["No session on file"]);
+        fill($("delegateSession"), [""], ["No session on file"]);
     }
 
     // A select shows its first option, so the scope fields have to agree with that from the
@@ -396,6 +430,7 @@ async function load() {
     $("createCard").hidden = false;
     $("listCard").hidden = false;
     $("grantCard").hidden = false;
+    $("delegateCard").hidden = false;
 }
 
 async function refresh() {
@@ -450,6 +485,39 @@ async function refresh() {
 
         row.appendChild(roles);
 
+        // Delegations next to roles, because "what this account can do" is both of them and a
+        // student account's answer is entirely in this column.
+        const represents = document.createElement("td");
+
+        account.delegations.forEach((grant) => {
+
+            const tag = document.createElement("span");
+            tag.className = "tag " + (grant.live ? "live" : "gone");
+            tag.textContent = grant.courseCode + " · " + grant.academicYear;
+            tag.title = grant.courseTopic + " — appointed as "
+                + grant.grantedAs.toLowerCase() + " on " + grant.grantedAt
+                + (grant.live ? "" : ", since ended");
+
+            if (grant.live) {
+                const end = document.createElement("button");
+                end.textContent = "×";
+                end.title = "End this appointment";
+                end.addEventListener("click", () => endDelegation(account, grant));
+                tag.appendChild(end);
+            }
+
+            represents.appendChild(tag);
+        });
+
+        if (account.delegations.length === 0) {
+            const none = document.createElement("span");
+            none.className = "muted";
+            none.textContent = account.kind === "STUDENT" ? "no course yet" : "—";
+            represents.appendChild(none);
+        }
+
+        row.appendChild(represents);
+
         const state = [];
         if (account.disabled) { state.push("disabled"); }
         if (account.locked) { state.push("locked"); }
@@ -463,6 +531,80 @@ async function refresh() {
     fill($("grantAccount"),
         accounts.map((a) => a.accountId),
         accounts.map((a) => a.accountId + " · " + a.displayName + " · " + a.kind));
+
+    // Only student accounts: a delegation is held by a student, because it is their enrolment
+    // that says they take the course. The server refuses anything else and says why, and a
+    // picker that offered professors would be a picker whose options mostly fail.
+    const students = accounts.filter((a) => a.kind === "STUDENT");
+
+    if (students.length === 0) {
+        fill($("delegateAccount"), [""], ["No student accounts yet"]);
+    } else {
+        fill($("delegateAccount"),
+            students.map((a) => a.accountId),
+            students.map((a) => a.accountId + " · " + a.displayName));
+    }
+}
+
+$("delegate").addEventListener("click", async () => {
+
+    clearSay();
+
+    const account = $("delegateAccount").value;
+    const course = $("delegateCourse").value;
+    const session = $("delegateSession").value;
+
+    if (!account || !course || !session) {
+        say("A student account, a course and a session are all needed.", false);
+        return;
+    }
+
+    try {
+        // courseId as text, never Number(): it is a 59-bit key and this is JavaScript. See
+        // the note on the create form.
+        const granted = await api("POST", "/accounts/" + account + "/delegations", {
+            courseId: course,
+            academicYear: Number(session),
+            reason: $("delegateReason").value.trim() || null,
+        });
+
+        $("delegateReason").value = "";
+
+        say("Appointed for " + granted.courseCode + " · " + granted.courseTopic + " in "
+            + granted.academicYear + ", as " + granted.grantedAs.toLowerCase()
+            + ". They can mark that course's registers from their next sync.", true);
+
+        await refresh();
+
+    } catch (e) {
+        say(e.message, false);
+    }
+});
+
+async function endDelegation(account, grant) {
+
+    if (!confirm("End " + account.displayName + "'s appointment for " + grant.courseCode
+            + " in " + grant.academicYear + "?\n\nThe grant is kept and marked ended, so the "
+            + "registers they marked under it stay explainable. They stop being able to mark "
+            + "that course at their next sync.")) {
+        return;
+    }
+
+    clearSay();
+
+    try {
+        await api("POST", "/accounts/" + account.accountId + "/delegations/revoke", {
+            courseId: grant.courseId,
+            academicYear: grant.academicYear,
+            reason: null,
+        });
+
+        say("Ended the appointment for " + grant.courseCode + ".", true);
+        await refresh();
+
+    } catch (e) {
+        say(e.message, false);
+    }
 }
 
 async function revokeRole(account, grant) {

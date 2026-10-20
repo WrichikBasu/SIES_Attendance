@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.AccountKind;
 import in.basulabs.siesattendance.backend.IdGenerator;
 import in.basulabs.siesattendance.backend.MainDatabase;
 
@@ -58,9 +59,15 @@ public final class SyncSignIn {
 		STUDENT
 	}
 
-	/** What signing in produced. */
+	/**
+	 * What signing in produced.
+	 *
+	 * @param kind what the server says this account is, or null if it did not say. The screens
+	 *             consult it so as not to offer what the policies would refuse; see
+	 *             {@code Permissions}. It is not an authority — that is on the table.
+	 */
 	public record Session(long accountId, @NonNull String displayName, boolean mustRotate,
-	                      int node) {
+	                      int node, @Nullable AccountKind kind) {
 	}
 
 	/** The server said no. The message is the server's own and is meant to be shown. */
@@ -129,9 +136,12 @@ public final class SyncSignIn {
 			Long accountId = longValue(answer, "accountId");
 			String name = string(answer, "displayName");
 
+			// "kind" is nested inside the response's account object, which this reader
+			// reaches because no field name repeats in that answer. See valueOf.
 			return new Session(accountId == null ? 0L : accountId,
 					name == null ? email : name,
-					"true".equals(flag(answer, "mustRotate")), node);
+					"true".equals(flag(answer, "mustRotate")), node,
+					AccountKind.fromAny(string(answer, "kind")));
 
 		} finally {
 			Arrays.fill(password, '\0');
