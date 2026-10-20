@@ -19,7 +19,6 @@ import java.util.Locale;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.frontend.adapter.AdapterLecture;
-import in.basulabs.siesattendance.frontend.util.SignInGuard;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -78,10 +77,12 @@ public class FragmentDashboard extends Fragment {
 		view.findViewById(R.id.btnSessions).setOnClickListener(v ->
 				Navigation.findNavController(v).navigate(R.id.action_dashboard_to_sessions));
 
+		// No sign-in prompt here any more. The app does not open without a session, so a
+		// dialog asking for one on the way into a register was a dialog that could not fire;
+		// the gate is at ActivityHome, in front of everything. See SignInGuard.
 		view.findViewById(R.id.btnTakeAttendance).setOnClickListener(v ->
-				SignInGuard.ifAllowed(this, viewModel, Navigation.findNavController(v),
-						() -> Navigation.findNavController(v)
-								.navigate(R.id.action_dashboard_to_takeAttendance)));
+				Navigation.findNavController(v)
+						.navigate(R.id.action_dashboard_to_takeAttendance));
 
 		view.findViewById(R.id.btnBackup).setOnClickListener(v ->
 				Navigation.findNavController(v).navigate(R.id.action_dashboard_to_backup));

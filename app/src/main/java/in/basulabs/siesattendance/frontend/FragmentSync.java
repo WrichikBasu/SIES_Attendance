@@ -4,8 +4,6 @@ import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ArrayAdapter;
-import android.widget.AutoCompleteTextView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -13,17 +11,15 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
+import androidx.navigation.Navigation;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
-import java.util.Arrays;
-
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.sync.SyncClient;
-import in.basulabs.siesattendance.backend.sync.SyncSignIn;
 import in.basulabs.siesattendance.frontend.util.PasswordChange;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
@@ -53,16 +49,7 @@ public class FragmentSync extends Fragment {
 
 	private TextView tvState, tvPending, tvError, tvMustChange;
 
-	private View groupSignIn, groupSignedIn;
-
-	private TextInputEditText etEmail, etPassword;
-
-	private TextInputLayout tilEmail, tilPassword;
-
-	private AutoCompleteTextView actvDoor;
-
-	@NonNull
-	private SyncSignIn.Door door = SyncSignIn.Door.STAFF;
+	private View groupSignedIn;
 
 	@Nullable
 	@Override
@@ -82,17 +69,8 @@ public class FragmentSync extends Fragment {
 		tvPending = view.findViewById(R.id.tvPendingChanges);
 		tvError = view.findViewById(R.id.tvSyncError);
 		tvMustChange = view.findViewById(R.id.tvMustChangePassword);
-		groupSignIn = view.findViewById(R.id.groupSignIn);
 		groupSignedIn = view.findViewById(R.id.groupSignedIn);
-		etEmail = view.findViewById(R.id.etSyncEmail);
-		etPassword = view.findViewById(R.id.etSyncPassword);
-		tilEmail = view.findViewById(R.id.tilSyncEmail);
-		tilPassword = view.findViewById(R.id.tilSyncPassword);
-		actvDoor = view.findViewById(R.id.actvSyncDoor);
 
-		bindDoor();
-
-		view.<MaterialButton>findViewById(R.id.btnSignIn).setOnClickListener(v -> signIn());
 		view.<MaterialButton>findViewById(R.id.btnSyncNow)
 				.setOnClickListener(v -> viewModel.syncNow());
 
@@ -102,8 +80,13 @@ public class FragmentSync extends Fragment {
 				.setOnClickListener(v -> viewModel.resendEverything());
 		view.<MaterialButton>findViewById(R.id.btnChangePassword)
 				.setOnClickListener(v -> askForNewPassword());
+		// Out means out: the whole graph is popped and the door is what is left. Nothing of
+		// what was on the stack can be resumed by whoever is handed the phone next, and the
+		// rows stay on the device for the next person who signs in -- see signOut.
 		view.<MaterialButton>findViewById(R.id.btnSignOut).setOnClickListener(v ->
-				viewModel.signOut(() -> Ui.onMain(this, this::refresh)));
+				viewModel.signOut(() -> Ui.onMain(this, () ->
+						Navigation.findNavController(requireView())
+								.navigate(R.id.action_global_signIn))));
 
 		viewModel.getPendingChanges().observe(getViewLifecycleOwner(), pending -> {
 
@@ -136,7 +119,9 @@ public class FragmentSync extends Fragment {
 		boolean configured = new SyncClient(requireContext()).isConfigured();
 		boolean signedIn = configured && viewModel.isSignedIn();
 
-		groupSignIn.setVisibility(configured && !signedIn ? View.VISIBLE : View.GONE);
+		// There is no sign-in form here any more: the app does not open without a session, so
+		// this screen is only ever reached by somebody who has one. The exception is a build
+		// with no server at all, where there is nothing to sign in to and nothing to show.
 		groupSignedIn.setVisibility(signedIn ? View.VISIBLE : View.GONE);
 
 		if (!configured) {
@@ -159,48 +144,6 @@ public class FragmentSync extends Fragment {
 
 		tvMustChange.setVisibility(signedIn && viewModel.passwordChangeRequired()
 				? View.VISIBLE : View.GONE);
-	}
-
-	private void bindDoor() {
-
-		actvDoor.setAdapter(new ArrayAdapter<>(requireContext(),
-				android.R.layout.simple_list_item_1,
-				new String[]{getString(R.string.door_staff), getString(R.string.door_student)}));
-
-		actvDoor.setText(getString(R.string.door_staff), false);
-
-		actvDoor.setOnItemClickListener((parent, view, position, id) ->
-				door = position == 0 ? SyncSignIn.Door.STAFF : SyncSignIn.Door.STUDENT);
-	}
-
-	private void signIn() {
-
-		String email = etEmail.getText() == null ? "" : etEmail.getText().toString().trim();
-		String password = etPassword.getText() == null ? "" : etPassword.getText().toString();
-
-		tilEmail.setError(email.isEmpty() ? getString(R.string.error_email_required) : null);
-		tilPassword.setError(password.isEmpty()
-				? getString(R.string.error_sync_password_required) : null);
-
-		if (email.isEmpty() || password.isEmpty()) {
-			return;
-		}
-
-		char[] characters = password.toCharArray();
-
-		// Cleared here as well as inside SyncSignIn. The field's own text is a String and
-		// cannot be wiped at all, which is the limit of what a form can do: it is why the
-		// password is never kept anywhere after this and why the token is what gets stored.
-		etPassword.setText("");
-
-		viewModel.signIn(email, door, characters, displayName ->
-				Ui.onMain(this, () -> {
-
-					if (displayName != null) {
-						Arrays.fill(characters, '\0');
-					}
-					refresh();
-				}));
 	}
 
 	/**

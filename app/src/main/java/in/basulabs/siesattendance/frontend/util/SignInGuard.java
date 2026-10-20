@@ -1,77 +1,63 @@
 package in.basulabs.siesattendance.frontend.util;
 
-import androidx.annotation.NonNull;
-import androidx.fragment.app.Fragment;
-import androidx.navigation.NavController;
-
-import com.google.android.material.dialog.MaterialAlertDialogBuilder;
-
-import in.basulabs.siesattendance.R;
-import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
-
 /**
- * Whether a register may be marked on this phone, and the one place that decides it.
+ * Whether this phone may be used at all, and the one place that decides it.
  * <p>
- * A lecture and its marks are attributed on the server to the account that sent them, and that
- * attribution is the whole point of the audit trail: "who recorded this" has to have an answer
- * that is not "a phone". So a build that has a server to answer to asks for a sign-in before the
- * first register, rather than collecting attendance it will later have to refuse.
+ * The app is behind a sign-in. Not one screen of it — all of it: a register, a roll, a student's
+ * record and a term's statistics are the college's data, and a phone that has been signed out, or
+ * never signed in, shows the sign-in screen and nothing else. Marks are attributed on the server
+ * to the account that sent them, and that attribution is the point of the audit trail: "who
+ * recorded this" has to have an answer that is not "a phone that was lying around".
  *
  * <h3>What this is not</h3>
  * It is not a connectivity check, and it must never become one. A session is a token on the
- * device; having one is what this asks about. Marking a register in a basement laboratory with
+ * device; holding one is what this asks about. Marking a register in a basement laboratory with
  * no signal works exactly as it did before — that is the requirement the whole design is built
- * around, and a guard that asked the server anything would break it.
+ * around, and a gate that asked the server anything would break it. The token outlives a
+ * fortnight of no signal, and nothing here shortens that.
  *
- * <h3>A build with no server is not blocked</h3>
- * {@code sync_base_url} is empty in a release build until somebody configures one, and there is
- * nothing to sign in to. Blocking attendance on a build where signing in is impossible would
- * turn the app off, so the rule has two halves and both matter: ask only when there is somewhere
- * to ask about. {@link #mustSignIn} is that rule on its own, with no Android in it, so it can be
- * tested.
+ * <h3>A build with no server is not locked out</h3>
+ * {@code sync_base_url} is empty in a release build until somebody configures one, and then there
+ * is no account anywhere to sign in to. A locked screen with no way past it is not a secured app,
+ * it is a broken one, so the rule has two halves and both matter: <em>ask only when there is
+ * somewhere to ask about</em>. That is one boolean, in {@link #gate}, and tightening it to "no
+ * server means no app" is a one-line change in a place a reader will find.
+ *
+ * <h3>Where it is enforced</h3>
+ * {@code ActivityHome} picks the navigation graph's start destination from {@link #gate} before
+ * the first fragment exists, and asks again in {@code onStart}, which is what catches a session
+ * that ended while the app was in the background. Enforcing it at the host rather than at each
+ * screen is deliberate: there are two dozen destinations and a per-screen check is a check
+ * somebody will forget to add to the twenty-fifth.
  */
 public final class SignInGuard {
+
+	/** Where the app may start. */
+	public enum Gate {
+
+		/** The sign-in screen, and nothing else is reachable. */
+		SIGN_IN,
+
+		/** The app proper. */
+		THE_APP
+	}
 
 	private SignInGuard() {
 	}
 
 	/**
-	 * The rule, as a function of two facts.
+	 * The rule, as a function of two facts and nothing else — no Android in it, so it can be
+	 * tested.
 	 *
 	 * @param hasServer whether this build has a server address at all
 	 * @param signedIn  whether this device holds a session
-	 * @return whether the person has to sign in before taking attendance
 	 */
-	public static boolean mustSignIn(boolean hasServer, boolean signedIn) {
-		return hasServer && !signedIn;
+	public static Gate gate(boolean hasServer, boolean signedIn) {
+		return mustSignIn(hasServer, signedIn) ? Gate.SIGN_IN : Gate.THE_APP;
 	}
 
-	/**
-	 * Runs the action, or explains why it cannot run and offers the way to fix that.
-	 * <p>
-	 * Every route into taking attendance goes through here, and
-	 * {@code FragmentTakeAttendance} checks again on arrival: a screen that can be reached three
-	 * ways is a screen that will be reached a fourth way eventually.
-	 *
-	 * @param navigation the controller the caller navigates with, which is not always its own —
-	 *                   a fragment inside a hub navigates with the hub's
-	 */
-	public static void ifAllowed(@NonNull Fragment fragment,
-	                             @NonNull AttendanceViewModel viewModel,
-	                             @NonNull NavController navigation,
-	                             @NonNull Runnable action) {
-
-		if (!mustSignIn(viewModel.hasServer(), viewModel.isSignedIn())) {
-			action.run();
-			return;
-		}
-
-		new MaterialAlertDialogBuilder(fragment.requireContext())
-				.setTitle(R.string.title_sign_in_required)
-				.setMessage(R.string.message_sign_in_required)
-				.setPositiveButton(R.string.action_sign_in,
-						(dialog, which) -> navigation.navigate(R.id.action_global_sync))
-				.setNegativeButton(R.string.action_not_now, null)
-				.show();
+	/** Whether somebody has to sign in before this phone can be used. */
+	public static boolean mustSignIn(boolean hasServer, boolean signedIn) {
+		return hasServer && !signedIn;
 	}
 }

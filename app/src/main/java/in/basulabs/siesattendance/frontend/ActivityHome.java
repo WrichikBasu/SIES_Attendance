@@ -13,6 +13,7 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.NavController;
 import androidx.navigation.NavDestination;
+import androidx.navigation.NavGraph;
 import androidx.navigation.fragment.NavHostFragment;
 import androidx.navigation.ui.AppBarConfiguration;
 import androidx.navigation.ui.NavigationUI;
@@ -26,6 +27,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.frontend.util.SignInGuard;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -33,6 +35,11 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * <p>
  * The app bar is a MaterialToolbar in the layout rather than a window-decor action bar, so it
  * occupies real space above the fragment container instead of drawing over it.
+ * <p>
+ * It is also where the app is locked. The navigation graph's start destination is chosen from
+ * {@code SignInGuard.gate} before any fragment exists, and {@link #onStart} asks again — so a
+ * phone with no session shows the sign-in screen and nothing else, rather than each of two dozen
+ * destinations having to remember to check.
  * <p>
  * There is one {@link AttendanceViewModel} for the whole app, scoped to this activity. Every
  * fragment reaches it through {@code requireActivity()}, which is what lets a filter chosen on
@@ -84,6 +91,22 @@ public class ActivityHome extends AppCompatActivity {
 
 		navController = navHostFragment.getNavController();
 
+		// The graph is set here rather than in the layout, because where the app starts is a
+		// question about this phone: a device with no session shows the sign-in screen and
+		// nothing else. Doing it in the layout would create the dashboard first and then
+		// navigate away from it, which is a flash of somebody else's data.
+		NavGraph graph = navController.getNavInflater().inflate(R.navigation.nav_graph);
+
+		graph.setStartDestination(
+				SignInGuard.gate(viewModel.hasServer(), viewModel.isSignedIn())
+						== SignInGuard.Gate.SIGN_IN
+						? R.id.fragmentSignIn
+						: R.id.fragmentDashboard);
+
+		// setGraph restores a saved back stack when there is one, so a rotation returns to the
+		// screen the user was on rather than to the start destination chosen above.
+		navController.setGraph(graph, null);
+
 		AppBarConfiguration appBarConfiguration =
 				new AppBarConfiguration.Builder(TOP_LEVEL).build();
 
@@ -134,14 +157,56 @@ public class ActivityHome extends AppCompatActivity {
 	/**
 	 * Shows the bottom bar only on the tab destinations. A detail or editor screen is somewhere
 	 * the user navigated into and should leave by going back, not by switching tabs.
+	 * <p>
+	 * The sign-in screen loses the app bar as well. A toolbar there would offer an up arrow to
+	 * somewhere there is no going back to, and a tab bar would offer four screens that are not
+	 * available — a locked door with the handles still on it.
 	 */
 	private void onDestinationChanged(@NonNull NavController controller,
 	                                  @NonNull NavDestination destination,
 	                                  @Nullable Bundle arguments) {
 
-		bottomNav.setVisibility(TOP_LEVEL.contains(destination.getId())
+		boolean locked = destination.getId() == R.id.fragmentSignIn;
+
+		appBarLayout.setVisibility(locked ? View.GONE : View.VISIBLE);
+
+		bottomNav.setVisibility(!locked && TOP_LEVEL.contains(destination.getId())
 				? View.VISIBLE
 				: View.GONE);
+	}
+
+	/**
+	 * Locks the app again if the session has gone while it was away.
+	 * <p>
+	 * The one case this exists for: a background sync met a 401 — the token was revoked, or the
+	 * password was changed from another phone — and {@code DeviceIdentity} forgot it. The app
+	 * was already running, so the decision made in {@code onCreate} is stale, and without this
+	 * the next person to pick the phone up would find it open.
+	 * <p>
+	 * One exception, and it is not a small one: a register being marked is not interrupted. The
+	 * sheet is in memory until it is saved, so ejecting somebody mid-roll would throw away
+	 * attendance that has already been taken — which is the one outcome this whole design
+	 * refuses. The lock arrives when they leave that screen.
+	 */
+	@Override
+	protected void onStart() {
+
+		super.onStart();
+
+		if (SignInGuard.gate(viewModel.hasServer(), viewModel.isSignedIn())
+				!= SignInGuard.Gate.SIGN_IN) {
+			return;
+		}
+
+		NavDestination current = navController.getCurrentDestination();
+
+		if (current == null
+				|| current.getId() == R.id.fragmentSignIn
+				|| current.getId() == R.id.fragmentTakeAttendance) {
+			return;
+		}
+
+		navController.navigate(R.id.action_global_signIn);
 	}
 
 	/**

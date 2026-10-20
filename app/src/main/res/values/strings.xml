@@ -769,6 +769,23 @@
         is a connection, so marking a register never needs a signal. Nothing is removed from
         this phone until the server has it.</string>
 
+    <!-- ── The door ──────────────────────────────────────────────── -->
+
+    <string name="title_sign_in">Sign in</string>
+    <string name="sign_in_headline">Sign in to use this phone</string>
+    <string name="sign_in_headline_no_server">This build has no server</string>
+    <!--
+        Said plainly, because the honest reason is the useful one: a register is signed
+        work, and the server records which account recorded it.
+    -->
+    <string name="sign_in_explained">Attendance is recorded against the account that takes
+        it, so the app asks who you are once. After that it works without a signal: marking a
+        register never needs a connection, and you stay signed in until you sign out.</string>
+    <string name="sign_in_no_server">No server address is configured in this build, so there
+        is no account to sign in to. The app can still be used on this phone alone; nothing
+        will be sent anywhere, and nothing will be recorded against anybody.</string>
+    <string name="action_continue_locally">Use this phone on its own</string>
+
     <!-- ── Changing the password ─────────────────────────────────── -->
 
     <string name="action_change_password">Change password</string>
@@ -799,16 +816,12 @@
         anything will sync. It was set by whoever created the account.</string>
 
     <!--
-        Shown when somebody starts a register on a build that has a server but has no
-        session. Worth saying both halves: why it is being asked, and that it is asked
-        once rather than every time, because a professor who thinks attendance now needs
-        a signal will stop trusting the app in the one place it matters.
+        The toast on the one screen that still checks for itself: a session that ended while
+        a register was open behind another screen. The dialog that used to go with this is
+        gone, along with the sentence explaining why a sign-in was being asked for mid-app —
+        the app does not open without one now, so the explanation belongs on the door. See
+        sign_in_explained.
     -->
     <string name="title_sign_in_required">Sign in to take attendance</string>
-    <string name="message_sign_in_required">Attendance has to reach the server under your
-        name, so this phone needs you to sign in once before a register can be marked. After
-        that it works with no signal at all: marks are saved here first and sent whenever
-        there is a connection.</string>
-    <string name="action_not_now">Not now</string>
 
 </resources>

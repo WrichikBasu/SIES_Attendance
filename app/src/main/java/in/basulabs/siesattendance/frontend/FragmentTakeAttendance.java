@@ -165,13 +165,14 @@ public class FragmentTakeAttendance extends Fragment {
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
 
 		if (SignInGuard.mustSignIn(viewModel.hasServer(), viewModel.isSignedIn())) {
-			// Checked here as well as at every route in. Three screens start a register today
-			// and a fourth will be added by somebody who has not read SignInGuard; this is the
-			// one check that cannot be forgotten, because it is on the screen itself. It also
-			// covers a session that ended while this screen was open behind another.
+			// The one screen that still asks for itself. ActivityHome.onStart deliberately
+			// does NOT eject somebody from a half-marked register -- the sheet is in memory
+			// until it is saved, and throwing away attendance already taken is the outcome
+			// this design refuses -- so the check happens here instead, on the way in, where
+			// there is nothing yet to lose.
 			Toast.makeText(requireContext(), R.string.title_sign_in_required,
 					Toast.LENGTH_LONG).show();
-			Navigation.findNavController(view).popBackStack();
+			Navigation.findNavController(view).navigate(R.id.action_global_signIn);
 			return;
 		}
 

@@ -3,11 +3,35 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/nav_graph"
-    app:startDestination="@id/fragmentDashboard">
+    app:startDestination="@id/fragmentSignIn">
 
     <!--
-        Reachable from anywhere, because the sign-in prompt can come up on any screen that
-        starts a register: the dashboard, a course's lecture list, or the day picker.
+        The start destination here is only the default. ActivityHome inflates this graph and
+        sets the start destination from SignInGuard.gate before the first fragment is created,
+        so a phone that already holds a session does not see the sign-in screen flash past on
+        every launch. Naming the locked one here is the safer default of the two: a mistake in
+        that code shows the door rather than opening it.
+    -->
+    <fragment
+        android:id="@+id/fragmentSignIn"
+        android:name="in.basulabs.siesattendance.frontend.FragmentSignIn"
+        android:label="@string/title_sign_in"
+        tools:layout="@layout/fragment_sign_in" />
+
+    <!--
+        Back to the door, from anywhere: signing out, and a session the server has ended. The
+        whole graph is popped, so nothing that was on the stack can be resumed by whoever is
+        holding the phone next.
+    -->
+    <action
+        android:id="@+id/action_global_signIn"
+        app:destination="@id/fragmentSignIn"
+        app:popUpTo="@id/nav_graph"
+        app:popUpToInclusive="true" />
+
+    <!--
+        Reachable from anywhere, because the sync screen is where a refusal sends somebody: a
+        password that has to be changed, or a queue that will not empty.
     -->
     <action
         android:id="@+id/action_global_sync"

@@ -45,7 +45,6 @@ import in.basulabs.siesattendance.backend.util.LectureFilter;
 import in.basulabs.siesattendance.frontend.adapter.AdapterLecture;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
-import in.basulabs.siesattendance.frontend.util.SignInGuard;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -162,8 +161,7 @@ public class FragmentLectureList extends Fragment {
 			NavController navigation = Navigation.findNavController(
 					requireParentFragment().requireView());
 
-			SignInGuard.ifAllowed(this, viewModel, navigation,
-					() -> navigation.navigate(R.id.action_coursesHub_to_takeAttendance));
+			navigation.navigate(R.id.action_coursesHub_to_takeAttendance);
 		});
 
 		view.findViewById(R.id.btnFilterPeriod).setOnClickListener(v -> showPeriodChooser());
