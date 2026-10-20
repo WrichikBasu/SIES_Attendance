@@ -1,0 +1,1477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SIES Attendance · console</title>
+<!--
+    One page for the whole server: the accounts, the data and the audit trail.
+
+    It used to be two pages, and moving between them meant signing in again,
+    because each kept its token in its own closure. One page, one session, and
+    the tabs below are panels rather than links.
+
+    No framework and no build step. It talks to the same /api/v1 endpoints the
+    phone does, with the same bearer token, so there is nothing here that is
+    not already tested over HTTP, and nothing to keep in step with a version of
+    a library.
+
+    The token lives in a variable, unless somebody ticks "keep me signed in" --
+    and then, and only then, in localStorage. That is a real trade and it is
+    the person's to make: a stored token survives the tab and is readable by
+    any script on this origin, which is why it is off by default, why the page
+    says what it means, and why signing out removes it.
+
+    What each panel shows is the database's decision and not this page's. An
+    administrator sees the accounts; an auditor reads the trail; a professor
+    sees their own courses and the students on their rolls. A panel that is not
+    yours answers with the server's own sentence rather than an empty table.
+
+    Everything written into the page goes in through textContent. An account's
+    display name is somebody's typed input, and innerHTML would make this the
+    one place in the system where that becomes markup.
+-->
+<style>
+    :root {
+        --ink: #11181c; --ink-2: #4a5568; --ink-3: #8795a1;
+        --line: #d9e0e3; --bg: #f4f6f7; --card: #fff;
+        --accent: #0b5c6b; --bad: #a4232b; --ok: #1f6b3a;
+        color-scheme: light;
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0; background: var(--bg); color: var(--ink);
+        font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+        background: var(--card); border-bottom: 1px solid var(--line);
+        padding: 0.9rem 1.2rem 0; display: flex; align-items: center;
+        gap: 0.8rem; flex-wrap: wrap;
+    }
+    header h1 { font-size: 1.05rem; margin: 0 0 0.9rem; letter-spacing: -0.01em; }
+    header .who { color: var(--ink-2); font-size: 0.875rem; margin: 0 0 0.9rem auto; }
+    header .live {
+        font-size: 0.8rem; color: var(--ink-3); margin-bottom: 0.9rem;
+        font-variant-numeric: tabular-nums;
+    }
+    header .live b { color: var(--ok); font-weight: 600; }
+    header button { margin-bottom: 0.9rem; }
+    nav { flex: 1 1 100%; display: flex; gap: 0.3rem; }
+    nav button {
+        all: unset; cursor: pointer; padding: 0.55rem 0.9rem; font-size: 0.9rem;
+        color: var(--ink-2); border-bottom: 2px solid transparent;
+    }
+    nav button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    main { max-width: 94rem; margin: 0 auto; padding: 1.2rem; }
+    section {
+        background: var(--card); border: 1px solid var(--line);
+        border-radius: 10px; padding: 1.1rem; margin-bottom: 1.2rem;
+    }
+    h2 { font-size: 0.95rem; margin: 0 0 0.9rem; text-transform: uppercase;
+         letter-spacing: 0.06em; color: var(--ink-2); }
+    label { display: block; font-size: 0.8rem; color: var(--ink-2); margin: 0 0 0.25rem; }
+    label.inline { display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem;
+                   color: var(--ink); margin-top: 1.55rem; }
+    label.inline input { width: auto; }
+    input, select, button {
+        font: inherit; padding: 0.5rem 0.6rem; border-radius: 7px;
+        border: 1px solid var(--line); background: #fff; color: inherit;
+    }
+    input, select { width: 100%; }
+    .row { display: flex; gap: 0.8rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+    .row > div { flex: 1 1 12rem; min-width: 0; }
+    button {
+        background: var(--accent); color: #fff; border-color: var(--accent);
+        cursor: pointer; padding-inline: 0.9rem;
+    }
+    button.quiet { background: #fff; color: var(--accent); }
+    button:disabled { opacity: 0.55; cursor: default; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.5rem 0.6rem;
+             border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+         color: var(--ink-3); }
+    .tag {
+        display: inline-block; font-size: 0.75rem; padding: 0.1rem 0.45rem;
+        border: 1px solid var(--ok); color: var(--ok); border-radius: 999px;
+        margin: 0 0.25rem 0.25rem 0; white-space: nowrap;
+    }
+    .tag button {
+        all: unset; cursor: pointer; margin-left: 0.3rem; color: var(--bad);
+        font-weight: 700;
+    }
+    .tables { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .tables button {
+        background: #fff; color: var(--ink); border-color: var(--line); font-size: 0.875rem;
+    }
+    .tables button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+    .tables button .n { color: var(--ink-3); margin-left: 0.4rem;
+                        font-variant-numeric: tabular-nums; }
+    .scroll { overflow-x: auto; }
+    .grid table { font-size: 0.82rem;
+                  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .grid th, .grid td { white-space: nowrap; padding: 0.35rem 0.6rem; }
+    .grid th { position: sticky; top: 0; background: var(--card); }
+    td.null { color: var(--ink-3); font-style: italic; }
+    td.named { border-bottom: 1px dotted var(--line); cursor: help; }
+    .trail td { font-size: 0.85rem; }
+    .trail td.when { white-space: nowrap; font-variant-numeric: tabular-nums;
+                     color: var(--ink-2); }
+    .trail td.what b { font-weight: 600; }
+    .trail tr.open td { background: #fbfdfd; }
+    .trail pre {
+        margin: 0.4rem 0 0; padding: 0.5rem 0.6rem; background: var(--bg);
+        border: 1px solid var(--line); border-radius: 6px; overflow-x: auto;
+        font-size: 0.78rem; white-space: pre-wrap; word-break: break-word;
+    }
+    .trail .peek { all: unset; cursor: pointer; color: var(--accent); font-size: 0.8rem; }
+    .say { padding: 0.6rem 0.8rem; border-radius: 7px; margin-bottom: 1rem;
+           font-size: 0.9rem; display: none; }
+    .say.bad { display: block; background: #fdecee; color: var(--bad); }
+    .say.good { display: block; background: #eaf5ee; color: var(--ok); }
+    .note { font-size: 0.85rem; color: var(--ink-2); margin: 0 0 0.9rem; }
+    .note.after { margin: 0.8rem 0 0; }
+    [hidden] { display: none !important; }
+    .muted { color: var(--ink-3); }
+</style>
+</head>
+<body>
+
+<header>
+    <h1>SIES Attendance</h1>
+    <span class="live" id="live"></span>
+    <span class="who" id="who"></span>
+    <button class="quiet" id="signOut" hidden>Sign out</button>
+
+    <nav id="tabs" hidden>
+        <button id="tabAccounts" data-panel="accounts">Accounts</button>
+        <button id="tabData" data-panel="data">Data</button>
+        <button id="tabReps" data-panel="reps">Representatives</button>
+        <button id="tabAudit" data-panel="audit">Audit trail</button>
+    </nav>
+</header>
+
+<main>
+    <p class="say" id="say"></p>
+
+    <!-- Signing in. One door: the staff one. See the note. -->
+    <section id="signInCard">
+        <h2>Sign in</h2>
+        <p class="note">A professor's, an office or an administrator's account. <b>Students
+            cannot sign in here</b> — a class representative's account is for marking
+            registers on the phone, and this page is the office's.</p>
+        <div class="row">
+            <div><label for="email">Email</label><input id="email" type="email"
+                 autocomplete="username"></div>
+            <div><label for="password">Password</label><input id="password" type="password"
+                 autocomplete="current-password"></div>
+            <div><label class="inline" for="remember"><input id="remember" type="checkbox">
+                 Keep me signed in</label></div>
+        </div>
+        <button id="signIn">Sign in</button>
+        <p class="note after">Left unticked, the session lives in this tab and closing it signs
+            you out. Ticked, it is kept in this browser until you sign out or it expires in a
+            fortnight — convenient on your own machine, and the wrong choice on a shared
+            one.</p>
+    </section>
+
+    <section id="rotateCard" hidden>
+        <h2>Change your password first</h2>
+        <p class="note">This account was created with a password somebody else typed, so it
+            cannot do anything else until that is changed. Every other session of this account
+            is signed out by the change; this one is not.</p>
+        <div class="row">
+            <div><label for="currentPassword">Current password</label>
+                 <input id="currentPassword" type="password"></div>
+            <div><label for="newPassword">New password (12 or more)</label>
+                 <input id="newPassword" type="password" autocomplete="new-password"></div>
+        </div>
+        <button id="rotate">Change it</button>
+    </section>
+
+    <!-- ── Accounts ──────────────────────────────────────────────── -->
+    <div id="panelAccounts" hidden>
+
+        <section id="createCard">
+            <h2>New account</h2>
+            <p class="note">The password is an opening one: the account has to change it before
+                it can do anything, so you are not the person who ends up knowing it. A
+                professor's account can mark that professor's registers from the moment it
+                exists, with no role at all — the role is for what they may do <em>beyond</em>
+                their own teaching.</p>
+            <div class="row">
+                <div><label for="kind">Kind</label><select id="kind"></select></div>
+                <div id="personWrap"><label for="person">Who it is for</label>
+                     <select id="person"></select></div>
+                <div id="newPersonWrap" hidden><label for="newPersonName">Professor's
+                     name</label><input id="newPersonName"></div>
+                <div><label for="displayName">Display name</label><input id="displayName"></div>
+            </div>
+            <div class="row" id="newPersonRow" hidden>
+                <div><label for="newPersonEmail">Professor's email</label>
+                     <input id="newPersonEmail" type="email"></div>
+                <div><label for="newPersonDepartment">Department</label>
+                     <select id="newPersonDepartment"></select></div>
+                <div><label for="newPersonDesignation">Designation</label>
+                     <input id="newPersonDesignation" value="Assistant Professor"></div>
+            </div>
+            <div class="row">
+                <div><label for="newEmail">Login email</label>
+                     <input id="newEmail" type="email"></div>
+                <div><label for="openingPassword">Opening password (12 or more)</label>
+                     <input id="openingPassword" type="password"></div>
+                <div><label for="newRole">Role</label><select id="newRole"></select></div>
+            </div>
+            <div class="row" id="newScopeWrap" hidden>
+                <div><label for="newDepartment">Department</label>
+                     <select id="newDepartment"></select></div>
+                <div><label for="newSession">Session</label><select id="newSession"></select></div>
+            </div>
+            <button id="create">Create</button>
+        </section>
+
+        <section id="listCard">
+            <h2>Accounts</h2>
+            <p class="note">Roles and appointments in force. One that has been revoked is not
+                shown here at all — what happened to it, who did it and when is in the audit
+                trail, which says more than a crossed-out tag could. An account left holding
+                nothing is not shown either; it can still be given a role below.</p>
+            <div class="scroll"><table>
+                <thead><tr>
+                    <th>#</th><th>Name</th><th>Email</th><th>Kind</th>
+                    <th>Roles</th><th>Represents</th><th>State</th>
+                </tr></thead>
+                <tbody id="rows"></tbody>
+            </table></div>
+        </section>
+
+        <section id="grantCard">
+            <h2>Grant a role</h2>
+            <p class="note">A head of department is appointed for a department, and the
+                session is optional: left at <em>until it is revoked</em> the appointment runs
+                until somebody ends it, which is what an appointment normally does. Name a
+                session for somebody standing in for one year. The other three roles are
+                college-wide and hold until they are revoked.</p>
+            <div class="row">
+                <div><label for="grantAccount">Account</label>
+                     <select id="grantAccount"></select></div>
+                <div><label for="grantRole">Role</label><select id="grantRole"></select></div>
+                <div><label for="grantReason">Reason (optional)</label>
+                     <input id="grantReason"></div>
+            </div>
+            <div class="row" id="grantScopeWrap" hidden>
+                <div><label for="grantDepartment">Department</label>
+                     <select id="grantDepartment"></select></div>
+                <div><label for="grantSession">Session</label>
+                     <select id="grantSession"></select></div>
+            </div>
+            <button id="grant">Grant</button>
+        </section>
+
+    </div>
+
+    <!-- ── Data ──────────────────────────────────────────────────── -->
+    <div id="panelData" hidden>
+
+        <section>
+            <h2>Tables</h2>
+            <div class="tables" id="tables"></div>
+            <p class="note after">Counts are what <em>you</em> may see, and that is the
+                database's answer rather than this page's: a professor sees their own courses
+                and the students on their rolls, a head of department sees that department, an
+                auditor sees everybody. A zero means none you are allowed to read, which is
+                not the same as none on the server.</p>
+        </section>
+
+        <section id="rowsCard" hidden>
+            <h2 id="rowsTitle">Rows</h2>
+            <div class="scroll grid"><table>
+                <thead><tr id="head"></tr></thead>
+                <tbody id="body"></tbody>
+            </table></div>
+            <p class="note after" id="paging"></p>
+            <button id="more" hidden>Next page</button>
+        </section>
+    </div>
+
+    <!-- ── Class representatives ─────────────────────────────────── -->
+    <div id="panelReps" hidden>
+
+        <section>
+            <h2>Class representatives</h2>
+            <p class="note">Yours to appoint: a representative of a course you teach, or of one
+                your department offers if you head it. Pick the course and the session, and the
+                roll is the list — it is the same roll the register is called from, so somebody
+                not on it cannot be appointed to it. An appointment is recorded in the capacity
+                you hold, and it lets that student mark this course's registers on their phone
+                from their next sync.</p>
+            <div class="row">
+                <div><label for="repCourse">Course</label><select id="repCourse"></select></div>
+                <div><label for="repSession">Session</label><select id="repSession"></select></div>
+            </div>
+            <div class="scroll"><table>
+                <thead><tr>
+                    <th>Roll no</th><th>Name</th><th>Account</th><th>Represents</th><th></th>
+                </tr></thead>
+                <tbody id="roll"></tbody>
+            </table></div>
+            <p class="note after" id="rollNote"></p>
+        </section>
+    </div>
+
+    <!-- ── Audit trail ───────────────────────────────────────────── -->
+    <div id="panelAudit" hidden>
+
+        <section>
+            <h2>Audit trail</h2>
+            <p class="note">Every write you may read, newest first, with who made it: the
+                account, the session, the device and the address. An auditor or an
+                administrator reads the whole trail; a professor reads what happened to their
+                own lectures, marks and courses, whoever did it, and what they themselves did;
+                a head of department reads their department's. The service's own database role
+                cannot read this table at all, which is what makes it worth having.</p>
+            <div class="scroll"><table class="trail">
+                <thead><tr>
+                    <th>When</th><th>Who</th><th>What</th><th>Where from</th><th></th>
+                </tr></thead>
+                <tbody id="trail"></tbody>
+            </table></div>
+            <p class="note after" id="trailPaging"></p>
+            <button id="trailMore" hidden>Older entries</button>
+        </section>
+    </div>
+</main>
+
+<script>
+"use strict";
+
+// ── The session ──────────────────────────────────────────────────────
+//
+// In a variable, and in localStorage only when somebody asked for that. The
+// key is read once at load and written only by the checkbox, so there is
+// exactly one place in this file that persists a credential.
+
+const KEPT = "sies.token";
+
+let token = null;
+let options = null;
+let panel = "data";
+let timer = null;
+
+// What this account may do, from /me. The page offers what there is rather than showing
+// every panel and letting the ones that are not yours answer 403 -- which is what it used
+// to do, and which met a professor with an accounts list, a create form and a grant form,
+// all three of which would refuse them.
+let me = null;
+
+const $ = (id) => document.getElementById(id);
+
+/** Reading storage can throw: a private window, or site data blocked. */
+function keptToken() {
+    try {
+        return window.localStorage.getItem(KEPT);
+    } catch (e) {
+        return null;
+    }
+}
+
+function keepToken(value) {
+    try {
+        if (value === null) {
+            window.localStorage.removeItem(KEPT);
+        } else {
+            window.localStorage.setItem(KEPT, value);
+        }
+    } catch (e) {
+        // Nothing to do and nothing to say: the session still works for this tab, which is
+        // what it would have been without the tick.
+    }
+}
+
+function say(message, good) {
+    const box = $("say");
+    box.textContent = message;
+    box.className = "say " + (good ? "good" : "bad");
+}
+
+function clearSay() {
+    $("say").className = "say";
+}
+
+// ── Talking to the server ────────────────────────────────────────────
+
+async function request(method, path, body) {
+
+    const headers = {"Accept": "application/json"};
+
+    if (token) {
+        headers["Authorization"] = "Bearer " + token;
+    }
+
+    if (body !== undefined) {
+        headers["Content-Type"] = "application/json";
+    }
+
+    const response = await fetch("/api/v1" + path, {
+        method: method,
+        headers: headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+    const text = await response.text();
+    let parsed = null;
+
+    try {
+        parsed = text ? JSON.parse(text) : null;
+    } catch (e) {
+        throw new Error("The server answered with something that is not JSON: "
+            + text.slice(0, 200));
+    }
+
+    if (response.status === 401) {
+        // The session is gone: expired, revoked, or a kept token from a server that has
+        // since been reset. Forget it rather than leaving the page retrying a credential
+        // the server has already refused.
+        forget();
+        throw new Error(parsed && parsed.message ? parsed.message : "Sign in again.");
+    }
+
+    if (!response.ok) {
+        throw new Error(parsed && parsed.message ? parsed.message
+            : method + " " + path + " answered " + response.status);
+    }
+
+    return parsed;
+}
+
+const api = (path) => request("GET", path);
+const post = (path, body) => request("POST", path, body === undefined ? {} : body);
+
+// ── Signing in and out ───────────────────────────────────────────────
+
+$("signIn").addEventListener("click", async () => {
+
+    clearSay();
+
+    try {
+        // STAFF, always. app_account is unique per door and student_login is derived from
+        // the kind, so a student account cannot be found at this door at all -- which is
+        // the whole of "students cannot sign in here", enforced by the lookup rather than
+        // by a check this page could get wrong.
+        const reply = await post("/auth/login", {
+            email: $("email").value.trim(),
+            door: "STAFF",
+            password: $("password").value,
+        });
+
+        $("password").value = "";
+
+        if (reply.account && reply.account.kind === "STUDENT") {
+            // Belt and braces. A staff-door login cannot return one today; if the doors
+            // ever merge, this page still refuses rather than showing somebody a console
+            // their account has no business in.
+            say("A student account cannot use this page.", false);
+            return;
+        }
+
+        token = reply.token;
+
+        if ($("remember").checked) {
+            keepToken(token);
+        }
+
+        $("signInCard").hidden = true;
+        $("signOut").hidden = false;
+
+        if (reply.mustRotate) {
+            // Nothing else works until that is done, /me included: the token filter admits
+            // the password endpoint and the logout and refuses everything else.
+            $("who").textContent = reply.account
+                ? reply.account.displayName + " · " + reply.account.kind : "";
+            $("rotateCard").hidden = false;
+            return;
+        }
+
+        await opened();
+
+    } catch (e) {
+        say(e.message, false);
+    }
+});
+
+$("rotate").addEventListener("click", async () => {
+
+    clearSay();
+
+    try {
+        await post("/auth/password", {
+            currentPassword: $("currentPassword").value,
+            newPassword: $("newPassword").value,
+        });
+
+        $("currentPassword").value = "";
+        $("newPassword").value = "";
+        $("rotateCard").hidden = true;
+
+        say("Password changed. Every other session of this account has been signed out.",
+            true);
+
+        await opened();
+
+    } catch (e) {
+        say(e.message, false);
+    }
+});
+
+$("signOut").addEventListener("click", async () => {
+
+    try {
+        await post("/auth/logout");
+    } catch (e) {
+        // Best effort, exactly as on the phone: a session this page cannot reach still
+        // stops being used here, and it expires on its own.
+    }
+
+    forget();
+    say("Signed out.", true);
+});
+
+/** Drops the session, here and in storage, and puts the page back to the door. */
+function forget() {
+
+    token = null;
+    me = null;
+    optionsLoaded = false;
+    keepToken(null);
+    stopPolling();
+
+    $("who").textContent = "";
+    $("signOut").hidden = true;
+    $("tabs").hidden = true;
+    $("rotateCard").hidden = true;
+    $("panelAccounts").hidden = true;
+    $("panelData").hidden = true;
+    $("panelReps").hidden = true;
+    $("panelAudit").hidden = true;
+    $("signInCard").hidden = false;
+    $("live").textContent = "";
+}
+
+/** Everything that happens once a session is usable. */
+async function opened() {
+
+    me = await api("/me");
+
+    const admin = me.mayManageAccounts;
+    const anyTrail = Number(me.auditEntries) > 0;
+
+    // The accounts list, the create form and the grant form are one panel and one authority:
+    // actor_may_manage_accounts(), which today means ADMIN. A professor is not shown them at
+    // all -- not greyed out, not there.
+    $("tabAccounts").hidden = !admin;
+    $("tabAudit").hidden = !anyTrail;
+
+    // Appointing a representative is the course instructor's before it is anybody's, so this
+    // panel is offered to whoever has a course to appoint one for. /accounts/courses answers
+    // under the caller's own actor: every course for an administrator, their own for a
+    // professor, the department's for its head.
+    const courses = await api("/accounts/courses");
+
+    $("tabReps").hidden = courses.length === 0;
+
+    if (courses.length > 0) {
+        fill($("repCourse"), courses.map((c) => c.value), courses.map((c) => c.label));
+    }
+
+    // The label, which /me sends beside the stored name. departmentLabel() reads the list
+    // from /accounts/options, and that is an administrator's endpoint -- so a professor's own
+    // strip used to read "HOD COMPUTER_SCIENCE", a column's contents in the one place on the
+    // page that is about them.
+    const roles = (me.roles || []).map((grant) => grant.role
+        + (grant.departmentLabel ? " " + grant.departmentLabel : "")
+        + (grant.academicYear ? " " + grant.academicYear : "")).join(", ");
+
+    const represents = (me.represents || []).map((grant) => grant.courseCode).join(", ");
+
+    $("who").textContent = [me.displayName, me.kind.toLowerCase(), roles,
+        represents ? "CR of " + represents : null].filter((part) => part).join(" · ");
+
+    // The sessions, which the representatives panel needs and only the accounts panel used
+    // to load. /accounts/sessions is readable by anybody signed in, because an academic year
+    // is not a secret and a form that cannot name one is a form that cannot be used.
+    const sessions = await api("/accounts/sessions");
+
+    fill($("repSession"), sessions.length ? sessions : [""],
+        sessions.length ? null : ["No session on file"]);
+
+    $("tabs").hidden = false;
+
+    // Land somewhere that exists. Data is the panel everybody has: what it shows is the
+    // policies' answer, which for a professor is their own courses and their own rolls.
+    show(admin ? "accounts" : (panel === "accounts" ? "data" : panel));
+    startPolling();
+}
+
+// ── The tabs ─────────────────────────────────────────────────────────
+
+Array.from($("tabs").children).forEach((button) => {
+    button.addEventListener("click", () => show(button.dataset.panel));
+});
+
+function show(which) {
+
+    // A hash in the URL, or a stale panel from before sign-in, could name one that is not
+    // this account's. Fall back rather than opening something that will refuse.
+    if (which === "accounts" && me && !me.mayManageAccounts) {
+        which = "data";
+    }
+
+    panel = which;
+
+    Array.from($("tabs").children).forEach((button) => {
+        button.classList.toggle("on", button.dataset.panel === which);
+    });
+
+    $("panelAccounts").hidden = which !== "accounts";
+    $("panelData").hidden = which !== "data";
+    $("panelReps").hidden = which !== "reps";
+    $("panelAudit").hidden = which !== "audit";
+
+    refresh();
+}
+
+// ── Live ─────────────────────────────────────────────────────────────
+//
+// Polled, not pushed: there is no socket in this service and a screen that
+// reloads every few seconds is honest about what it knows. Only the panel
+// in front of somebody, and only while the tab is actually visible -- a
+// console left open on a second monitor should not be asking all afternoon.
+
+const EVERY = 10000;
+
+function startPolling() {
+
+    stopPolling();
+    timer = window.setInterval(() => {
+        if (document.visibilityState === "visible") {
+            refresh(true);
+        }
+    }, EVERY);
+}
+
+function stopPolling() {
+
+    if (timer !== null) {
+        window.clearInterval(timer);
+        timer = null;
+    }
+}
+
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && token) {
+        refresh(true);
+    }
+});
+
+/** Reloads whatever is in front of somebody. */
+async function refresh(quietly) {
+
+    if (!token) {
+        return;
+    }
+
+    try {
+        if (panel === "accounts") {
+            await loadOptions();
+            await loadAccounts();
+        } else if (panel === "data") {
+            await loadTables();
+        } else if (panel === "reps") {
+            await loadRoll();
+        } else {
+            await loadTrail(null);
+        }
+
+        const now = new Date();
+        $("live").textContent = "updated " + now.toLocaleTimeString();
+
+    } catch (e) {
+        // A panel that is not this account's says so once, and the polling carries on: an
+        // auditor flipping to Accounts should see "it is not yours to read", not a page
+        // that has given up.
+        if (!quietly) {
+            say(e.message, false);
+        }
+        $("live").textContent = "";
+    }
+}
+
+// ── Shared helpers ───────────────────────────────────────────────────
+
+function fill(select, values, labels) {
+    const chosen = select.value;
+    select.textContent = "";
+    values.forEach((value, at) => {
+        const option = document.createElement("option");
+        option.value = String(value);
+        // A label that is not there falls back to the value, and never to nothing. The
+        // textContent setter takes a nullable DOMString, so undefined becomes null becomes
+        // the empty string: handing it a label this page did not get would produce a list
+        // of blank options rather than anything that says what went wrong.
+        const label = labels ? labels[at] : null;
+        option.textContent = label === undefined || label === null
+            ? String(value) : String(label);
+        select.appendChild(option);
+    });
+    // Live reloading must not move a half-filled form under somebody's hands.
+    if (chosen && values.map(String).includes(chosen)) {
+        select.value = chosen;
+    }
+}
+
+/** The person option that means "not on the server yet". Not a key, so it cannot be one. */
+const NEW_PERSON = "new";
+
+/**
+ * What a stored department is called, or the stored name when this server did not label it.
+ *
+ * Never the other way round: the label is for reading, the value is what is stored, and a
+ * page that sent a label where a value belongs would be writing "CS" into a department
+ * column.
+ */
+function departmentLabel(stored) {
+    if (!stored || !options) {
+        return stored;
+    }
+    const known = options.departments.find((d) => d.value === stored || d === stored);
+    return known && known.label ? known.label : stored;
+}
+
+function scopeNeeded(role) {
+    return role === "HOD";
+}
+
+/**
+ * A session a form chose, or null for the empty option.
+ *
+ * Not Number(), which turns "" into 0 -- and a 0 sent as an academic year is a row that does
+ * not exist rather than the absence the person chose. The same family as every other place in
+ * this project where a value crossing the wire was not the value somebody picked.
+ */
+function session(value) {
+    return value === "" || value === null || value === undefined ? null : Number(value);
+}
+
+/** Shows the department and session fields exactly when the chosen role is scoped. */
+function syncScope() {
+    $("newScopeWrap").hidden = !scopeNeeded($("newRole").value);
+    $("grantScopeWrap").hidden = !scopeNeeded($("grantRole").value);
+}
+
+$("newRole").addEventListener("change", syncScope);
+$("grantRole").addEventListener("change", syncScope);
+
+// ── Accounts: the options every form needs ───────────────────────────
+
+let optionsLoaded = false;
+
+async function loadOptions() {
+
+    if (optionsLoaded) {
+        return;
+    }
+
+    options = await api("/accounts/options");
+
+    fill($("kind"), options.kinds);
+    fill($("newRole"), [""].concat(options.roles), ["No role"].concat(options.roles));
+    fill($("grantRole"), options.roles);
+
+    // Either shape is accepted, because this page can be newer than the process serving it:
+    // static files are read off disk per request and classes are loaded once at startup.
+    const departments = options.departments.map((d) =>
+        typeof d === "string" ? {value: d, label: d} : d);
+
+    const values = departments.map((d) => d.value);
+    const labels = departments.map((d) => d.label);
+
+    fill($("newDepartment"), values, labels);
+    fill($("grantDepartment"), values, labels);
+    fill($("newPersonDepartment"), values, labels);
+
+    // An empty option first, and it is the default: V18 made the session optional on a HOD
+    // grant, and its absence means "until it is revoked", which is what an appointment
+    // normally is. A head standing in for one year is the exception, so it is the one that
+    // has to be chosen. Without this option the page could only make the exception.
+    const open = [""].concat(options.sessions);
+    const openLabels = ["Until it is revoked"].concat(options.sessions);
+
+    fill($("newSession"), open, openLabels);
+    fill($("grantSession"), open, openLabels);
+
+    if (options.sessions.length === 0) {
+        // No academic year on file at all. The open-ended grant still works, so the option
+        // that means it is the only one offered rather than a dead "No session on file".
+        fill($("newSession"), [""], ["Until it is revoked"]);
+        fill($("grantSession"), [""], ["Until it is revoked"]);
+    }
+
+    syncScope();
+    await onKindChanged();
+
+    optionsLoaded = true;
+}
+
+async function onKindChanged() {
+
+    const kind = $("kind").value;
+    const wrap = $("personWrap");
+
+    if (kind === "STAFF") {
+        // Office staff are attached to nobody: giving them a professors row would corrupt
+        // every query that counts teaching staff.
+        wrap.hidden = true;
+        return;
+    }
+
+    wrap.hidden = false;
+
+    const people = await api("/accounts/people?kind=" + kind);
+
+    // Already strings on the wire, and kept that way: a key is 59 bits and this is
+    // JavaScript, where String(a rounded double) would round-trip the damage.
+    const ids = people.map((p) => p.id);
+    const labels = people.map((p) => p.name + (p.detail ? " · " + p.detail : "")
+        + (p.email ? " · " + p.email : ""));
+
+    if (kind === "PROFESSOR") {
+        ids.unshift(NEW_PERSON);
+        labels.unshift(people.length === 0
+            ? "No professors on the server yet — add one"
+            : "A professor who is not on the server yet");
+    } else if (people.length === 0) {
+        ids.length = 0;
+        labels.length = 0;
+        ids.push("");
+        labels.push("No students yet — load a roster CSV first");
+    }
+
+    fill($("person"), ids, labels);
+    syncPerson();
+}
+
+/** Shows the four fields for a professor who has to be created along with their account. */
+function syncPerson() {
+    const making = $("kind").value === "PROFESSOR" && $("person").value === NEW_PERSON;
+    $("newPersonWrap").hidden = !making;
+    $("newPersonRow").hidden = !making;
+}
+
+$("person").addEventListener("change", syncPerson);
+$("kind").addEventListener("change", () => onKindChanged().catch((e) => say(e.message, false)));
+
+// ── Accounts: the list ───────────────────────────────────────────────
+
+async function loadAccounts() {
+
+    const accounts = await api("/accounts");
+    const rows = $("rows");
+    rows.textContent = "";
+
+    // Only accounts that hold something. One whose last role was revoked or last
+    // appointment ended has nothing left to show here; it stays in the grant form's list
+    // below, which is the one place it can be given something again.
+    const holding = accounts.filter((account) =>
+        account.roles.length > 0 || account.delegations.length > 0);
+
+    holding.forEach((account) => {
+
+        const row = document.createElement("tr");
+
+        const cell = (value) => {
+            const td = document.createElement("td");
+            td.textContent = value === null || value === undefined ? "" : String(value);
+            row.appendChild(td);
+            return td;
+        };
+
+        cell(account.accountId);
+        cell(account.displayName);
+        cell(account.loginEmail);
+        cell(account.kind);
+
+        const roles = document.createElement("td");
+
+        account.roles.forEach((grant) => {
+
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = grant.role
+                + (grant.department ? " · " + departmentLabel(grant.department) : "")
+                + (grant.academicYear ? " · " + grant.academicYear : "");
+
+            const revoke = document.createElement("button");
+            revoke.textContent = "×";
+            revoke.title = "Revoke this role";
+            revoke.addEventListener("click", () => revokeRole(account, grant));
+            tag.appendChild(revoke);
+
+            roles.appendChild(tag);
+        });
+
+        if (account.roles.length === 0) {
+            const none = document.createElement("span");
+            none.className = "muted";
+            none.textContent = "none";
+            roles.appendChild(none);
+        }
+
+        row.appendChild(roles);
+
+        const represents = document.createElement("td");
+
+        account.delegations.forEach((grant) => {
+
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = grant.courseCode + " · " + grant.academicYear;
+            tag.title = grant.courseTopic + " — appointed as " + grant.grantedAs.toLowerCase()
+                + " on " + grant.grantedAt;
+
+            const end = document.createElement("button");
+            end.textContent = "×";
+            end.title = "End this appointment";
+            end.addEventListener("click", () => endDelegation(account, grant));
+            tag.appendChild(end);
+
+            represents.appendChild(tag);
+        });
+
+        if (account.delegations.length === 0) {
+            const none = document.createElement("span");
+            none.className = "muted";
+            none.textContent = account.kind === "STUDENT" ? "no course yet" : "—";
+            represents.appendChild(none);
+        }
+
+        row.appendChild(represents);
+
+        const state = [];
+        if (account.disabled) { state.push("disabled"); }
+        if (account.locked) { state.push("locked"); }
+        if (account.mustRotate) { state.push("must change password"); }
+        if (!account.lastLoginAt) { state.push("never signed in"); }
+        cell(state.join(", ") || "in use").className = state.length ? "" : "muted";
+
+        rows.appendChild(row);
+    });
+
+    fill($("grantAccount"),
+        accounts.map((a) => a.accountId),
+        accounts.map((a) => a.accountId + " · " + a.displayName + " · " + a.kind));
+
+}
+
+async function revokeRole(account, grant) {
+
+    if (!confirm("Revoke " + grant.role + " from " + account.displayName
+            + "?\n\nThe grant is kept and marked revoked, so the audit trail can still "
+            + "explain what was done under it. It leaves this list.")) {
+        return;
+    }
+
+    clearSay();
+
+    try {
+        await post("/accounts/" + account.accountId + "/roles/" + grant.userRoleId
+            + "/revoke", {reason: null});
+
+        say("Revoked " + grant.role + " from " + account.displayName + ".", true);
+        await loadAccounts();
+
+    } catch (e) {
+        say(e.message, false);
+    }
+}
+
+async function endDelegation(account, grant) {
+
+    if (!confirm("End " + account.displayName + "'s appointment for " + grant.courseCode
+            + " in " + grant.academicYear + "?\n\nThe grant is kept and marked ended, so the "
+            + "registers they marked under it stay explainable. They stop being able to mark "
+            + "that course at their next sync.")) {
+        return;
+    }
+
+    clearSay();
+
+    try {
+        // The course-shaped route, which is the only one now: an appointment is a student
+        // and a course, and the account is only how that student signs in.
+        await post("/courses/" + grant.courseId + "/representatives/revoke", {
+            studentId: account.studentId,
+            academicYear: grant.academicYear,
+            reason: null,
+        });
+
+        say("Ended the appointment for " + grant.courseCode + ".", true);
+        await loadAccounts();
+
+    } catch (e) {
+        say(e.message, false);
+    }
+}
+
+// ── Accounts: the three forms ────────────────────────────────────────
+
+$("create").addEventListener("click", async () => {
+
+    clearSay();
+
+    const kind = $("kind").value;
+    const role = $("newRole").value;
+    const person = $("person").value;
+    const making = kind === "PROFESSOR" && person === NEW_PERSON;
+
+    const body = {
+        kind: kind,
+        displayName: $("displayName").value.trim(),
+        loginEmail: $("newEmail").value.trim(),
+        password: $("openingPassword").value,
+        // Text, never Number(): a prof_id and a student_id are 59-bit structured keys, and
+        // every number in JavaScript is a double.
+        profId: kind === "PROFESSOR" && person && !making ? person : null,
+        studentId: kind === "STUDENT" && person ? person : null,
+        role: role || null,
+        department: role && scopeNeeded(role) ? $("newDepartment").value : null,
+        // session() rather than Number(): Number("") is 0, and 0 would be sent as an
+        // academic year, which the foreign key on academic_years refuses -- a 409 about a
+        // row that does not exist, where the person meant "no session at all".
+        academicYear: role && scopeNeeded(role) ? session($("newSession").value) : null,
+        person: making ? {
+            name: $("newPersonName").value.trim(),
+            email: $("newPersonEmail").value.trim(),
+            department: $("newPersonDepartment").value,
+            designation: $("newPersonDesignation").value.trim(),
+        } : null,
+    };
+
+    try {
+        const created = await post("/accounts", body);
+
+        $("openingPassword").value = "";
+        $("displayName").value = "";
+        $("newEmail").value = "";
+        $("newPersonName").value = "";
+        $("newPersonEmail").value = "";
+
+        say("Created account " + created.accountId
+            + (created.profId ? " for professor " + created.profId : "")
+            + ". Tell them the opening password; they will be made to change it before they "
+            + "can do anything.", true);
+
+        optionsLoaded = false;
+        await loadOptions();
+        await loadAccounts();
+
+    } catch (e) {
+        say(e.message, false);
+    }
+});
+
+$("grant").addEventListener("click", async () => {
+
+    clearSay();
+    const role = $("grantRole").value;
+
+    try {
+        await post("/accounts/" + $("grantAccount").value + "/roles", {
+            role: role,
+            department: scopeNeeded(role) ? $("grantDepartment").value : null,
+            academicYear: scopeNeeded(role) ? session($("grantSession").value) : null,
+            reason: $("grantReason").value.trim() || null,
+        });
+
+        $("grantReason").value = "";
+        say("Granted " + role + ".", true);
+        await loadAccounts();
+
+    } catch (e) {
+        say(e.message, false);
+    }
+});
+
+// ── Class representatives ────────────────────────────────────────────
+
+$("repCourse").addEventListener("change", () => loadRoll().catch((e) => say(e.message, false)));
+$("repSession").addEventListener("change", () => loadRoll().catch((e) => say(e.message, false)));
+
+async function loadRoll() {
+
+    const course = $("repCourse").value;
+    const session = $("repSession").value;
+    const body = $("roll");
+
+    if (!course || !session) {
+        body.textContent = "";
+        $("rollNote").textContent = "Pick a course and a session.";
+        return;
+    }
+
+    const roll = await api("/courses/" + encodeURIComponent(course) + "/roll?academicYear="
+        + encodeURIComponent(session));
+
+    body.textContent = "";
+
+    roll.forEach((student) => {
+
+        const row = document.createElement("tr");
+
+        const cell = (value) => {
+            const td = document.createElement("td");
+            td.textContent = value === null || value === undefined ? "" : String(value);
+            row.appendChild(td);
+            return td;
+        };
+
+        cell(student.rollNo);
+        cell(student.name);
+
+        // A grant without an account is legal and useless: the student holds it and has no
+        // way to sign in and use it. Said here rather than left for somebody to wonder about.
+        const account = cell(student.hasAccount ? "yes" : "none");
+        account.className = student.hasAccount ? "" : "muted";
+
+        const represents = document.createElement("td");
+
+        if (student.represents) {
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = "representative";
+            represents.appendChild(tag);
+        } else {
+            const none = document.createElement("span");
+            none.className = "muted";
+            none.textContent = "—";
+            represents.appendChild(none);
+        }
+
+        row.appendChild(represents);
+
+        const action = document.createElement("td");
+        const button = document.createElement("button");
+
+        button.className = "quiet";
+        button.textContent = student.represents ? "End" : "Appoint";
+        button.addEventListener("click", () => student.represents
+            ? endRepresentative(student) : appoint(student));
+
+        action.appendChild(button);
+        row.appendChild(action);
+
+        body.appendChild(row);
+    });
+
+    $("rollNote").textContent = roll.length === 0
+        ? "Nobody is on this roll for that session. The roll comes from enrolments, which "
+            + "are the office's."
+        : roll.length + " on the roll · "
+            + roll.filter((s) => s.represents).length + " appointed · "
+            + roll.filter((s) => !s.hasAccount).length + " without an account";
+}
+
+async function appoint(student) {
+
+    clearSay();
+
+    try {
+        const granted = await post("/courses/" + $("repCourse").value + "/representatives", {
+            studentId: student.studentId,
+            academicYear: Number($("repSession").value),
+            reason: null,
+        });
+
+        say(student.name + " represents " + granted.courseCode + " · " + granted.courseTopic
+            + " in " + granted.academicYear + ", appointed as "
+            + granted.grantedAs.toLowerCase()
+            + (student.hasAccount
+                ? ". They can mark its registers from their next sync."
+                : ". They have no account yet, so somebody has to create one before they can "
+                    + "use it."), true);
+
+        await loadRoll();
+
+    } catch (e) {
+        say(e.message, false);
+    }
+}
+
+async function endRepresentative(student) {
+
+    if (!confirm("End " + student.name + "'s appointment for this course?\n\nThe grant is "
+            + "kept and marked ended, so the registers they marked under it stay "
+            + "explainable. They stop being able to mark it at their next sync.")) {
+        return;
+    }
+
+    clearSay();
+
+    try {
+        await post("/courses/" + $("repCourse").value + "/representatives/revoke", {
+            studentId: student.studentId,
+            academicYear: Number($("repSession").value),
+            reason: null,
+        });
+
+        say("Ended " + student.name + "'s appointment.", true);
+        await loadRoll();
+
+    } catch (e) {
+        say(e.message, false);
+    }
+}
+
+// ── Data ─────────────────────────────────────────────────────────────
+
+let table = null;
+let nextCursor = null;
+
+async function loadTables() {
+
+    // An array, not an object with a tables field: GET /data answers with the tables
+    // themselves, each with the count of rows this actor may see.
+    const listing = await api("/data");
+    const box = $("tables");
+    box.textContent = "";
+
+    listing.forEach((described) => {
+
+        const button = document.createElement("button");
+        button.textContent = described.table;
+        button.className = described.table === table ? "on" : "";
+
+        const count = document.createElement("span");
+        count.className = "n";
+        count.textContent = described.rows;
+        button.appendChild(count);
+
+        button.addEventListener("click", () => rows(described.table, null));
+        box.appendChild(button);
+    });
+
+    if (table) {
+        // Keep the open table open across a reload, and bring its first page up to date.
+        await rows(table, null);
+    }
+}
+
+async function rows(which, after) {
+
+    clearSay();
+
+    try {
+        const page = await api("/data/" + encodeURIComponent(which)
+            + (after ? "?after=" + encodeURIComponent(after) : ""));
+
+        if (which !== table || !after) {
+            $("head").textContent = "";
+            $("body").textContent = "";
+
+            page.columns.forEach((column) => {
+                const th = document.createElement("th");
+                th.textContent = column;
+                $("head").appendChild(th);
+            });
+        }
+
+        page.rows.forEach((row) => {
+            const tr = document.createElement("tr");
+            row.forEach((value, at) => {
+                const td = document.createElement("td");
+                if (value === null) {
+                    td.textContent = "null";
+                    td.className = "null";
+                } else {
+                    // An enum column shows what the value is called, with what is stored on
+                    // the cell itself: COMPUTER_SCIENCE is a column's contents and "CS" is
+                    // what a professor calls it, and a data browser that hid the first would
+                    // not be showing the data.
+                    const named = (page.labels || {})[page.columns[at]];
+                    const label = named ? named[value] : null;
+                    td.textContent = label || value;
+                    if (label && label !== value) {
+                        td.title = value;
+                        td.className = "named";
+                    }
+                }
+                tr.appendChild(td);
+            });
+            $("body").appendChild(tr);
+        });
+
+        table = which;
+        nextCursor = page.next;
+
+        $("rowsTitle").textContent = which;
+        $("rowsCard").hidden = false;
+        $("more").hidden = !page.next;
+        $("paging").textContent = $("body").childElementCount + " row"
+            + ($("body").childElementCount === 1 ? "" : "s") + " shown"
+            + (page.next ? ", more to fetch" : ", which is all of them you may see");
+
+        Array.from($("tables").children).forEach((button) => {
+            button.classList.toggle("on", button.textContent.startsWith(which));
+        });
+
+    } catch (e) {
+        say(e.message, false);
+    }
+}
+
+$("more").addEventListener("click", () => rows(table, nextCursor));
+
+// ── The audit trail ──────────────────────────────────────────────────
+
+let trailCursor = null;
+
+async function loadTrail(after) {
+
+    const query = after
+        ? "?limit=50&beforeAt=" + encodeURIComponent(after.at)
+            + "&beforeId=" + encodeURIComponent(after.id)
+        : "?limit=50";
+
+    const page = await api("/audit" + query);
+    const body = $("trail");
+
+    if (!after) {
+        body.textContent = "";
+    }
+
+    page.entries.forEach((entry) => body.appendChild(trailRow(entry)));
+
+    trailCursor = page.nextAt ? {at: page.nextAt, id: page.nextId} : null;
+
+    $("trailMore").hidden = trailCursor === null;
+    $("trailPaging").textContent = body.childElementCount + " of " + page.total
+        + " entries" + (trailCursor ? "" : " — the whole trail");
+}
+
+/** One entry, with its two images behind a disclosure. */
+function trailRow(entry) {
+
+    const row = document.createElement("tr");
+
+    const when = document.createElement("td");
+    when.className = "when";
+    // The server sends an instant; the reader is in this time zone.
+    when.textContent = new Date(entry.occurredAt).toLocaleString();
+    row.appendChild(when);
+
+    const who = document.createElement("td");
+    who.textContent = entry.actorLabel
+        + (entry.actorAccount ? " · #" + entry.actorAccount : "");
+    row.appendChild(who);
+
+    const what = document.createElement("td");
+    what.className = "what";
+    const action = document.createElement("b");
+    action.textContent = entry.action;
+    what.appendChild(action);
+    what.appendChild(document.createTextNode(
+        (entry.tableName ? " " + entry.tableName : "")
+        + (entry.rowKey ? " " + entry.rowKey : "")));
+    row.appendChild(what);
+
+    const from = document.createElement("td");
+    from.textContent = [entry.deviceNode ? "device " + entry.deviceNode : null,
+        entry.clientIp, entry.appVersion].filter((part) => part).join(" · ");
+    row.appendChild(from);
+
+    const more = document.createElement("td");
+
+    if (entry.before || entry.after || entry.detail) {
+
+        const peek = document.createElement("button");
+        peek.className = "peek";
+        peek.textContent = "show";
+
+        const panel = document.createElement("div");
+        panel.hidden = true;
+
+        [["before", entry.before], ["after", entry.after], ["detail", entry.detail]]
+            .forEach(([name, value]) => {
+
+                if (!value) {
+                    return;
+                }
+
+                const heading = document.createElement("div");
+                heading.className = "muted";
+                heading.textContent = name;
+
+                const pre = document.createElement("pre");
+                // Pretty-printed where it is JSON, which these three always are -- but a
+                // parse failure must not take the row down, so the raw text is the fallback.
+                try {
+                    pre.textContent = JSON.stringify(JSON.parse(value), null, 2);
+                } catch (e) {
+                    pre.textContent = value;
+                }
+
+                panel.appendChild(heading);
+                panel.appendChild(pre);
+            });
+
+        peek.addEventListener("click", () => {
+            panel.hidden = !panel.hidden;
+            peek.textContent = panel.hidden ? "show" : "hide";
+            row.classList.toggle("open", !panel.hidden);
+        });
+
+        more.appendChild(peek);
+        more.appendChild(panel);
+    }
+
+    row.appendChild(more);
+    return row;
+}
+
+$("trailMore").addEventListener("click", () =>
+    loadTrail(trailCursor).catch((e) => say(e.message, false)));
+
+// ── Opening the page ─────────────────────────────────────────────────
+
+(async function start() {
+
+    const kept = keptToken();
+
+    if (!kept) {
+        return;
+    }
+
+    // A kept token is checked before the page acts as though it works: it may have expired,
+    // been revoked by a password change on another device, or belong to a server that has
+    // since been reset. /me is the probe, because every signed-in actor may call it and it
+    // is also the answer the page needs next -- so a 401 means the session and not the
+    // authority, and a 200 has already said which panels to offer.
+    token = kept;
+    $("remember").checked = true;
+
+    try {
+
+        $("signInCard").hidden = true;
+        $("signOut").hidden = false;
+        await opened();
+
+    } catch (e) {
+        // request() has already forgotten a 401. Anything else and the session is probably
+        // fine but the server is not, so the message is worth showing.
+        if (token) {
+            say(e.message, false);
+        }
+    }
+})();
+</script>
+</body>
+</html>

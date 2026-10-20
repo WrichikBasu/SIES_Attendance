@@ -92,6 +92,8 @@ class SyncTest {
 	private long accountProfChem;
 	private long accountOffice;
 
+	private long accountHeadCs;
+
 	@BeforeAll
 	void startEverything() throws Exception {
 
@@ -141,7 +143,8 @@ class SyncTest {
 
 				INSERT INTO professors (prof_id, name, email, department, designation) VALUES
 				    (1001, 'A CS',   'a.cs@sies.edu.in',   'COMPUTER_SCIENCE', 'Assistant Professor'),
-				    (1002, 'B CHEM', 'b.chem@sies.edu.in', 'CHEMISTRY',        'Assistant Professor');
+				    (1002, 'B CHEM', 'b.chem@sies.edu.in', 'CHEMISTRY',        'Assistant Professor'),
+				    (1003, 'C HEAD', 'c.head@sies.edu.in', 'COMPUTER_SCIENCE', 'Professor');
 
 				INSERT INTO students (student_id, name, pronouns, email) VALUES
 				    (2001, 'R RAO',  'she/her',   'r.rao@sies.edu.in'),
@@ -169,6 +172,14 @@ class SyncTest {
 		accountOffice = account(AccountKind.STAFF, null, null, "office@sies.edu.in");
 
 		grantRole(accountOffice, "OFFICE", null, null, accountOffice);
+
+		// A head of Computer Science, for V20's half of the roll. Their own account rather
+		// than a grant on one of the two professors': aPullSeesNothingOfAnotherDepartment
+		// signs in as the chemistry professor precisely to show they reach nothing of
+		// Computer Science, and making them its head would have made that test a lie.
+		accountHeadCs = account(AccountKind.PROFESSOR, 1003L, null, "c.head@sies.edu.in");
+
+		grantRole(accountHeadCs, "HOD", "COMPUTER_SCIENCE", null, accountOffice);
 	}
 
 	// ── The gate ─────────────────────────────────────────────────────────
@@ -607,6 +618,282 @@ class SyncTest {
 		assertEquals(1, count("SELECT count(*) FROM attendance"));
 	}
 
+	/**
+	 * A student with a key the server minted, enrolled where the Computer Science professor
+	 * can see them.
+	 * <p>
+	 * Written as the superuser, because putting a student on the roll is the office's and this
+	 * is a fixture rather than a thing under test.
+	 */
+	private long newStudentOnTheCsRoll(String name, String email) throws Exception {
+
+		long student = StructuredId.compose(StructuredId.MIN_COUNTER + 500,
+				StructuredId.SERVER_NODE);
+
+		postgres.asSuperuser("""
+				INSERT INTO students (student_id, name, pronouns, email) VALUES
+				    (%d, '%s', 'they/them', '%s');
+				INSERT INTO student_year
+				    (student_id, academic_year, roll_no, year, stream, major_dept, semester)
+				VALUES (%d, %d, 'CS-FY-%03d', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 1);
+				""".formatted(student, name, email, student, SESSION,
+						(int) (student % 900) + 10));
+
+		return student;
+	}
+
+	@Test
+	void aDeletionThePoliciesWillNotMakeIsReportedAndNotSwallowed() throws Exception {
+
+		// Found on a handset: a student deleted in the app, synced, and still on the server --
+		// with a successful sync and an empty queue to say otherwise.
+		//
+		// The cause is the rule this project wrote down about UPDATE and then leaned on for
+		// DELETE: a statement no policy's USING clause admits matches NO ROWS rather than
+		// raising. So the delete ran, changed nothing, reported zero, and the writer read
+		// zero as "the row was not there anyway" -- which is the other thing zero means.
+		// A student the server minted, because the fixture's 2001 predates the id scheme and
+		// the node check refuses it before the delete path is reached -- which is itself
+		// right, and would have hidden what this test is about.
+		long student = newStudentOnTheCsRoll("D DELETABLE", "d.deletable@sies.edu.in");
+
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+
+		Reply pushed = push(phone, List.of(
+				intent("students", List.of(student), "DELETE", null)));
+
+		assertEquals(0, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertEquals(1, pushed.body().get("rejected").size(), pushed::toString);
+
+		String reason = pushed.body().get("rejected").get(0).get("reason").stringValue();
+
+		assertTrue(reason.contains("office"), reason);
+		assertTrue(reason.contains("still on the server"),
+				"and it says what is now true of the two copies: " + reason);
+		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
+				"sending it again cannot help, and a queue that retries for ever never "
+						+ "empties");
+
+		assertEquals(1, count("SELECT count(*) FROM students WHERE student_id = " + student),
+				"the student is still there, which was always true -- the news is that the "
+						+ "phone is told");
+	}
+
+	@Test
+	void theHeadOfDepartmentMayAddAndRemoveTheirOwnStudents() throws Exception {
+
+		// V20. The roll was the office's alone, so a head of department could read their
+		// department's roll and change nothing on it: a student who had left, or one the
+		// office had not entered yet, was a message to somebody else and a wait.
+		Phone phone = signInWithAPhone("c.head@sies.edu.in");
+
+		// phone.key, not a server-minted one: a device may only create rows under its own
+		// node, and a students row carrying node 0 is one this phone is claiming to amend
+		// rather than to add. The node check says so, and it is right to.
+		long student = phone.key(700);
+
+		Reply added = push(phone, List.of(
+				intent("students", List.of(student), "UPSERT", Map.of(
+						"studentID", student, "name", "H HEADS OWN",
+						"pronouns", "they/them", "email", "h.own@sies.edu.in")),
+				intent("student_year", List.of(student, (long) SESSION), "UPSERT", Map.of(
+						"studentID", student, "academicYear", SESSION,
+						"rollNo", "CS-FY-700", "year", "FY", "stream", "BSc_unaided",
+						"majorDept", "COMPUTER_SCIENCE", "semester", 1))));
+
+		assertEquals(2, added.body().get("accepted").intValue(), added::toString);
+
+		// And out again, enrolment first, which is the order the foreign key wants.
+		Reply removed = push(phone, List.of(
+				intent("student_year", List.of(student, (long) SESSION), "DELETE", null),
+				intent("students", List.of(student), "DELETE", null)));
+
+		assertEquals(2, removed.body().get("accepted").intValue(), removed::toString);
+		assertEquals(0, count("SELECT count(*) FROM students WHERE student_id = " + student));
+	}
+
+	@Test
+	void aStudentWhoRepresentsACourseCannotBeRemovedAndTheRefusalSaysSo() throws Exception {
+
+		// Found on a handset: a head of department removed a student who was a class
+		// representative and got "violates RESTRICT setting of foreign key constraint
+		// attendance_delegate_student_id_fkey", every sync, for ever. A constraint name where
+		// a sentence belongs, and a refusal treated as transient because 23503 is not in
+		// SETTLED_STATES -- which is right for an upsert waiting for its parent and backwards
+		// for a delete held down by a child.
+		long student = newStudentOnTheCsRoll("R REPRESENTS", "r.represents@sies.edu.in");
+
+		// Designated by the head, in the capacity they actually hold: the BEFORE trigger on
+		// attendance_delegate checks that, whoever runs the statement.
+		postgres.asSuperuser("INSERT INTO attendance_delegate (student_id, course_id, "
+				+ "academic_year, granted_by, granted_as) VALUES ("
+				+ student + ", " + COURSE_CS + ", " + SESSION + ", "
+				+ accountHeadCs + ", 'HOD')");
+
+		Phone phone = signInWithAPhone("c.head@sies.edu.in");
+
+		Reply refused = push(phone, List.of(
+				intent("student_year", List.of(student, (long) SESSION), "DELETE", null),
+				intent("students", List.of(student), "DELETE", null)));
+
+		// The enrolment goes; the student is held down by the appointment.
+		assertEquals(1, refused.body().get("accepted").intValue(), refused::toString);
+
+		var rejection = refused.body().get("rejected").get(0);
+		String reason = rejection.get("reason").stringValue();
+
+		assertEquals("students", rejection.get("table").stringValue());
+		assertTrue(reason.contains("class representative"),
+				"the sentence names what is in the way, not a constraint: " + reason);
+		assertFalse(reason.contains("fkey"), "and never a constraint name: " + reason);
+		assertTrue(reason.contains("on the server first"),
+				"and says where it has to be undone: " + reason);
+
+		assertTrue(rejection.get("permanent").booleanValue(),
+				"an appointment cannot be cleared from a phone, so retrying is a queue that "
+						+ "never empties -- which is what it did");
+
+		// And once the appointment is ended, the same deletion goes through.
+		postgres.asSuperuser("UPDATE attendance_delegate SET revoked_at = now(), "
+				+ "revoked_by = " + accountHeadCs + " WHERE student_id = " + student);
+
+		assertEquals(0, push(phone, List.of(intent("students", List.of(student), "DELETE",
+				null))).body().get("accepted").intValue(),
+				"a revoked appointment keeps its row, which still points at the student -- "
+						+ "nothing in this schema is deleted, and that is the trade");
+	}
+
+	@Test
+	void aDeleteHeldDownByRowsTheDeviceIsAlsoSendingIsWorthWaitingFor() throws Exception {
+
+		// The other half of the rule, and the reason 23503 is not simply settled: the
+		// enrolment is the device's to delete too, so a batch that sent the parent first
+		// should be told to try again rather than to give up.
+		long student = newStudentOnTheCsRoll("W WAITABLE", "w.waitable@sies.edu.in");
+
+		Phone phone = signInWithAPhone("c.head@sies.edu.in");
+
+		Reply refused = push(phone, List.of(
+				intent("students", List.of(student), "DELETE", null)));
+
+		assertEquals(0, refused.body().get("accepted").intValue(), refused::toString);
+
+		var rejection = refused.body().get("rejected").get(0);
+		String reason = rejection.get("reason").stringValue();
+
+		assertTrue(reason.contains("enrolment"),
+				"it names the rows that are in the way: " + reason);
+		assertFalse(rejection.get("permanent").booleanValue(),
+				"an enrolment is a table this device holds, so the next batch may clear it: "
+						+ reason);
+
+		// Sent in the device's own dependency order, it goes through.
+		Reply ordered = push(phone, List.of(
+				intent("student_year", List.of(student, (long) SESSION), "DELETE", null),
+				intent("students", List.of(student), "DELETE", null)));
+
+		assertEquals(2, ordered.body().get("accepted").intValue(), ordered::toString);
+		assertEquals(0, count("SELECT count(*) FROM students WHERE student_id = " + student));
+	}
+
+	@Test
+	void theHeadOfOneDepartmentCannotTouchAnothers() throws Exception {
+
+		// The careful half of V20: the authority is the department, and the enrolment is what
+		// says whose student this is. The head of Computer Science may not enrol somebody in
+		// Chemistry, and may not remove a student who is on Chemistry's roll -- that row is
+		// Chemistry's as much as theirs.
+		Phone phone = signInWithAPhone("c.head@sies.edu.in");
+
+		long student = phone.key(701);
+
+		Reply refused = push(phone, List.of(
+				intent("students", List.of(student), "UPSERT", Map.of(
+						"studentID", student, "name", "O OTHER DEPT",
+						"pronouns", "they/them", "email", "o.other@sies.edu.in")),
+				intent("student_year", List.of(student, (long) SESSION), "UPSERT", Map.of(
+						"studentID", student, "academicYear", SESSION,
+						"rollNo", "CH-FY-701", "year", "FY", "stream", "BSc",
+						"majorDept", "CHEMISTRY", "semester", 1))));
+
+		// The bare students row is admitted -- a person with no enrolment is on nobody's roll
+		// -- and the enrolment that would put them on Chemistry's is not.
+		assertEquals(1, refused.body().get("accepted").intValue(), refused::toString);
+		assertEquals(1, refused.body().get("rejected").size(), refused::toString);
+		assertEquals("student_year",
+				refused.body().get("rejected").get(0).get("table").stringValue());
+
+		// And a student on Chemistry's roll is not theirs to remove.
+		Reply theirs = push(phone, List.of(
+				intent("students", List.of(STUDENT_CHEM), "DELETE", null)));
+
+		assertEquals(0, theirs.body().get("accepted").intValue(), theirs::toString);
+		assertEquals(1, count("SELECT count(*) FROM students WHERE student_id = "
+				+ STUDENT_CHEM));
+	}
+
+	@Test
+	void aPlainProfessorStillOnlyReadsTheRoll() throws Exception {
+
+		// Unchanged by V20, and deliberately: teaching a course is not keeping the roll. The
+		// roll is what says who is on the course in the first place, and a professor
+		// correcting it would be a professor deciding which of their students exist.
+		long student = newStudentOnTheCsRoll("P PLAIN", "p.plain@sies.edu.in");
+
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+
+		Reply refused = push(phone, List.of(
+				intent("students", List.of(student), "DELETE", null)));
+
+		assertEquals(0, refused.body().get("accepted").intValue(), refused::toString);
+		assertTrue(refused.body().get("rejected").get(0).get("reason").stringValue()
+						.contains("office"),
+				refused::toString);
+	}
+
+	@Test
+	void theOfficesOwnDeletionLands() throws Exception {
+
+		// The other half: the rule is not "deletions never sync", it is "the roll is the
+		// office's". An office account's deletion goes through, which is what makes the
+		// refusal above a statement about authority rather than about deletions.
+		long student = newStudentOnTheCsRoll("E ERASABLE", "e.erasable@sies.edu.in");
+
+		Phone phone = signInWithAPhone("office@sies.edu.in");
+
+		// The enrolment goes first: student_year points at the student, and the roll is the
+		// office's too, so both deletions are theirs to make and the order is the phone's own
+		// dependency order.
+		Reply pushed = push(phone, List.of(
+				// (long) SESSION: a key is a list of longs, and List.of(long, int) infers
+				// nothing both can be.
+				intent("student_year", List.of(student, (long) SESSION), "DELETE", null),
+				intent("students", List.of(student), "DELETE", null)));
+
+		assertEquals(2, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertEquals(0, count("SELECT count(*) FROM students WHERE student_id = " + student));
+	}
+
+	@Test
+	void aDeletionOfARowTheServerNeverHadIsStillAccepted() throws Exception {
+
+		// The leniency that was there for a reason, and which the fix must keep: a device
+		// cannot tell whether its batch arrived, so it sends it again. A delete of a row that
+		// is already gone is the ordinary case of that, and it has to be accepted or the
+		// queue never empties.
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+		long lectureID = phone.key(901);
+
+		push(phone, List.of(lectureIntent(lectureID, COURSE_CS, 9)));
+		push(phone, List.of(intent("lectures", List.of(lectureID), "DELETE", null)));
+
+		Reply again = push(phone, List.of(
+				intent("lectures", List.of(lectureID), "DELETE", null)));
+
+		assertEquals(1, again.body().get("accepted").intValue(),
+				"a replayed delete is not a refusal: " + again);
+	}
+
 	@Test
 	void aLecturesMarksGoBeforeTheLectureDoes() throws Exception {
 
@@ -715,7 +1002,10 @@ class SyncTest {
 		// sent: the session, the staff list, the one student it may see, that student's
 		// enrolment, its own course, and then the lecture and the mark.
 		assertEquals(1, changesFor(pulled.body(), "academic_years").size());
-		assertEquals(2, changesFor(pulled.body(), "professors").size());
+		// Three: the two who teach and the head of department, who is a professors row like
+		// any other. The staff list is not filtered by who teaches what -- a phone picking a
+		// coordinator needs the whole of it.
+		assertEquals(3, changesFor(pulled.body(), "professors").size());
 		assertEquals(1, changesFor(pulled.body(), "courses").size(), pulled::toString);
 		assertEquals(1, changesFor(pulled.body(), "students").size());
 		assertEquals(1, changesFor(pulled.body(), "student_year").size());
@@ -771,7 +1061,7 @@ class SyncTest {
 			}
 		}
 
-		assertEquals(9, seen.size(), "every row, across the pages: " + seen);
+		assertEquals(10, seen.size(), "every row, across the pages: " + seen);
 		assertEquals(seen.size(), new java.util.LinkedHashSet<>(seen).size(),
 				"and each of them once: " + seen);
 

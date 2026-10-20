@@ -53,10 +53,32 @@ import in.basulabs.siesattendance.backend.MainDatabase;
  * inside that transaction on purpose: a crash takes it back with the writes, rather than leaving
  * a device that silently queues nothing for ever.
  * <p>
- * The watermark moves only when every row in the page landed. A row whose parent has not arrived
- * — a lecture for a course this device has never seen — fails, and the page is tried again later.
- * That can stick, and sticking is the intended behaviour: the alternative is skipping the row and
- * moving the watermark past it, which loses a lecture with nothing to show that it happened.
+ * The watermark moves only when every row in the page has been dealt with, and a row whose
+ * parent is not here is dealt with rather than allowed to fail. Waiting for the parent was the
+ * earlier rule, and it waits for nothing: a page is applied in dependency order, the feed is in
+ * the order things happened, and the server will not store a child before its parent, so a parent
+ * that is not here by the time its child is will not arrive on a later page either. What it did
+ * instead was fail the insert, roll the page back and leave the watermark where it was, so one row
+ * jammed every pull behind it for ever. A phone found it: a student removed on the device while
+ * its first snapshot was still on the way down, and the server's marks for that student — ones
+ * the phone had not yet received, and which held the student's own deletion down on the server —
+ * arriving afterwards for a student who was no longer there.
+ * <p>
+ * Such a row is not written, and what happens to it depends on why the parent is missing.
+ * <ul>
+ *     <li>This device deleted the parent and the deletion is still queued. The row is one it
+ *     would have deleted along with the parent had it known about it, so its deletion is queued
+ *     too. That is also what lets the parent's own deletion through: the server keeps a parent
+ *     while anything points at it.</li>
+ *     <li>Anything else. The row is skipped, with a warning in the log. The server is meant never
+ *     to send a row whose parent it withholds, and V21 closed the one case known to break that;
+ *     a skipped row is a sign of another.</li>
+ * </ul>
+ * <p>
+ * A deletion the server refuses for good is the other half of the same drift. The device has
+ * already removed the row, the server still has it, and nothing will send it back, because a row
+ * that does not change never appears in the feed again. So the next pull starts over from a
+ * snapshot, which brings it back along with anything that points at it.
  */
 public final class OutboxDrain {
 
@@ -68,18 +90,27 @@ public final class OutboxDrain {
 	/** How many rows one pull asks for. */
 	private static final int PAGE = 500;
 
-	/** What one run did, for the worker to decide on and a screen to show. */
 	/**
+	 * What one run did, for the worker to decide on and a screen to show.
+	 *
 	 * @param rejected how many the server refused and this device kept, to try again
 	 * @param dropped  how many it refused for good, which are gone from the queue
-	 * @param refusal  the last such refusal's own words, for a screen; null when there were
-	 *                 none, which is what clears a stale message
+	 * @param refusals every refusal the server called final in this batch, newest last. A list
+	 *                 rather than one string: two rows refused for two different reasons are
+	 *                 two things to tell somebody, and the one that used to win was whichever
+	 *                 came last in the batch
 	 */
-	public record Result(int sent, int rejected, int dropped, @Nullable String refusal,
+	public record Result(int sent, int rejected, int dropped, @NonNull List<String> refusals,
 	                     int applied, boolean morePending) {
 
 		public boolean didSomething() {
 			return sent > 0 || applied > 0;
+		}
+
+		/** The newest refusal, for the one line a screen has room for, or null. */
+		@Nullable
+		public String refusal() {
+			return refusals.isEmpty() ? null : refusals.get(refusals.size() - 1);
 		}
 	}
 
@@ -105,7 +136,7 @@ public final class OutboxDrain {
 		List<EntityOutbox> pending = db.daoOutbox().pendingSync(BATCH);
 
 		if (pending.isEmpty()) {
-			return new Result(0, 0, 0, null, 0, false);
+			return new Result(0, 0, 0, List.of(), 0, false);
 		}
 
 		List<SyncIntent> intents = new ArrayList<>();
@@ -128,7 +159,7 @@ public final class OutboxDrain {
 		}
 
 		if (intents.isEmpty()) {
-			return new Result(0, 0, 0, null, 0, false);
+			return new Result(0, 0, 0, List.of(), 0, false);
 		}
 
 		SyncJson.PushOutcome outcome;
@@ -146,15 +177,18 @@ public final class OutboxDrain {
 		List<Long> accepted = new ArrayList<>(sequences);
 		List<Long> keep = new ArrayList<>();
 		List<Long> drop = new ArrayList<>();
-		String refusal = null;
+		List<String> refusals = new ArrayList<>();
+		boolean drifted = false;
 
 		for (SyncJson.Rejection rejection : outcome.rejected()) {
 
-			Long sequence = sequenceOf(pending, rejection.table(), rejection.key());
+			EntityOutbox entry = entryFor(pending, rejection.table(), rejection.key());
 
-			if (sequence == null) {
+			if (entry == null) {
 				continue;
 			}
+
+			Long sequence = entry.seq;
 
 			accepted.remove(sequence);
 			Log.w(TAG, "the server refused " + rejection.table() + rejection.key()
@@ -162,9 +196,17 @@ public final class OutboxDrain {
 
 			if (rejection.permanent()) {
 				drop.add(sequence);
-				// The last one wins rather than the first: they are all shown one at a time
-				// and the most recent is the one a person is most likely to recognise.
-				refusal = rejection.reason();
+
+				// All of them, not only the last: a refusal is news about something somebody
+				// did -- a student they removed, a course they renamed -- and the one before
+				// it is somebody else's news rather than an older version of the same. The
+				// drain reports them and SyncWorker is what remembers them, because keeping
+				// them is a preferences job and this class is the database and the wire.
+				refusals.add(rejection.reason());
+
+				// The row is gone from here and staying on the server. See the class notes.
+				drifted |= entry.operation() == OutboxOp.DELETE;
+
 			} else {
 				keep.add(sequence);
 			}
@@ -175,6 +217,7 @@ public final class OutboxDrain {
 		// are the same event.
 		List<Long> finished = new ArrayList<>(accepted);
 		finished.addAll(drop);
+		boolean resnapshot = drifted;
 
 		db.runInTransaction(() -> {
 
@@ -186,10 +229,14 @@ public final class OutboxDrain {
 				db.daoOutbox().recordFailureSync(keep, "the server refused this row");
 			}
 
+			if (resnapshot) {
+				db.daoOutbox().forgetWatermarkSync();
+			}
+
 			db.daoOutbox().recordPushSync(System.currentTimeMillis());
 		});
 
-		return new Result(accepted.size(), keep.size(), drop.size(), refusal, 0,
+		return new Result(accepted.size(), keep.size(), drop.size(), refusals, 0,
 				db.daoOutbox().countPendingSync() > keep.size());
 	}
 
@@ -213,7 +260,7 @@ public final class OutboxDrain {
 					db.daoOutbox().recordPullSync(page.watermark(),
 							System.currentTimeMillis()));
 
-			return new Result(0, 0, 0, null, 0, page.more());
+			return new Result(0, 0, 0, List.of(), 0, page.more());
 		}
 
 		int[] applied = new int[1];
@@ -227,8 +274,9 @@ public final class OutboxDrain {
 
 			try {
 				for (SyncIntent change : inApplicationOrder(page.changes())) {
-					apply(sqlite, change);
-					applied[0]++;
+					if (apply(sqlite, change)) {
+						applied[0]++;
+					}
 				}
 
 				db.daoOutbox().recordPullSync(page.watermark(), System.currentTimeMillis());
@@ -238,7 +286,7 @@ public final class OutboxDrain {
 			}
 		});
 
-		return new Result(0, 0, 0, null, applied[0], page.more());
+		return new Result(0, 0, 0, List.of(), applied[0], page.more());
 	}
 
 	/**
@@ -346,13 +394,48 @@ public final class OutboxDrain {
 		}
 	}
 
-	private void apply(@NonNull SupportSQLiteDatabase sqlite, @NonNull SyncIntent change) {
+	/**
+	 * Writes one pulled change.
+	 *
+	 * @return whether it was written; false for a row whose parent is not here, which the class
+	 * notes describe
+	 */
+	private boolean apply(@NonNull SupportSQLiteDatabase sqlite, @NonNull SyncIntent change) {
 
 		DeviceTables.Table table = DeviceTables.of(change.table());
 
 		if (change.op() == OutboxOp.DELETE) {
 			sqlite.execSQL(DeviceSql.deleteRow(table), change.key().toArray());
-			return;
+			return true;
+		}
+
+		Parent missing = missingParent(sqlite, table, change.row());
+
+		if (missing != null) {
+
+			if (db.daoOutbox().isDeletePendingSync(missing.table().name(), missing.key(),
+					OutboxTriggers.UNUSED_KEY, OutboxTriggers.UNUSED_KEY)) {
+
+				// Queued here rather than by a trigger, because the row was never written and
+				// so nothing fired. The parent's own deletion is already queued.
+				long[] key = {OutboxTriggers.UNUSED_KEY, OutboxTriggers.UNUSED_KEY,
+						OutboxTriggers.UNUSED_KEY};
+
+				for (int at = 0; at < change.key().size(); at++) {
+					key[at] = change.key().get(at);
+				}
+
+				db.daoOutbox().queueSync(new EntityOutbox(0, table.name(), key[0], key[1], key[2],
+						OutboxOp.DELETE.name(), System.currentTimeMillis(), 0, null));
+
+				Log.i(TAG, "not storing " + table.name() + change.key() + ": this device deleted "
+						+ missing.table().name() + "[" + missing.key() + "], so it is deleted too");
+
+			} else {
+				Log.w(TAG, "not storing " + table.name() + change.key() + ": the server sent it "
+						+ "without " + missing.table().name() + "[" + missing.key() + "]");
+			}
+			return false;
 		}
 
 		// What the server sent, plus the columns this device needs and the server does not
@@ -369,11 +452,54 @@ public final class OutboxDrain {
 
 		if (update != null
 				&& change(sqlite, update, bindings(DeviceSql.updateColumns(table), row)) > 0) {
-			return;
+			return true;
 		}
 
 		sqlite.execSQL(DeviceSql.insertRow(table),
 				bindings(DeviceSql.insertColumns(table), row));
+		return true;
+	}
+
+	/** A row a pulled row points at, by its table and its key. */
+	private record Parent(@NonNull DeviceTables.Table table, long key) {
+	}
+
+	/**
+	 * The first row this one points at that the device does not have, or null when every
+	 * parent is here.
+	 * <p>
+	 * Asked before writing rather than learnt from the constraint afterwards: a failed statement
+	 * fails the page, and the page is exactly what this is protecting. Every parent in the
+	 * schema is keyed on its surrogate alone, which is what {@link DeviceTables.Table#foreignKeys}
+	 * names the column after. A null reference — a lecture with no batch — points at nothing and
+	 * needs nothing.
+	 */
+	@Nullable
+	private static Parent missingParent(@NonNull SupportSQLiteDatabase sqlite,
+	                                    @NonNull DeviceTables.Table table,
+	                                    @Nullable Map<String, Object> row) {
+
+		if (row == null) {
+			return null;
+		}
+
+		for (Map.Entry<String, String> reference : table.foreignKeys().entrySet()) {
+
+			if (!(row.get(reference.getKey()) instanceof Number value)) {
+				continue;
+			}
+
+			DeviceTables.Table parent = DeviceTables.of(reference.getValue());
+
+			try (Cursor cursor = sqlite.query(DeviceSql.rowExists(parent),
+					new Object[]{value.longValue()})) {
+
+				if (!cursor.moveToFirst()) {
+					return new Parent(parent, value.longValue());
+				}
+			}
+		}
+		return null;
 	}
 
 	/** A row's values in the order a statement's columns list them. */
@@ -441,7 +567,7 @@ public final class OutboxDrain {
 
 	/** Which queued intent a rejection is about, matched on the table and the key. */
 	@Nullable
-	private static Long sequenceOf(@NonNull List<EntityOutbox> pending, @NonNull String table,
+	private static EntityOutbox entryFor(@NonNull List<EntityOutbox> pending, @NonNull String table,
 	                               @NonNull List<Long> key) {
 
 		for (EntityOutbox entry : pending) {
@@ -459,7 +585,7 @@ public final class OutboxDrain {
 			}
 
 			if (keyOf(described, entry).equals(key)) {
-				return entry.seq;
+				return entry;
 			}
 		}
 		return null;

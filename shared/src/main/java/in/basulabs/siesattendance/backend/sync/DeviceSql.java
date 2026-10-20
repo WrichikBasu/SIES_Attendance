@@ -55,6 +55,18 @@ public final class DeviceSql {
 	}
 
 	/**
+	 * Whether a row is here, by its primary key: one result row if it is, none if it is not.
+	 * <p>
+	 * What a pulled row's parents are checked with before the row is written. A row whose
+	 * parent is not on the device cannot be stored, and finding that out from the constraint
+	 * instead would fail the statement and, with it, the whole page.
+	 */
+	@NonNull
+	public static String rowExists(@NonNull DeviceTables.Table table) {
+		return "SELECT 1 FROM `" + table.name() + "` WHERE " + keyPredicate(table) + " LIMIT 1";
+	}
+
+	/**
 	 * Changes a row the server sent, where the device already has it, or null when there is
 	 * nothing a row of this table could change.
 	 * <p>

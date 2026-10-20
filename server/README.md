@@ -76,9 +76,16 @@ server/
     db/migration/V11__roster_reachability.sql  policies on the other nine tables
     db/migration/V12__account_administration.sql  who may create an account
     db/migration/V13__provisional_node_push.sql   the node a device used before it had one
+    db/migration/V14__audit_reading.sql   reading the trail, which sies_app cannot
+    db/migration/V15__regrant_a_revoked_role.sql  one LIVE grant per scope, not one ever
+    db/migration/V16__audit_for_a_department.sql  the trail in three widths
+    db/migration/V17__audit_reaches_the_row.sql   "is this entry about my teaching"
+    db/migration/V18__a_head_holds_the_department.sql  a head is not re-appointed every June
+    db/migration/V19__one_definition_of_a_head.sql  the same rule, asked in one place
+    db/migration/V20__a_head_keeps_the_departments_roll.sql  a head adds and removes students
   src/main/resources/static/
-    accounts.html                       the administration page, no build step
-    data.html                           reading the data, read-only
+    console.html                        accounts, data and the trail: one page, one session
+    accounts.html, data.html            where those two used to be; both lead to the console
   src/test/java/.../sql/SqlDumpTest.java         writes every statement for the differ
   src/test/java/.../importer/BackupImporterTest.java   14 tests, against a real database
   src/test/java/.../importer/DeviceBackup.java   builds a genuine .siesbak
@@ -379,6 +386,58 @@ Keeping them apart means V1 stays diffable against the generated DDL for as long
 exists, V2 can be read as the list of things the database now refuses, V3 as the list of things
 the import has to remember, and V4 as the one thing V2 got wrong.
 
+## Who may do what
+
+The whole of it, in one place. Every row of this is enforced in SQL — by a policy, a trigger or a
+definer function — and the two clients ask rather than decide: the phone and the console are told
+what to offer by `GET /api/v1/me`, and what they offer anyway is still refused row by row.
+
+**Read it as "and", not "or":** an account holds a kind *and* any number of roles *and* any number
+of class-representative appointments, and what it may do is the union.
+
+| | student | professor | professor **and head of a department** | office | auditor | admin |
+|---|---|---|---|---|---|---|
+| sign in on the phone | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| sign in on the web console | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| take and edit a register | their appointed courses | their own courses | the department's | — | — | ✓ |
+| read a roll | their own enrolment | their courses' | the department's | all | all | all |
+| **add or remove a student** | — | — | **their department's** | ✓ | — | ✓ |
+| add or correct an enrolment | — | — | **their department's** | ✓ | — | ✓ |
+| add or correct a professor | — | — | — | ✓ | — | ✓ |
+| add or withdraw a course | — | — | the department's | ✓ | — | ✓ |
+| load a roster CSV | — | — | — | ✓ | — | ✓ |
+| appoint a class representative | — | their courses' | the department's | — | — | ✓ |
+| grant or revoke a role | — | — | — | — | — | ✓ |
+| create an account | — | — | — | — | — | ✓ |
+| read the audit trail | their own actions | their department's teaching | their department's | their own | **all** | **all** |
+| export a register | their appointed courses | their own | the department's | all | all | all |
+
+Four things worth saying in words, because a table flattens them:
+
+**A student's reach is its appointments.** A student account with no `attendance_delegate` row
+signs in, sees its own enrolment, and nothing else — not a course, not a lecture, not a mark. That
+is not a bug and was mistaken for one: see "appointing a representative is what makes a student
+account useful".
+
+**A plain professor does not keep the roll.** Teaching a course is not deciding who is on it —
+the roll is what says that in the first place, and it comes from enrolments, which are the
+office's. A professor corrects attendance; a head corrects the roll; the office corrects
+everything.
+
+**A head's authority is the department, not the department-in-a-year.** `academic_year` on a HOD
+grant is optional and means "this year only" when it is there. Open-ended is the ordinary
+appointment. See V18.
+
+**Removing a student is not always possible even for the office.** Every foreign key here is
+`RESTRICT` and nothing in this schema is deleted to make room: a class representative's
+appointment, or an account, keeps pointing at the student and has to be dealt with first. The
+refusal says which, and ending an appointment keeps its row — so a student who has ever
+represented a course cannot be removed from the server at all. That is the trade the audit trail
+is worth: the register they marked stays explainable.
+
+**Nobody may delete an audit row, including the service.** `sies_app` holds no privilege on
+`audit_log` at all; the rows arrive through definer triggers and leave only with a partition.
+
 ## Identity and row-level security
 
 Two migrations, for the same reason V1 and V2 are two: V5 says who exists, V6 says what they
@@ -440,14 +499,24 @@ POST /api/v1/accounts/{id}/delegations                     courseId, academicYea
 POST /api/v1/accounts/{id}/delegations/revoke              courseId, academicYear
 ```
 
-The one pair of endpoints here that is **not** administrators only, because appointing the
-representative of a course is the instructor's business before it is anybody else's.
+**Keyed by the course, and that is the second shape it has had.** The first hung off the
+account — `POST /accounts/{id}/delegations` — and could not be used by the people the policies
+were written for: appointing a representative belongs to the course's instructor, and the form
+needed a list of student *accounts*, which only an administrator may read. A professor could
+reach that endpoint with curl and never from the page. Keyed by the course, `GET
+/courses/{id}/roll` **is** the picker, and a roll is its instructor's to see. One way in, keyed
+the way `attendance_delegate` is keyed.
+
 `Delegates.capacityFor` asks the database which of the three capacities the caller actually holds
-— instructor, head of the offering department for that session, administrator, in that order —
-and stamps it on the grant; a caller holding none gets a 403 saying who may. The two refusals the
-trigger would otherwise return as `check_violation` are checked first so they can be said
-properly: *"That student is not on this course's roll for 2025, so they cannot be its class
-representative. The roll comes from their enrolment, which is the office's."*
+— instructor, head of the offering department, administrator, in that order — and stamps it on
+the grant; a caller holding none gets a 403 saying who may. The two refusals the trigger would
+otherwise return as `check_violation` are checked first so they can be said properly: *"That
+student is not on this course's roll for 2025, so they cannot be its class representative. The
+roll comes from their enrolment, which is the office's."*
+
+The roll also says, per student, whether they **have an account**. A grant to somebody with none
+is legal and useless — they hold an appointment and no way to sign in and use it — so the form
+says which rather than leaving it to be discovered.
 
 Re-appointing after a revocation revives the row rather than adding one, because the key is the
 student, the course and the session. The history is not lost: the audit trigger records the UPDATE
@@ -939,11 +1008,14 @@ says plainly that the two have not been joined on a phone.
 
 ## Findings
 
-Thirty-two things. The first four came out of the translation in Phase 2, the next three out of
+Thirty-seven things. The first four came out of the translation in Phase 2, the next three out of
 building the importer, three more out of Phase 4, two out of Phase 5, four out of Phase 5.5, nine
 out of Phase 6 — one of those found on a handset rather than by anything here — two from
-building the administration pages, and three from importing a real phone's backup and then using
-the server it filled. All but one of the first seven are about the app rather than the schema; the rest are
+building the administration pages, three from importing a real phone's backup and then using the
+server it filled, one from somebody revoking a grant and trying to put it back, one from a head
+of department trying to appoint a class representative, one from a student deleted on a phone
+that stayed on the server, one from the app being silent about the refusal that followed, and one
+from the refusal after that being retried for ever. All but one of the first seven are about the app rather than the schema; the rest are
 about this schema and this service, which is what happens once they start making decisions of
 their own.
 
@@ -1203,6 +1275,121 @@ exactly; the page reads only the token and `mustRotate` from it. This is the sam
 `Double`/`Long` finding above, and the family's lesson is now stated once: **a key is text
 everywhere it meets a language that does not have a 64-bit integer.**
 
+**A comment that described the rule the index was not enforcing.** V5 created
+`user_role_scope_uq` as a plain unique index on `(account_id, role, department, academic_year)`,
+with a comment reading "a role is held once per scope". That is the rule anybody would want. What
+a non-partial index enforces is *a role is **granted** once per scope, for ever*: a revoked grant
+keeps its slot, so re-appointing a head of department who had been revoked came back as
+`duplicate key value violates unique constraint "user_role_scope_uq"` — with nothing the
+administration page could do about it. Found by somebody revoking a grant and trying to put it
+back, which is an ordinary Tuesday in a college.
+
+Two things worth taking from it. The first is that **a comment is not a test**: the index and its
+description disagreed for ten migrations and the only reader who noticed was a person using the
+page. The second is the shape of the fix. The index becomes partial on `revoked_at IS NULL`, so a
+re-grant is a *new row with its own `user_role_id`* rather than the old one revived — because the
+revoke endpoint names a grant by that id, so two appointments have to be two ids, and because
+"head from June to September, then again from January" is two appointments. One row with an
+overwritten `granted_at` would answer "who was allowed to do this in July" with the wrong date,
+and that question is the entire reason nothing in this schema is deleted. `attendance_delegate`
+revives its row instead, and that is not an inconsistency: its key *is* the triple, one
+appointment per student per course per session, and its history lives in the audit log's two
+images.
+
+**A rule written twice drifted, twice.** V18 made the session optional on a HOD grant and taught
+`actor_is_hod_of()` that a grant naming no session answers for every session. It did not teach
+`attendance_delegate_authorised()`, the BEFORE trigger on `attendance_delegate`, which asks the
+same question in its own words — `AND ur.academic_year = NEW.academic_year`. `NULL = 2026` is not
+false, it is unknown, so the `EXISTS` was false and the trigger refused with `check_violation`: a
+head of department appointing a class representative for a course in their own department was
+told, in effect, that they were not the head.
+
+The instance was a line; the class is the thing worth writing down. This is the **second** rule in
+this schema found to have been written twice and drifted, after an index whose comment described a
+constraint it was not enforcing. So V19 moves it into `account_is_hod_of(account, department,
+session)` and both askers call it: `actor_is_hod_of()` is now a one-line wrapper passing
+`current_account_id()`, and the trigger passes `NEW.granted_by`.
+
+They cannot simply share the actor version, and that is the point of the split. The trigger asks
+about *whoever is recorded as having made the grant*, not about whoever is connected: "the
+designator held the authority they claimed" is a question about the row, and answering it with the
+current actor would make a grant authorised by whoever happened to be replaying it. Two askers,
+two subjects, one rule.
+
+**A refused deletion looked exactly like a deletion of nothing.** A student removed in the app,
+synced, and still on the server — with a successful sync and an emptied queue saying otherwise.
+Nothing in the app, nothing in the log, and two copies of the roll that disagreed until somebody
+read both.
+
+The cause is a rule this project had already written down, about `UPDATE`, and then leaned on in
+the other direction: **a statement no policy's `USING` clause admits matches no rows rather than
+raising.** `SyncWriter.delete` ran the statement, ignored the row count, and had a comment
+explaining why that was safe — "the row may not be there, and that is not a failure: a delete the
+device sent twice, or a row the server never received, both end here with nothing to do". Both
+true, and both the *other* meaning of zero.
+
+Zero rows is two answers, and which one it is depends on whether the row is still there. Gone: a
+replayed delete, accepted, because a device that cannot tell whether its batch arrived has to be
+able to send it again. Still there: the policies did not admit it, refused **permanently**,
+because the authority will not change by sending it again. The sentence says what is now true of
+the two copies — *"removing a student is the office's to do, so this deletion stays on this
+device. The student is still on the server, and will come back here the next time the roll is
+loaded."*
+
+What this does **not** do is reconcile the two copies. The phone's row is gone, the server's is
+not, and nothing in the feed will bring it back, because nothing changed it. The app lets a
+professor delete a student locally — which is how it worked before there was a server — and the
+server says the roll is the office's. Those two positions are both defensible and they are not
+the same position; a professor's phone is now told so, out loud, which is the part that was
+missing.
+
+**A refusal that nothing kept was a refusal nobody read.** The deletion fix made the server
+explain itself — *"removing a student is the office's to do, so this deletion stays on this
+device"* — and the app was still silent, which took a second look to understand. The sentence was
+stored in `DeviceIdentity.recordSyncError`, the single field that also holds "waiting for a
+connection", and **every sync rewrote it**: the next run had nothing to refuse, passed null, and
+wiped it. Whether anybody ever saw the one thing the server had gone to the trouble of writing
+depended on opening the right screen within seconds of the right sync.
+
+Two fields now, because they are two kinds of news. `lastSyncError` is about the connection and is
+true only until the next successful run, which is exactly right for "waiting for a connection".
+Refusals are about something a person did, so they are appended to a bounded, deduplicated list
+and **wait until dismissed** — a card on the Server screen, above the buttons, with the server's
+own sentences and a Dismiss. All of them, not the last one: two rows refused for two reasons are
+two things to tell somebody, and the one that used to win was whichever came last in the batch.
+
+**`ON DELETE RESTRICT` raises 23001, and the code was watching 23503.** A head of department
+removed a student who was a class representative, and the phone said, every sync, for ever:
+
+```
+ERROR: update or delete on table "students" violates RESTRICT setting of foreign key
+       constraint "attendance_delegate_student_id_fkey" on table "attendance_delegate"
+```
+
+Three mistakes in one refusal, and the third is the one worth the entry. A constraint name where
+a sentence belongs. A refusal treated as transient, because `23503` is deliberately **not** in
+`SETTLED_STATES` — an upsert whose parent has not arrived is worth waiting for — while a delete
+held down by a child has the opposite shape. And then the fix for both of those did not fire,
+because `restrict_violation` is **`23001`** and `foreign_key_violation` is `23503`: `NO ACTION`
+refuses at the end of the statement with the second, `RESTRICT` refuses immediately with the
+first, and the message is near enough identical that nothing points at the difference. Every
+foreign key in this schema is `RESTRICT`, so the branch written for 23503 alone could never have
+run — and the test written against it failed with the original message, which is how it was
+found.
+
+What a refused deletion says now is asked of the catalogue rather than parsed out of the message:
+every foreign key referencing the table is looked up in `pg_constraint` and each is asked whether
+it currently holds a row pointing at this key, so the answer names what is actually in the way
+rather than the one PostgreSQL noticed first. *"That row cannot be removed while that student is
+the class representative of a course. That has to be undone on the server first; this phone
+cannot send it."*
+
+Permanence follows from **which** tables are in the way. A blocker in a table the device syncs is
+worth waiting for — the device may be about to delete those rows too, and a batch sends children
+before parents. A blocker in a table the device has never heard of, an appointment or an account,
+cannot be cleared from a phone at all, so retrying is a queue that never empties. Which is
+precisely what it did.
+
 ## Where the importer deliberately differs from the merge
 
 Three places, each because the server knows something a phone does not. Each is a decision, not
@@ -1223,9 +1410,9 @@ let a row in puts the contradiction back in the database where nobody will see i
 
 ## Accounts, and the roles on them
 
-Eight endpoints and one page. `/accounts.html`, served by the same service, is where the second
-administrator, the office account, an auditor, a head of department and a class representative
-come into being.
+Eight endpoints and one panel of `/console.html`, served by the same service, which is where the
+second administrator, the office account, an auditor, a head of department and a class
+representative come into being.
 
 ```
 GET  /api/v1/accounts                                    who exists and what they hold
@@ -1235,8 +1422,11 @@ POST /api/v1/accounts                                    an account, and optiona
 POST /api/v1/accounts/{id}/roles                         a role
 POST /api/v1/accounts/{id}/roles/{grantId}/revoke        the end of one
 GET  /api/v1/accounts/courses                            the courses you may appoint a CR for
-POST /api/v1/accounts/{id}/delegations                   a class representative
-POST /api/v1/accounts/{id}/delegations/revoke            the end of one
+GET  /api/v1/accounts/sessions                           the academic years, for anybody
+GET  /api/v1/me                                          who you are and what you may do
+GET  /api/v1/courses/{id}/roll?academicYear=             the roll, for its instructor
+POST /api/v1/courses/{id}/representatives                a class representative
+POST /api/v1/courses/{id}/representatives/revoke         the end of one
 ```
 
 An administrator and nobody else, and the rule is in SQL twice. Creating an account asks
@@ -1277,7 +1467,7 @@ browser has opened it in this environment, and no JavaScript engine is installed
 
 ## Reading the data in a browser
 
-`/data.html`, and two endpoints behind it:
+The **Data** panel of `/console.html`, and two endpoints behind it:
 
 ```
 GET /api/v1/data                             the tables, with the rows you can see in each
@@ -1309,6 +1499,153 @@ the cell as its tooltip, dotted so you know to look. A data browser that quietly
 would be the wrong trade for prettier reading. A value this build has no label for, which is what
 a department added in SQL ahead of the app looks like, shows as the stored name.
 
+## One console, one session
+
+`/console.html`: the accounts, the data and the audit trail as three panels of one page. It was
+two pages, and each kept its token in its own closure — so moving from the accounts to the data
+meant signing in again, which is a cost nobody agreed to pay. `/accounts.html` and `/data.html`
+still answer, and both lead here, because those URLs are in this file and in somebody's
+bookmarks.
+
+**Students cannot sign in to it**, and not by a check this page could get wrong: the console
+opens the **staff door only**. `app_account` is unique per door and `student_login` is derived
+from the account's kind, so a student account cannot be found at that door at all — the lookup
+refuses it, exactly as it refuses a professor at the student door. The page also declines a
+`STUDENT` kind in the response, which today cannot happen and costs one `if` against the day the
+doors change.
+
+**Keeping a session is now a choice**, which reverses an earlier decision deliberately. The token
+lives in a variable unless somebody ticks *Keep me signed in*, and then in `localStorage` until
+they sign out or it expires in a fortnight. The trade is stated on the page — convenient on your
+own machine, wrong on a shared one — because it is the person's to make and not this file's. One
+function writes it, one writes `null` over it on sign-out, and a kept token is **checked before
+the page acts as though it works**: `GET /data` is the probe, since every signed-in actor may
+call it, so a 401 means the session and not the authority. Never a cookie: a cookie would be
+attached to every request by the browser whether the page meant it or not. `WireTest` holds all
+of that — one `localStorage.setItem` in the file, the checkbox's words, and `keepToken(null)` on
+the way out.
+
+**The tables update themselves**, by polling every ten seconds, and only the panel in front of
+somebody and only while the tab is visible — a console left open on a second monitor should not
+be asking all afternoon. A reload keeps the open data table open and keeps a half-filled form's
+selections, because a live page that moves a `<select>` under somebody's hands is worse than a
+stale one. The header says when it last succeeded.
+
+**The page is told what to offer, by `GET /api/v1/me`.** It used to show every panel and let the
+ones that were not yours answer 403, which met a professor with an accounts list, a create form
+and a grant form that would all refuse them. `/me` answers who you are, which roles you hold,
+which courses you represent, whether `actor_may_manage_accounts()` is true, and how many audit
+entries you can reach — so the Accounts tab is absent for anybody but an administrator, and the
+Audit tab is absent for anybody the trail has nothing for. It is **not** an authority and says so
+in its own notes: every one of those facts is enforced in SQL, and a caller who lies to
+themselves about the answer gains nothing. It exists so the page can be civil, not so it can be
+safe.
+
+The **Data** panel is for everybody, and what it shows is the policies' doing: a professor sees
+their own courses and the students on their rolls, a head of department sees that department, an
+auditor sees everybody. There is nothing to filter in the page, which is the whole reason it can
+be this short.
+
+### The audit trail, read
+
+```
+GET /api/v1/audit?limit=&beforeAt=&beforeId=
+```
+
+`sies_app` holds **no privilege on `audit_log`** — not even `SELECT`. That is what makes the trail
+worth having: the role that writes the attendance cannot read, rewrite or delete the record of
+having written it. The rows arrive through `audit_row()` and `audit_event()`, both
+`SECURITY DEFINER`, and only `sies_auditor` can read the table.
+
+So V14 adds `audit_recent()` and `audit_size()`, definer functions that check the **actor's**
+role rather than the connection's: the service connects as one role for everybody, and "who may
+read the audit log" is a property of the person. A `GRANT` to `sies_app` was the alternative, and
+it would have left the filtering to application code — one mistake in a `WHERE` clause and every
+mark in the college, with the name of whoever recorded it, is readable by any signed-in request.
+Here the filter cannot be forgotten, because there is nowhere else to put it.
+
+Both functions **refuse loudly**, with `insufficient_privilege`, which reaches the caller as a
+403. An empty result would have been the easy choice and the wrong one: it is indistinguishable
+from an empty log, which is the trap that cost this project a day in Phase 5.5.
+
+### A head holds the department, not the department-in-a-year
+
+V5 made the session compulsory on a HOD grant, and the reasoning was sound: a head for 2025-26
+should not quietly still be one in 2027-28. What it misread is how a college works. A head is
+appointed and serves until somebody else is; the appointment ends with a revocation, not with a
+January. Requiring a year meant re-granting the same person the same department every June, and a
+grant nobody re-made was a head who **silently stopped being one** — the exact failure the
+constraint was guarding against, arrived at from the other side.
+
+V18 makes the year optional and gives its absence the obvious meaning:
+
+| `academic_year` | |
+|---|---|
+| `2026` | this department, that session only — a head standing in for a year |
+| `NULL` | this department, until it is revoked |
+
+Both are kept because both happen, and `actor_is_hod_of(dept, year)` answers true for either: a
+grant naming the session, or an open-ended grant naming none. The form's session field is now
+optional, and `checkRoleShape` says what leaving it empty means.
+
+A professor needed nothing: teaching is not year-scoped anywhere here. `course_instructor` names
+a professor and a course, `actor_instructs()` asks that and nothing about a session, and a course
+that is no longer taught is marked discontinued rather than expiring. V18 gives the head the same
+shape.
+
+### Three widths, not one door
+
+V14's answer — auditor or administrator, nobody else — is right for the *whole* trail and wrong
+as the only answer, because the question a professor asks is about their own teaching: who
+changed my register. V16 and V17 make the trail readable in three widths, each being the width of
+the authority held.
+
+| | reads |
+|---|---|
+| auditor, administrator | all of it |
+| head of department | their own, and the entries of the professors in that department |
+| professor | their own, and every entry about a lecture, a mark or a course **their department** offers |
+| anybody else | their own actions, and nothing else |
+
+A failed sign-in, an imported row with no author, a role granted to somebody in another
+department: none of those is anybody's but an auditor's. The count goes with the slice —
+`audit_size()` counts what the asker may see, because "3 of 42468" to somebody who can reach
+three is worse than no count at all.
+
+The head's width is deliberately **not** year-scoped, unlike the HOD grant itself. An audit entry
+does not belong to a session: "who recorded this" is a fact about an afternoon, and asking which
+academic year that afternoon fell in, to decide whether a head may read it, would refuse them the
+record of the term they were head for.
+
+**V16 got the professor's half wrong**, and V17 is the correction. V16 leaned on
+`audit_log.delegate_course`, which is exactly the right idea — V7 even built a partial index for
+it — and which in this database is set on **0 of 13 756** row entries, because `ActorSession`
+carries it only for a caller that builds an actor by hand and the sync path announces the
+request's actor instead. So the branch was dead code and a professor saw only their own writes.
+V17 asks the question the professor is actually asking, of what the trigger already records:
+`row_key` carries the lecture, a lecture names its course, and a course has an instructor and a
+department. Whoever made the entry, it is readable by the people whose teaching it happened to —
+which is wider than "what my CR did" and right, because an edit to my register by the office or
+by another instructor is exactly as much my business.
+
+The page shows when, who — the label and the account — what, and where from: the device node, the
+address and the app version. The `before` and `after` images sit behind a disclosure, pretty
+printed, because they are the substance when the question is "what exactly changed". Paging is
+newest first with the cursor being the last entry's own `(occurred_at, audit_id)`, compared
+row-wise. Both halves are needed: `clock_timestamp()` repeats inside one statement, and an import
+writes fourteen thousand rows in one — a cursor on the timestamp alone would skip or repeat
+exactly those.
+
+### A revoked grant leaves the list
+
+`GET /accounts` returns the roles and the appointments **in force**, and nothing else. They used
+to come back with a `live` flag and show struck through, which reads as "this account nearly has
+this role" and turns an account that has been through a few terms into a column of ghosts. What
+happened to a grant — who ended it, when, and why — is the audit trail's to answer, and it
+answers it with the grant, the revocation, both authors and both timestamps. `Roles.of` and
+`Delegates.forStudent` still return the history, because that is what they are for; the list
+filters.
+
 ## The first administrator
 
 Nothing else can create one. A migration cannot, because a migration is a committed file and a
@@ -1338,7 +1675,7 @@ reaches `/auth/password` and `/auth/logout` and **nothing else**. A phone will s
 sync nothing; the data page will sign in and show no tables. So this is the first thing to do with
 a new administrator, and with any account somebody else created.
 
-**In a browser.** `/accounts.html` notices and shows the rotation form instead of the rest of the
+**In a browser.** `/console.html` notices and shows the rotation form instead of the rest of the
 page. This is the easy way and there is nothing else to know.
 
 **On a phone.** The Server screen has a **Change password** button whenever it holds a session,

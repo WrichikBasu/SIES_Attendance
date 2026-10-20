@@ -187,6 +187,38 @@ public final class SyncClient {
 		}
 	}
 
+	/**
+	 * What {@code /me} says this account may do, as the phone uses it.
+	 *
+	 * @param mayKeepARoll whether to offer the roster screens: add a student, correct one,
+	 *                     remove one
+	 * @param represents   the courses this account is a class representative of right now,
+	 *                     or null when the server did not say
+	 */
+	public record Me(boolean mayKeepARoll, @Nullable List<Long> represents) {
+	}
+
+	/**
+	 * Asks the server what this account may do.
+	 * <p>
+	 * At sign-in and again on every sync. The roll answer changes between terms; the courses a
+	 * class representative holds change whenever somebody appoints one or ends an appointment,
+	 * and a phone that only asked at sign-in would go on offering a course for weeks after the
+	 * appointment ended. The screens consult what was remembered; see {@code Permissions}.
+	 *
+	 * @param fallback what to answer for the roll when the server does not say. Leaving the
+	 *                 app as it was is the right failure: the server refuses what is not this
+	 *                 account's anyway, and now says so
+	 */
+	@NonNull
+	public Me me(boolean fallback) throws IOException {
+
+		String body = call("GET", "/me", null);
+
+		return new Me(SyncJson.flagIn(body, "mayKeepARoll", fallback),
+				SyncJson.courseIdsIn(body, "represents"));
+	}
+
 	/** One password as a JSON string, escaped the little that a password can need. */
 	@NonNull
 	private static String quote(@NonNull char[] password) {

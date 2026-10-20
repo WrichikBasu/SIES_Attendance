@@ -55,6 +55,25 @@ public interface DaoOutbox {
 	@Query("DELETE FROM outbox WHERE seq IN (:sequences)")
 	void deleteSentSync(@NonNull List<Long> sequences);
 
+	/**
+	 * Whether this device has queued the deletion of a row and the server has not taken it yet.
+	 * <p>
+	 * Asked about a parent that a pulled row points at and that is not here: when the device
+	 * removed it itself, the pulled row is one it would have removed with it, had it known.
+	 */
+	@Query("SELECT EXISTS (SELECT 1 FROM outbox WHERE tableName = :table AND key1 = :key1 "
+			+ "AND key2 = :key2 AND key3 = :key3 AND op = 'DELETE')")
+	boolean isDeletePendingSync(@NonNull String table, long key1, long key2, long key3);
+
+	/**
+	 * Queues an intent by hand, for a row the outbox triggers never saw change.
+	 * <p>
+	 * REPLACE, the same as the triggers: there is one intent per row, and the newest says what
+	 * should happen to it.
+	 */
+	@Insert(onConflict = OnConflictStrategy.REPLACE)
+	void queueSync(@NonNull EntityOutbox intent);
+
 	/** Records that a batch could not be sent, so a stuck device can say so. */
 	@Query("UPDATE outbox SET attempts = attempts + 1, lastError = :error "
 			+ "WHERE seq IN (:sequences)")
@@ -90,6 +109,16 @@ public interface DaoOutbox {
 
 	@Query("UPDATE sync_state SET watermark = :watermark, lastPullAt = :at WHERE id = 1")
 	void recordPullSync(@Nullable String watermark, long at);
+
+	/**
+	 * Makes the next pull a snapshot, by forgetting where the last one got to.
+	 * <p>
+	 * For when this device knows its copy has drifted from the server's in a way no later change
+	 * will repair. A snapshot is safe to take over a database that already has the rows: a
+	 * pulled row is changed where it is and only inserted when it is not.
+	 */
+	@Query("UPDATE sync_state SET watermark = NULL WHERE id = 1")
+	void forgetWatermarkSync();
 
 	@Query("UPDATE sync_state SET lastPushAt = :at WHERE id = 1")
 	void recordPushSync(long at);

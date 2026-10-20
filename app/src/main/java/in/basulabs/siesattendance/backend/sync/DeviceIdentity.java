@@ -9,7 +9,12 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import java.security.KeyStore;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Base64;
+import java.util.Set;
 import java.util.UUID;
 
 import in.basulabs.siesattendance.backend.AccountKind;
@@ -72,6 +77,18 @@ public final class DeviceIdentity {
 	private static final String LAST_SENT = "lastSent";
 
 	private static final String LAST_RECEIVED = "lastReceived";
+
+	private static final String MAY_KEEP_A_ROLL = "mayKeepARoll";
+
+	private static final String REFUSALS = "refusals";
+
+	private static final String REPRESENTS = "represents";
+
+	/** How many refusals are kept. Enough to read; not a log. */
+	private static final int REFUSALS_KEPT = 20;
+
+	/** Nothing a refusal says contains one, and it keeps the stored form a plain string. */
+	private static final String REFUSAL_SEPARATOR = "\u001f";
 
 	/** The Keystore entry the token is encrypted with. One per installation. */
 	private static final String KEY_ALIAS = "sies_sync_token";
@@ -221,6 +238,127 @@ public final class DeviceIdentity {
 
 	public static void recordLastRun(@NonNull Context context, int sent, int received) {
 		prefs(context).edit().putInt(LAST_SENT, sent).putInt(LAST_RECEIVED, received).apply();
+	}
+
+	/**
+	 * Whether this account may keep a roll: add a student, correct one, remove one.
+	 * <p>
+	 * The server's answer, from {@code /me}, asked at sign-in. True by default so that an
+	 * install which has never asked behaves as it did before there was a server — the server
+	 * refuses what is not this account's either way, and now says so.
+	 */
+	public static boolean mayKeepARoll(@NonNull Context context) {
+		return prefs(context).getBoolean(MAY_KEEP_A_ROLL, true);
+	}
+
+	public static void recordMayKeepARoll(@NonNull Context context, boolean may) {
+		prefs(context).edit().putBoolean(MAY_KEEP_A_ROLL, may).apply();
+	}
+
+	/**
+	 * The courses this account is a class representative of, as {@code /me} last said, or
+	 * null when it has never said.
+	 * <p>
+	 * What decides which courses a student account is shown; see {@code Permissions}. Empty
+	 * is a real answer: a student whose every appointment has ended is shown no course at all.
+	 */
+	@Nullable
+	public static Set<Long> represents(@NonNull Context context) {
+
+		String stored = prefs(context).getString(REPRESENTS, null);
+
+		if (stored == null) {
+			return null;
+		}
+
+		Set<Long> courses = new HashSet<>();
+
+		for (String id : stored.split(",")) {
+			if (!id.isEmpty()) {
+				courses.add(Long.parseLong(id));
+			}
+		}
+		return courses;
+	}
+
+	/**
+	 * Remembers the courses this account represents. Null forgets them, which is what a
+	 * sign-in does before asking, so one account's appointments never outlive it on a phone
+	 * passed to somebody else.
+	 */
+	public static void recordRepresents(@NonNull Context context,
+	                                    @Nullable Collection<Long> courses) {
+
+		if (courses == null) {
+			prefs(context).edit().remove(REPRESENTS).apply();
+			return;
+		}
+
+		StringBuilder stored = new StringBuilder();
+
+		for (long id : courses) {
+			stored.append(stored.length() == 0 ? "" : ",").append(id);
+		}
+		prefs(context).edit().putString(REPRESENTS, stored.toString()).apply();
+	}
+
+	/** Records what {@code /me} said, keeping the earlier answer for anything it did not say. */
+	public static void recordMe(@NonNull Context context, @NonNull SyncClient.Me me) {
+
+		recordMayKeepARoll(context, me.mayKeepARoll());
+
+		if (me.represents() != null) {
+			recordRepresents(context, me.represents());
+		}
+	}
+
+	/**
+	 * The refusals the server has sent that nobody has dismissed yet, newest first.
+	 * <p>
+	 * Kept rather than overwritten, which is the fix for a real silence: the one field this
+	 * used to share with transport errors was rewritten on every sync, so a refusal — "removing
+	 * a student is the office's to do" — was wiped by the next run a few seconds later, and
+	 * whether anybody ever saw it depended on which screen they were looking at. A refusal is
+	 * news about something the person did; it waits until they say they have read it.
+	 * <p>
+	 * Bounded and deduplicated: a device that is refused the same thing in forty batches has
+	 * one thing to say.
+	 */
+	@NonNull
+	public static List<String> refusals(@NonNull Context context) {
+
+		String stored = prefs(context).getString(REFUSALS, "");
+
+		if (stored == null || stored.isEmpty()) {
+			return List.of();
+		}
+
+		return List.of(stored.split(REFUSAL_SEPARATOR));
+	}
+
+	public static synchronized void addRefusal(@NonNull Context context,
+	                                           @Nullable String refusal) {
+
+		if (refusal == null || refusal.isBlank()) {
+			return;
+		}
+
+		List<String> kept = new ArrayList<>();
+		kept.add(refusal.replace(REFUSAL_SEPARATOR, " "));
+
+		for (String older : refusals(context)) {
+			if (!older.equals(kept.get(0)) && kept.size() < REFUSALS_KEPT) {
+				kept.add(older);
+			}
+		}
+
+		prefs(context).edit()
+				.putString(REFUSALS, String.join(REFUSAL_SEPARATOR, kept))
+				.apply();
+	}
+
+	public static void clearRefusals(@NonNull Context context) {
+		prefs(context).edit().remove(REFUSALS).apply();
 	}
 
 	/**

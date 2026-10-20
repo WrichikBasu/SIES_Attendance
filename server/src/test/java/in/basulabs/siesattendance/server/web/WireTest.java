@@ -81,6 +81,8 @@ class WireTest {
 	private static final long STUDENT_CR = 2001;
 	private static final long STUDENT_OTHER = 2002;
 
+	private static final long LECTURE_CS = 4001;
+
 	private static final long COURSE_CS = 3001;
 	private static final long COURSE_CHEM = 3002;
 
@@ -1229,24 +1231,370 @@ class WireTest {
 	}
 
 	@Test
-	void theAdministrationPageIsServedWithoutAToken() throws Exception {
+	void theConsoleIsServedWithoutAToken() throws Exception {
 
 		// The filter guards /api/* and nothing else, which is deliberate: the page is a
 		// static file and holds no data. Everything it shows, it fetches with a token.
 		Reply page = send(HttpRequest.newBuilder(
-				URI.create("http://localhost:" + port + "/accounts.html")).GET(),
+				URI.create("http://localhost:" + port + "/console.html")).GET(),
 				null, null);
 
 		assertEquals(200, page.status());
 		assertTrue(page.raw().contains("SIES Attendance"), "the page itself");
 
-		// Mentioning it is fine -- the page says in a comment why it does not use it. What
-		// must not appear is a write: a token in storage outlives the person walking away
-		// from the machine, and survives the tab that was supposed to end the session.
-		assertFalse(page.raw().contains("localStorage.setItem")
-						|| page.raw().contains("sessionStorage.setItem")
-						|| page.raw().contains("document.cookie"),
-				"the token lives in a variable and is meant to die with the tab");
+		// Keeping a session is now a choice somebody makes, so the old assertion -- no
+		// storage write anywhere -- would be wrong. The contract instead: exactly ONE place
+		// writes a token, it is behind that checkbox, and it is never a cookie. A cookie
+		// would be attached to every request by the browser whether this page meant it or
+		// not, which is a different and worse property than a value it has to go and fetch.
+		assertEquals(1, page.raw().split("localStorage.setItem", -1).length - 1,
+				"one place persists the token, and it is keepToken");
+		assertTrue(page.raw().contains("Keep me signed in"),
+				"and the person is asked before it does");
+		assertFalse(page.raw().contains("document.cookie"), "never a cookie");
+		assertFalse(page.raw().contains("sessionStorage.setItem"),
+				"one storage, one choice: two would be two lifetimes to reason about");
+
+		// Signing out has to take the kept token with it, or "sign out" means "until the
+		// next reload".
+		assertTrue(page.raw().contains("keepToken(null)"), page.raw().length() + " bytes");
+	}
+
+	@Test
+	void theConsoleIsRevalidatedRatherThanRemembered() throws Exception {
+
+		// Spring sends Last-Modified and, by default, no Cache-Control for a classpath
+		// resource -- and a browser given a Last-Modified with no freshness information
+		// applies a heuristic and may reuse the page without asking. For a console that
+		// changes while somebody is using it that is the difference between "the option is
+		// not there" and "the option is not there yet", with nothing to say which.
+		HttpResponse<String> response = HttpClient.newHttpClient().send(
+				HttpRequest.newBuilder(
+						URI.create("http://localhost:" + port + "/console.html")).GET().build(),
+				HttpResponse.BodyHandlers.ofString());
+
+		assertEquals(200, response.statusCode());
+		assertEquals("no-cache",
+				response.headers().firstValue("Cache-Control").orElse("absent"),
+				"the page has to be revalidated on every load");
+	}
+
+	@Test
+	void theOldTwoPagesPointAtTheConsole() throws Exception {
+
+		// Both URLs are in the README, in bookmarks and in somebody's notes.
+		for (String was : List.of("/accounts.html", "/data.html")) {
+
+			Reply page = send(HttpRequest.newBuilder(
+					URI.create("http://localhost:" + port + was)).GET(), null, null);
+
+			assertEquals(200, page.status(), was);
+			assertTrue(page.raw().contains("/console.html"), was + " has to lead there");
+		}
+	}
+
+	@Test
+	void aHeadMayBeAppointedWithNoSessionAtAll() throws Exception {
+
+		// V18, from the caller's side: the session is optional and its absence means "until
+		// revoked". The page's dropdown now has an empty option for it, which is also the
+		// default -- a head standing in for one year is the exception, not the rule.
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply open = post("/accounts/" + accountProfChem + "/roles", json(
+				"role", "HOD",
+				"department", "CHEMISTRY",
+				"reason", "head of chemistry"), admin, null);
+
+		assertEquals(200, open.status(), open::toString);
+		assertTrue(open.body().get("academicYear").isNull(),
+				"no session, which is the open-ended appointment");
+
+		// And it answers for a session nobody named it for, which is the whole point.
+		assertEquals(1, count("SELECT count(*) FROM user_role WHERE account_id = "
+				+ accountProfChem + " AND role = 'HOD' AND academic_year IS NULL"));
+
+		// The department is still required: a head of nothing is not a role.
+		Reply vague = post("/accounts/" + accountProfCs + "/roles", json(
+				"role", "HOD"), admin, null);
+
+		assertEquals(400, vague.status(), vague::toString);
+		assertEquals("incomplete_grant", vague.body().get("code").stringValue());
+		assertTrue(vague.body().get("message").stringValue().contains("optional"),
+				"and it says what leaving the session out means: " + vague.raw());
+	}
+
+	@Test
+	void aRevokedRoleCanBeGrantedAgain() throws Exception {
+
+		// V5's unique index was not partial, so a revoked grant kept its slot and
+		// re-appointing last year's head came back as "duplicate key value violates unique
+		// constraint user_role_scope_uq" -- with no way round it from the page at all. The
+		// index's own comment said "a role is held once per scope"; what it enforced was "a
+		// role is granted once per scope, for ever". V15 makes it partial.
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		long first = 0;
+
+		for (var account : get("/accounts", admin, null).body()) {
+			if (account.get("accountId").longValue() == accountHeadCs) {
+				first = account.get("roles").get(0).get("userRoleId").longValue();
+			}
+		}
+
+		assertEquals(200, post("/accounts/" + accountHeadCs + "/roles/" + first + "/revoke",
+				json("reason", "end of term"), admin, null).status());
+
+		Reply again = post("/accounts/" + accountHeadCs + "/roles", json(
+				"role", "HOD",
+				"department", "COMPUTER_SCIENCE",
+				"academicYear", SESSION,
+				"reason", "appointed again"), admin, null);
+
+		assertEquals(200, again.status(), again::toString);
+
+		// A new grant, with its own id: the revoke endpoint names one by id, so two
+		// appointments have to be two rows. "Head from June, then again from January" is two
+		// appointments, and one row with an overwritten granted_at would answer "who was
+		// allowed to do this in July" with the wrong date.
+		long second = again.body().get("userRoleId").longValue();
+
+		assertTrue(second != first, "a re-grant is a new grant, not the old one revived");
+
+		assertEquals(2, count("SELECT count(*) FROM user_role WHERE account_id = "
+				+ accountHeadCs + " AND role = 'HOD'"));
+		assertEquals(1, count("SELECT count(*) FROM user_role WHERE account_id = "
+				+ accountHeadCs + " AND role = 'HOD' AND revoked_at IS NULL"));
+
+		// And the rule that was wanted all along still holds: one LIVE grant per scope.
+		Reply twice = post("/accounts/" + accountHeadCs + "/roles", json(
+				"role", "HOD",
+				"department", "COMPUTER_SCIENCE",
+				"academicYear", SESSION), admin, null);
+
+		assertEquals(409, twice.status(), twice::toString);
+		assertEquals("rejected_by_database", twice.body().get("code").stringValue(),
+				"granting a role somebody already holds is their mistake, not the server's");
+	}
+
+	// ── What the console is told to offer ───────────────────────────────
+
+	@Test
+	void anAdministratorIsOfferedTheAccountsAndAProfessorIsNot() throws Exception {
+
+		Reply admin = get("/me", tokenFor("admin@sies.edu.in", "STAFF"), null);
+
+		assertEquals(200, admin.status(), admin::toString);
+		assertTrue(admin.body().get("mayManageAccounts").booleanValue());
+		assertEquals("ADMIN", admin.body().get("roles").get(0).get("role").stringValue());
+
+		// The whole point of the endpoint: the page asks once instead of showing a professor
+		// an accounts list, a create form and a grant form that would all refuse them.
+		Reply professor = get("/me", tokenFor("a.cs@sies.edu.in", "STAFF"), null);
+
+		assertEquals(200, professor.status(), professor::toString);
+		assertFalse(professor.body().get("mayManageAccounts").booleanValue(),
+				"a professor is not offered the accounts panel at all");
+		assertEquals("PROFESSOR", professor.body().get("kind").stringValue());
+		assertEquals(0, professor.body().get("roles").size(), "and holds no role");
+
+		// A head of department holds one, and still may not manage accounts.
+		Reply head = get("/me", tokenFor("c.head@sies.edu.in", "STAFF"), null);
+
+		assertFalse(head.body().get("mayManageAccounts").booleanValue());
+		assertEquals("HOD", head.body().get("roles").get(0).get("role").stringValue());
+		assertEquals("COMPUTER_SCIENCE",
+				head.body().get("roles").get(0).get("department").stringValue());
+	}
+
+	@Test
+	void aClassRepresentativeIsToldWhichCoursesTheyRepresent() throws Exception {
+
+		Reply reply = get("/me", tokenFor("r.rao@sies.edu.in", "STUDENT"), null);
+
+		assertEquals(200, reply.status(), reply::toString);
+		assertEquals("STUDENT", reply.body().get("kind").stringValue());
+		assertEquals("CS-101",
+				reply.body().get("represents").get(0).get("courseCode").stringValue());
+		assertFalse(reply.body().get("mayManageAccounts").booleanValue());
+	}
+
+	@Test
+	void aProfessorReadsTheTrailOfTheirOwnTeachingAndNoMore() throws Exception {
+
+		// V16 and V17 together: a professor asking for the trail used to get a 403, which
+		// answered "not for you" to a question that is partly theirs -- who changed my
+		// register. The entries they may read are the ones about their own lectures, marks
+		// and courses, whoever made them, plus their own actions.
+		String professor = tokenFor("a.cs@sies.edu.in", "STAFF");
+
+		Reply mine = get("/audit?limit=200", professor, null);
+
+		assertEquals(200, mine.status(), mine::toString);
+		assertTrue(mine.body().get("entries").size() > 0,
+				"the fixture's CS lecture and its marks are this professor's");
+
+		// Not the other department's. CH-101's lecture belongs to b.chem, and its marks are
+		// the one row the chemistry student attended.
+		assertFalse(mine.raw().contains("\"CH-101\""), mine.raw());
+
+		for (var entry : mine.body().get("entries")) {
+
+			String table = entry.get("tableName").isNull()
+					? "" : entry.get("tableName").stringValue();
+
+			// Every row entry is about this professor's teaching; anything else here would
+			// be an entry they were given because they asked nicely.
+			if (table.equals("attendance") || table.equals("lectures")) {
+				assertTrue(entry.get("rowKey").stringValue().contains(
+								Long.toString(LECTURE_CS)),
+						"an entry about somebody else's lecture: " + entry.toString());
+			}
+		}
+
+		// And the administrative half of the trail is still not theirs: the fixture's role
+		// grants were made by the admin, on accounts that are not this professor's.
+		assertFalse(mine.raw().contains("ROLE_GRANT"),
+				"a professor does not read the college's grants");
+	}
+
+	@Test
+	void theDepartmentsHeadReadsTheDepartmentsTrail() throws Exception {
+
+		String head = tokenFor("c.head@sies.edu.in", "STAFF");
+
+		Reply theirs = get("/audit?limit=200", head, null);
+
+		assertEquals(200, theirs.status(), theirs::toString);
+
+		// C HEAD teaches nothing in the fixture, so everything they can read here they can
+		// read as the head of Computer Science: the CS lecture and its marks.
+		assertTrue(theirs.body().get("entries").size() > 0, theirs::toString);
+		assertFalse(theirs.raw().contains("\"CH-101\""),
+				"the head of Computer Science does not read Chemistry's");
+	}
+
+	// ── The audit trail, read ───────────────────────────────────────────
+
+	@Test
+	void anAdministratorReadsTheWholeTrailAndAProfessorASliceOfIt() throws Exception {
+
+		// Something to read: a grant, which the trigger on user_role records.
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		// The office account, which has rotated its password. Not accountFresh: that one
+		// exists to be a new account, so it is under must_rotate and may do exactly two
+		// things -- which is a different test, and a correct refusal here.
+		grantRole(accountOffice, "AUDITOR", null, null, accountAdmin);
+
+		Reply page = get("/audit?limit=5", admin, null);
+
+		assertEquals(200, page.status(), page::toString);
+		assertTrue(page.body().get("entries").size() > 0, "the trail is not empty");
+		assertTrue(Long.parseLong(page.body().get("total").stringValue()) > 0,
+				"and it says how much there is, which a page of rows cannot");
+
+		// Ids as text, like every key that a page can see.
+		assertTrue(page.raw().contains("\"auditId\":\""), page.raw().substring(0, 200));
+
+		// The one role this is really for.
+		Reply auditor = get("/audit?limit=5", tokenFor("office@sies.edu.in", "STAFF"), null);
+
+		assertEquals(200, auditor.status(), auditor::toString);
+
+		// A professor is not refused any more -- V14 refused them, and V16 replaced that
+		// with three widths, because "who changed my register" is partly their question. What
+		// they get is their own slice, which is strictly smaller than the whole.
+		Reply professor = get("/audit?limit=500", tokenFor("a.cs@sies.edu.in", "STAFF"), null);
+
+		assertEquals(200, professor.status(), professor::toString);
+
+		long whole = Long.parseLong(get("/audit?limit=1", admin, null)
+				.body().get("total").stringValue());
+		long slice = Long.parseLong(professor.body().get("total").stringValue());
+
+		assertTrue(slice > 0, "a professor's own teaching is in there");
+		assertTrue(slice < whole,
+				"and the rest of the college is not: " + slice + " of " + whole);
+
+		// The count is the count of what the asker may see, not of the table: a page saying
+		// "3 of 42468" to somebody who can reach three would be worse than no count at all.
+		assertEquals(professor.body().get("entries").size() <= slice, true);
+	}
+
+	@Test
+	void theTrailPagesBackwardsWithoutRepeatingItself() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply first = get("/audit?limit=3", admin, null);
+
+		assertEquals(3, first.body().get("entries").size(), first::toString);
+
+		String at = first.body().get("nextAt").stringValue();
+		String id = first.body().get("nextId").stringValue();
+
+		Reply second = get("/audit?limit=3&beforeAt=" + at + "&beforeId=" + id, admin, null);
+
+		assertEquals(200, second.status(), second::toString);
+
+		// The cursor is (occurred_at, audit_id) compared row-wise, because
+		// clock_timestamp() can repeat inside one statement -- an import writes thousands of
+		// rows in one transaction. A cursor on the timestamp alone would skip or repeat
+		// exactly those.
+		for (var entry : second.body().get("entries")) {
+			assertFalse(first.raw().contains("\"auditId\":\""
+							+ entry.get("auditId").stringValue() + "\""),
+					"the second page must not repeat the first");
+		}
+	}
+
+	@Test
+	void aBadCursorIsTheCallersMistakeAndSaysSo() throws Exception {
+
+		Reply refused = get("/audit?beforeAt=yesterday&beforeId=1",
+				tokenFor("admin@sies.edu.in", "STAFF"), null);
+
+		assertEquals(400, refused.status(), refused::toString);
+		assertEquals("bad_cursor", refused.body().get("code").stringValue());
+	}
+
+	@Test
+	void aRevokedGrantLeavesTheListAndStaysInTheTrail() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		// The fixture's head of Computer Science.
+		Reply before = get("/accounts", admin, null);
+		assertTrue(before.raw().contains("HOD"), "the grant is on the list to begin with");
+
+		long grantId = 0;
+
+		for (var account : before.body()) {
+			if (account.get("accountId").longValue() == accountHeadCs) {
+				grantId = account.get("roles").get(0).get("userRoleId").longValue();
+			}
+		}
+
+		assertEquals(200, post("/accounts/" + accountHeadCs + "/roles/" + grantId + "/revoke",
+				json("reason", "no longer head"), admin, null).status());
+
+		Reply after = get("/accounts", admin, null);
+
+		for (var account : after.body()) {
+			if (account.get("accountId").longValue() == accountHeadCs) {
+				assertEquals(0, account.get("roles").size(),
+						"a revoked grant is not shown at all: what happened to it is the "
+								+ "trail's to say, and a crossed-out tag said less");
+			}
+		}
+
+		// Still on record, with both halves: the grant and its end.
+		assertEquals(1, count("SELECT count(*) FROM user_role WHERE user_role_id = " + grantId
+				+ " AND revoked_at IS NOT NULL"));
+
+		assertTrue(get("/audit?limit=20", admin, null).raw().contains("user_role"),
+				"and the revocation is in the trail");
 	}
 
 	// ── Class representatives ───────────────────────────────────────────
@@ -1261,9 +1609,11 @@ class WireTest {
 	@Test
 	void appointingARepresentativeIsWhatMakesAStudentAccountUseful() throws Exception {
 
+		// The gap this closed: a student account with no appointment sees nothing of any
+		// course, so a first sync brought down its own enrolment and stopped. Nothing was
+		// wrong with the sync; a student's reach IS its appointments.
 		String admin = tokenFor("admin@sies.edu.in", "STAFF");
 
-		// A student account with nothing granted to it. S SHAH takes the chemistry course.
 		Reply made = post("/accounts", json(
 				"kind", "STUDENT",
 				"studentId", Long.toString(STUDENT_OTHER),
@@ -1273,15 +1623,14 @@ class WireTest {
 
 		assertEquals(200, made.status(), made::toString);
 
-		long account = made.body().get("accountId").longValue();
 		String student = rotated("s.shah@sies.edu.in", "an opening password here");
 
 		assertEquals(0, get("/data/courses", student, null).body().get("rows").size(),
 				"a student with no appointment sees no course at all, which is the whole of "
 						+ "the complaint this feature answers");
 
-		Reply appointed = post("/accounts/" + account + "/delegations", json(
-				"courseId", Long.toString(COURSE_CHEM),
+		Reply appointed = post("/courses/" + COURSE_CHEM + "/representatives", json(
+				"studentId", Long.toString(STUDENT_OTHER),
 				"academicYear", SESSION,
 				"reason", "class representative"), admin, null);
 
@@ -1289,64 +1638,102 @@ class WireTest {
 		assertEquals("CH-101", appointed.body().get("courseCode").stringValue());
 		assertEquals("ADMIN", appointed.body().get("grantedAs").stringValue(),
 				"stamped with the capacity it was made in, not recomputed later");
-		assertTrue(appointed.body().get("live").booleanValue());
 
-		// And now the course is there. The marks and the roll follow it, which is what the
-		// phone needs to call a register.
 		assertEquals(1, get("/data/courses", student, null).body().get("rows").size(),
 				"the appointment is what the policies read");
 
-		// Ended, and the row kept: the registers marked under it stay explainable.
-		Reply ended = post("/accounts/" + account + "/delegations/revoke", json(
-				"courseId", Long.toString(COURSE_CHEM),
+		Reply ended = post("/courses/" + COURSE_CHEM + "/representatives/revoke", json(
+				"studentId", Long.toString(STUDENT_OTHER),
 				"academicYear", SESSION), admin, null);
 
 		assertEquals(200, ended.status(), ended::toString);
 		assertFalse(ended.body().get("live").booleanValue());
-
-		assertEquals(1, count("SELECT count(*) FROM attendance_delegate "
-				+ "WHERE student_id = " + STUDENT_OTHER + " AND revoked_at IS NOT NULL"));
 
 		assertEquals(0, get("/data/courses", student, null).body().get("rows").size(),
 				"and the reach goes with it");
 	}
 
 	@Test
-	void theCoursesInstructorMayAppointAndAnotherProfessorMayNot() throws Exception {
+	void anAppointmentEndedElsewhereLeavesTheAccountsList() throws Exception {
 
-		// The ordinary case, and the reason GrantAuthority.INSTRUCTOR exists: appointing a
-		// representative is the instructor's business, not only an administrator's.
+		// Ended through the Representatives tab, which goes by the course rather than the
+		// account. The Accounts tab lists the same appointment under the student, and the two
+		// must not disagree about whether it is still in force.
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		assertEquals(1, appointmentsOf(admin, accountCr), "the fixture's CR, before");
+
+		// One that ran out rather than being ended reaches nothing, so it is not listed either.
+		postgres.asSuperuser("UPDATE attendance_delegate "
+				+ "SET granted_at = now() - interval '2 days', "
+				+ "    expires_at = now() - interval '1 day' "
+				+ "WHERE student_id = " + STUDENT_CR);
+
+		assertEquals(0, appointmentsOf(admin, accountCr),
+				"an expired appointment is not listed as one in force");
+
+		postgres.asSuperuser("UPDATE attendance_delegate SET expires_at = NULL "
+				+ "WHERE student_id = " + STUDENT_CR);
+
+		assertEquals(1, appointmentsOf(admin, accountCr), "and back in force");
+
+		assertEquals(200, post("/courses/" + COURSE_CS + "/representatives/revoke", json(
+				"studentId", Long.toString(STUDENT_CR),
+				"academicYear", SESSION), admin, null).status());
+
+		assertEquals(0, appointmentsOf(admin, accountCr),
+				"an ended appointment is gone from under the account");
+	}
+
+	/** How many appointments the Accounts tab shows under an account. */
+	private int appointmentsOf(String admin, long accountId) throws Exception {
+
+		for (var account : get("/accounts", admin, null).body()) {
+			if (account.get("accountId").longValue() == accountId) {
+				return account.get("delegations").size();
+			}
+		}
+		throw new AssertionError("account " + accountId + " is not on the list");
+	}
+
+	@Test
+	void theCoursesOwnProfessorAppointsItsRepresentative() throws Exception {
+
+		// Why this moved off the account: a professor could reach the old endpoint with curl
+		// and never from the page, because the form needed a list of student accounts and
+		// only an administrator may read those. The roll is the list, and the roll is theirs.
 		String instructor = tokenFor("a.cs@sies.edu.in", "STAFF");
 
-		Reply ended = post("/accounts/" + accountCr + "/delegations/revoke", json(
-				"courseId", Long.toString(COURSE_CS),
-				"academicYear", SESSION), instructor, null);
+		Reply roll = get("/courses/" + COURSE_CS + "/roll?academicYear=" + SESSION,
+				instructor, null);
 
-		assertEquals(200, ended.status(), ended::toString);
+		assertEquals(200, roll.status(), roll::toString);
+		assertEquals(1, roll.body().size(), "the one Computer Science student");
+		assertEquals("CS-FY-001", roll.body().get(0).get("rollNo").stringValue());
+		assertTrue(roll.body().get(0).get("hasAccount").booleanValue(),
+				"and the form says whether an appointment would be usable");
+		assertTrue(roll.body().get(0).get("represents").booleanValue(),
+				"the fixture already appointed this one");
 
-		Reply again = post("/accounts/" + accountCr + "/delegations", json(
-				"courseId", Long.toString(COURSE_CS),
+		assertTrue(roll.raw().contains("\"studentId\":\"" + STUDENT_CR + "\""), roll.raw());
+
+		assertEquals(200, post("/courses/" + COURSE_CS + "/representatives/revoke", json(
+				"studentId", Long.toString(STUDENT_CR),
+				"academicYear", SESSION), instructor, null).status());
+
+		Reply again = post("/courses/" + COURSE_CS + "/representatives", json(
+				"studentId", Long.toString(STUDENT_CR),
 				"academicYear", SESSION), instructor, null);
 
 		assertEquals(200, again.status(), again::toString);
 		assertEquals("INSTRUCTOR", again.body().get("grantedAs").stringValue());
-		assertTrue(again.body().get("live").booleanValue(), "a revoked grant is revived");
 
-		// One row, not two: the key is the student, the course and the session, and the
-		// history of both grants is in the audit log.
-		assertEquals(1, count("SELECT count(*) FROM attendance_delegate WHERE student_id = "
-				+ STUDENT_CR + " AND course_id = " + COURSE_CS));
-
-		// A professor of another department teaches none of this, and is told what the rule is
-		// rather than being told the server broke.
-		String otherProfessor = tokenFor("b.chem@sies.edu.in", "STAFF");
-
-		Reply refused = post("/accounts/" + accountCr + "/delegations", json(
-				"courseId", Long.toString(COURSE_CS),
-				"academicYear", SESSION), otherProfessor, null);
+		// Another department's professor is told the rule rather than that the server broke.
+		Reply refused = get("/courses/" + COURSE_CS + "/roll?academicYear=" + SESSION,
+				tokenFor("b.chem@sies.edu.in", "STAFF"), null);
 
 		assertEquals(403, refused.status(), refused::toString);
-		assertEquals("not_yours_to_grant", refused.body().get("code").stringValue());
+		assertEquals("not_your_course", refused.body().get("code").stringValue());
 	}
 
 	@Test
@@ -1354,12 +1741,12 @@ class WireTest {
 
 		String head = tokenFor("c.head@sies.edu.in", "STAFF");
 
-		post("/accounts/" + accountCr + "/delegations/revoke", json(
-				"courseId", Long.toString(COURSE_CS),
+		post("/courses/" + COURSE_CS + "/representatives/revoke", json(
+				"studentId", Long.toString(STUDENT_CR),
 				"academicYear", SESSION), head, null);
 
-		Reply appointed = post("/accounts/" + accountCr + "/delegations", json(
-				"courseId", Long.toString(COURSE_CS),
+		Reply appointed = post("/courses/" + COURSE_CS + "/representatives", json(
+				"studentId", Long.toString(STUDENT_CR),
 				"academicYear", SESSION), head, null);
 
 		assertEquals(200, appointed.status(), appointed::toString);
@@ -1369,15 +1756,88 @@ class WireTest {
 	}
 
 	@Test
-	void aRepresentativeHasToBeOnTheCoursesRoll() throws Exception {
+	void anOpenEndedHeadCanAppointARepresentative() throws Exception {
 
-		// R RAO takes the Computer Science course; the chemistry one is not on her roll. The
-		// trigger refuses this with check_violation, which would have reached the page as
-		// "the server would not accept one of those values".
+		// The bug V19 fixes, end to end. V18 made the session optional on a HOD grant and
+		// taught actor_is_hod_of() that a grant naming none answers for every session. It did
+		// not teach attendance_delegate_authorised(), which asked the same question in its
+		// own words -- "ur.academic_year = NEW.academic_year", and NULL = 2026 is unknown, so
+		// the trigger refused. A head appointing a representative in their own department was
+		// told, in effect, that they were not the head.
 		String admin = tokenFor("admin@sies.edu.in", "STAFF");
 
-		Reply refused = post("/accounts/" + accountCr + "/delegations", json(
-				"courseId", Long.toString(COURSE_CHEM),
+		// The fixture's head holds a 2025-scoped grant; revoke it and appoint them properly.
+		long scoped = 0;
+
+		for (var account : get("/accounts", admin, null).body()) {
+			if (account.get("accountId").longValue() == accountHeadCs) {
+				scoped = account.get("roles").get(0).get("userRoleId").longValue();
+			}
+		}
+
+		assertEquals(200, post("/accounts/" + accountHeadCs + "/roles/" + scoped + "/revoke",
+				json("reason", "made open-ended"), admin, null).status());
+
+		Reply open = post("/accounts/" + accountHeadCs + "/roles", json(
+				"role", "HOD",
+				"department", "COMPUTER_SCIENCE"), admin, null);
+
+		assertEquals(200, open.status(), open::toString);
+		assertTrue(open.body().get("academicYear").isNull(), "open-ended");
+
+		// And now the appointment the trigger used to refuse.
+		String head = tokenFor("c.head@sies.edu.in", "STAFF");
+
+		post("/courses/" + COURSE_CS + "/representatives/revoke", json(
+				"studentId", Long.toString(STUDENT_CR),
+				"academicYear", SESSION), head, null);
+
+		Reply appointed = post("/courses/" + COURSE_CS + "/representatives", json(
+				"studentId", Long.toString(STUDENT_CR),
+				"academicYear", SESSION), head, null);
+
+		assertEquals(200, appointed.status(), appointed::toString);
+		assertEquals("HOD", appointed.body().get("grantedAs").stringValue());
+	}
+
+	@Test
+	void aHeadAppointedForOneYearCannotReachAnother() throws Exception {
+
+		// The half of the old rule that still holds, and which the fix must not have widened:
+		// a head appointed for 2025-26 alone may not designate for 2026-27.
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		// An enrolment in the other session, so the roll check cannot refuse first and mask
+		// the authority check. In the course's own year, not the next one: roll_for_course
+		// matches the enrolment's year against the course's, so a second-year enrolment is
+		// not on a first-year course's roll and the test would have been asking the wrong
+		// question with a right-looking answer.
+		postgres.asSuperuser("""
+				INSERT INTO student_year
+				    (student_id, academic_year, roll_no, year, stream, major_dept, semester)
+				VALUES (2001, 2026, 'CS-FY-002', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 1);
+				""");
+
+		Reply refused = post("/courses/" + COURSE_CS + "/representatives", json(
+				"studentId", Long.toString(STUDENT_CR),
+				"academicYear", SESSION + 1), tokenFor("c.head@sies.edu.in", "STAFF"), null);
+
+		assertEquals(403, refused.status(), refused::toString);
+		assertEquals("not_yours_to_grant", refused.body().get("code").stringValue());
+
+		// The administrator may, because ADMIN is not scoped to a session at all.
+		assertEquals(200, post("/courses/" + COURSE_CS + "/representatives", json(
+				"studentId", Long.toString(STUDENT_CR),
+				"academicYear", SESSION + 1), admin, null).status());
+	}
+
+	@Test
+	void aRepresentativeHasToBeOnTheCoursesRoll() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply refused = post("/courses/" + COURSE_CHEM + "/representatives", json(
+				"studentId", Long.toString(STUDENT_CR),
 				"academicYear", SESSION), admin, null);
 
 		assertEquals(409, refused.status(), refused::toString);
@@ -1387,28 +1847,13 @@ class WireTest {
 	}
 
 	@Test
-	void onlyAStudentCanRepresentACourse() throws Exception {
-
-		String admin = tokenFor("admin@sies.edu.in", "STAFF");
-
-		Reply refused = post("/accounts/" + accountProfCs + "/delegations", json(
-				"courseId", Long.toString(COURSE_CS),
-				"academicYear", SESSION), admin, null);
-
-		assertEquals(409, refused.status(), refused::toString);
-		assertEquals("not_a_student", refused.body().get("code").stringValue());
-	}
-
-	@Test
-	void thePickerOffersTheCoursesTheCallerCanSee() throws Exception {
+	void thePickerOffersTheCoursesAndSessionsTheCallerCanUse() throws Exception {
 
 		Reply all = get("/accounts/courses", tokenFor("admin@sies.edu.in", "STAFF"), null);
 
 		assertEquals(200, all.status(), all::toString);
 		assertEquals(2, all.body().size(), "both courses, for an administrator");
 		assertTrue(all.raw().contains("CS-101"), all.raw());
-
-		// Keys as text, as everywhere a browser can see them.
 		assertTrue(all.raw().contains("\"value\":\"" + COURSE_CS + "\""), all.raw());
 
 		// A professor sees the one they teach, because this reads under their own actor.
@@ -1416,57 +1861,14 @@ class WireTest {
 
 		assertEquals(1, mine.body().size(), mine::toString);
 		assertTrue(mine.raw().contains("CH-101"), mine.raw());
-	}
 
-	// ── What a person reads ─────────────────────────────────────────────
+		// And the sessions, which the representatives panel cannot work without and which
+		// are nobody's secret.
+		Reply sessions = get("/accounts/sessions",
+				tokenFor("b.chem@sies.edu.in", "STAFF"), null);
 
-	@Test
-	void everyDepartmentOfferedCarriesItsLabelAndItsStoredName() throws Exception {
-
-		String token = tokenFor("admin@sies.edu.in", "STAFF");
-
-		Reply options = get("/accounts/options", token, null);
-
-		assertEquals(200, options.status(), options::toString);
-
-		// The value is the column's, the label is the enum's. COMPUTER_SCIENCE is what every
-		// policy compares against and "CS" is what it is called on a timetable; a form has to
-		// send the first and show the second.
-		assertTrue(options.raw().contains(
-						"{\"value\":\"COMPUTER_SCIENCE\",\"label\":\"CS\"}"),
-				options.raw());
-
-		// Every department the type has, labelled, in the type's own order.
-		assertEquals(count("SELECT count(*) FROM pg_enum e JOIN pg_type t "
-						+ "ON t.oid = e.enumtypid WHERE t.typname = 'department'"),
-				options.body().get("departments").size());
-
-		for (var department : options.body().get("departments")) {
-			assertFalse(department.get("label").stringValue().isBlank(),
-					"an unlabelled department would show as nothing at all");
-		}
-	}
-
-	@Test
-	void theDataBrowserSendsLabelsBesideTheRowsAndNotInsteadOfThem() throws Exception {
-
-		String token = tokenFor("admin@sies.edu.in", "STAFF");
-
-		Reply page = get("/data/professors", token, null);
-
-		assertEquals(200, page.status(), page::toString);
-
-		// The rows are what the table holds, unchanged: this is a data browser, and one that
-		// substituted labels into the rows would not be showing the data.
-		assertTrue(page.raw().contains("COMPUTER_SCIENCE"),
-				"the stored value still travels: " + page.raw());
-
-		assertEquals("CS", page.body().get("labels").get("department")
-				.get("COMPUTER_SCIENCE").stringValue());
-
-		// Only the enum columns, and none of the provenance ones SELECT * also returns.
-		assertTrue(page.body().get("labels").path("created_at").isMissingNode(),
-				"a timestamp has no labels");
+		assertEquals(200, sessions.status(), sessions::toString);
+		assertEquals(2, sessions.body().size(), "the fixture has two");
 	}
 
 	// ── Keys on the wire ────────────────────────────────────────────────

@@ -9,6 +9,8 @@ import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 import in.basulabs.siesattendance.backend.MainDatabase;
 
@@ -81,10 +83,31 @@ public final class SyncWorker extends Worker {
 			// the drain as each half succeeds; these are the two numbers that go with them.
 			DeviceIdentity.recordLastRun(context, pushed.sent(), pulled.applied());
 
-			// The refusal, or null to clear whatever was there. A sync that went through and
-			// dropped a row the server will never take is not a failed sync, and it is not a
-			// silent one either.
-			DeviceIdentity.recordSyncError(context, pushed.refusal());
+			// Kept until somebody dismisses them, rather than written over the one field
+			// that also holds "waiting for a connection". That field was rewritten on every
+			// run, so a refusal -- "removing a student is the office's to do" -- was wiped by
+			// the next sync a few seconds later and whether anybody saw it depended on which
+			// screen they happened to be looking at. Which is to say the app was silent about
+			// the one thing the server had gone to the trouble of explaining.
+			for (String refusal : pushed.refusals()) {
+				DeviceIdentity.addRefusal(context, refusal);
+			}
+
+			// What this account may do, again: an appointment made or ended on the console
+			// reaches the phone at its next sync rather than its next sign-in. After the pull,
+			// so a newly appointed CR's course has already arrived when it becomes visible.
+			// A failure here keeps the last answer rather than failing a run whose push and
+			// pull both went through.
+			try {
+				DeviceIdentity.recordMe(context,
+						client.me(DeviceIdentity.mayKeepARoll(context)));
+
+			} catch (IOException couldNotAsk) {
+				Log.i(TAG, "kept the last permissions: " + couldNotAsk.getMessage());
+			}
+
+			// And the transport line is cleared, because this run did get through.
+			DeviceIdentity.recordSyncError(context, null);
 
 			if (more) {
 				// Enqueued rather than continued: a long-running worker is one the system
@@ -133,36 +156,33 @@ public final class SyncWorker extends Worker {
 	 *                    path below clears that field and would otherwise wipe the one message
 	 *                    worth keeping
 	 */
-	private record Pushed(boolean morePending, @Nullable String refusal, int sent) {
+	private record Pushed(boolean morePending, @NonNull List<String> refusals, int sent) {
 	}
 
 	@NonNull
 	private Pushed pushEverything(@NonNull OutboxDrain drain) throws IOException {
 
-		String refusal = null;
+		List<String> refusals = new ArrayList<>();
 		int sent = 0;
 
 		for (int batch = 0; batch < MAX_BATCHES; batch++) {
 
 			OutboxDrain.Result result = drain.push();
 			sent += result.sent();
-
-			if (result.refusal() != null) {
-				refusal = result.refusal();
-			}
+			refusals.addAll(result.refusals());
 
 			if (!result.morePending()) {
-				return new Pushed(false, refusal, sent);
+				return new Pushed(false, refusals, sent);
 			}
 
 			if (result.sent() == 0 && result.dropped() == 0) {
 				// Nothing moved, nothing left the queue, and something is still pending: every
 				// intent in this batch was refused and kept. Trying the same batch again in
 				// the same run would spin.
-				return new Pushed(false, refusal, sent);
+				return new Pushed(false, refusals, sent);
 			}
 		}
-		return new Pushed(true, refusal, sent);
+		return new Pushed(true, refusals, sent);
 	}
 
 	/**

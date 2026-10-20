@@ -107,6 +107,20 @@ public final class SyncWriter {
 	private static final String FOREIGN_KEY_VIOLATION = "23503";
 
 	/**
+	 * {@code restrict_violation}, which is what {@code ON DELETE RESTRICT} raises — and it is
+	 * not {@code 23503}.
+	 * <p>
+	 * Worth a constant of its own and a note, because the two are easy to conflate and the
+	 * difference is invisible in the message: both say "violates ... foreign key constraint".
+	 * {@code NO ACTION} refuses with 23503 at the end of the statement; {@code RESTRICT}
+	 * refuses with 23001 immediately. Every foreign key in this schema is RESTRICT, so a
+	 * delete held down by a child arrives as 23001 — and a branch written for 23503 alone
+	 * never fires, which is how a refusal came back as a constraint name and was retried for
+	 * ever.
+	 */
+	private static final String RESTRICT_VIOLATION = "23001";
+
+	/**
 	 * The tables whose refusals a professor is likely to meet, and which deserve a sentence
 	 * that says what to do rather than only what went wrong.
 	 */
@@ -175,7 +189,18 @@ public final class SyncWriter {
 
 			try {
 				if (intent.op() == OutboxOp.DELETE) {
-					delete(connection, intent);
+
+					String unremovable = delete(connection, intent);
+
+					if (unremovable != null) {
+						// Not an exception: row-level security answers a DELETE nobody is
+						// allowed to make by matching no rows, not by raising. See delete().
+						connection.rollback(savepoint);
+						rejected.add(new Rejection(intent.table(), intent.key(),
+								unremovable, true));
+						continue;
+					}
+
 				} else {
 					upsert(connection, intent, stamped.contains(intent.table()));
 				}
@@ -246,7 +271,20 @@ public final class SyncWriter {
 	                                      @NonNull Intent intent, @NonNull SQLException e)
 			throws SQLException {
 
-		if (FOREIGN_KEY_VIOLATION.equals(String.valueOf(e.getSQLState()))) {
+		String state = String.valueOf(e.getSQLState());
+
+		// A delete refused by a foreign key is the opposite case from an upsert refused by
+		// one, and it was being treated as the same. An upsert whose parent is missing is
+		// worth waiting for -- the parent may be in the next batch -- so neither state is in
+		// SETTLED_STATES. A delete refused by one is a row that something still points at,
+		// and whether that will change depends entirely on what is pointing.
+		if (intent.op() == OutboxOp.DELETE
+				&& (RESTRICT_VIOLATION.equals(state)
+				|| FOREIGN_KEY_VIOLATION.equals(state))) {
+			return heldDown(connection, intent);
+		}
+
+		if (FOREIGN_KEY_VIOLATION.equals(state)) {
 
 			String unsyncable = unsyncableParent(connection, intent);
 
@@ -257,6 +295,220 @@ public final class SyncWriter {
 
 		return new Rejection(intent.table(), intent.key(), explain(e, intent.table()),
 				settled(connection, intent, e));
+	}
+
+	/**
+	 * Why that row cannot be deleted, named by what is holding it down.
+	 * <p>
+	 * A handset found this one. A head of department removed a student who was a class
+	 * representative, and got
+	 * <pre>
+	 * ERROR: update or delete on table "students" violates RESTRICT setting of foreign key
+	 *        constraint "attendance_delegate_student_id_fkey" on table "attendance_delegate"
+	 * </pre>
+	 * — every sync, for ever. Two things wrong with that. The message is a constraint name
+	 * where a sentence belongs, and the refusal was treated as transient, because 23503 is
+	 * deliberately not in {@code SETTLED_STATES}: an <em>upsert</em> whose parent is missing is
+	 * worth waiting for. A delete has the opposite shape, and the question is what is pointing
+	 * at the row.
+	 * <p>
+	 * Asked of the catalogue rather than parsed out of the message. Every foreign key that
+	 * references this table is looked up, and each one is asked whether it currently holds a
+	 * row pointing at this key — so the answer names the tables that are actually in the way
+	 * rather than the one PostgreSQL happened to notice first.
+	 * <p>
+	 * Permanence follows from <em>which</em> tables they are. A blocker in a table the device
+	 * syncs is worth waiting for: the device may be about to delete those rows too, and a
+	 * batch sends children before parents. A blocker in a table the device has never heard of
+	 * — an appointment, an account — cannot be cleared from a phone at all, so retrying is a
+	 * queue that never empties.
+	 */
+	@NonNull
+	private static Rejection heldDown(@NonNull Connection connection, @NonNull Intent intent)
+			throws SQLException {
+
+		DeviceTables.Table table = DeviceTables.of(intent.table());
+		List<String> blockers = new ArrayList<>();
+		boolean anyUnreachable = false;
+
+		for (Referencing referencing : referencesTo(connection, table.name())) {
+
+			long rows = pointingAt(connection, referencing, table, intent.key());
+
+			if (rows == 0) {
+				continue;
+			}
+
+			blockers.add(describe(referencing.table(), rows));
+
+			if (!synced(referencing.table())) {
+				anyUnreachable = true;
+			}
+		}
+
+		if (blockers.isEmpty()) {
+			// The catalogue says nothing is pointing at it, and PostgreSQL said otherwise a
+			// moment ago. Something changed under us, or a constraint this does not understand
+			// refused it; either way it is worth another try rather than a confident lie.
+			return new Rejection(intent.table(), intent.key(),
+					"the server would not remove that row, and could not say what is holding "
+							+ "it. Worth trying again.", false);
+		}
+
+		return new Rejection(intent.table(), intent.key(),
+				"that row cannot be removed while " + String.join(" and ", blockers)
+						+ (anyUnreachable
+						? ". That has to be undone on the server first; this phone cannot "
+								+ "send it."
+						: ". Those are being sent too, so this will go through once they "
+								+ "have."),
+				anyUnreachable);
+	}
+
+	/** One foreign key pointing at a table, as the catalogue describes it. */
+	private record Referencing(@NonNull String table, @NonNull List<String> columns,
+	                           @NonNull List<String> referenced) {
+	}
+
+	/**
+	 * Every foreign key that references that table.
+	 * <p>
+	 * From {@code pg_constraint}, because the alternative is a list in Java that has to be kept
+	 * in step with the schema by hand — and the last time a rule was written twice in this
+	 * project, the two copies disagreed for ten migrations.
+	 */
+	@NonNull
+	private static List<Referencing> referencesTo(@NonNull Connection connection,
+	                                              @NonNull String table) throws SQLException {
+
+		List<Referencing> references = new ArrayList<>();
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT c.conrelid::regclass::text AS referencing, "
+						+ "       (SELECT array_agg(a.attname ORDER BY k.ordinality) "
+						+ "        FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ordinality) "
+						+ "        JOIN pg_attribute a ON a.attrelid = c.conrelid "
+						+ "                           AND a.attnum = k.attnum) AS cols, "
+						+ "       (SELECT array_agg(a.attname ORDER BY k.ordinality) "
+						+ "        FROM unnest(c.confkey) WITH ORDINALITY k(attnum, ordinality) "
+						+ "        JOIN pg_attribute a ON a.attrelid = c.confrelid "
+						+ "                           AND a.attnum = k.attnum) AS refs "
+						+ "FROM pg_constraint c "
+						+ "WHERE c.confrelid = ?::regclass AND c.contype = 'f'")) {
+
+			statement.setString(1, table);
+
+			try (ResultSet results = statement.executeQuery()) {
+				while (results.next()) {
+					references.add(new Referencing(results.getString("referencing"),
+							names(results.getArray("cols")), names(results.getArray("refs"))));
+				}
+			}
+		}
+
+		return references;
+	}
+
+	/** How many rows of that foreign key point at this key. */
+	private static long pointingAt(@NonNull Connection connection,
+	                               @NonNull Referencing referencing,
+	                               @NonNull DeviceTables.Table table, @NonNull List<Long> key)
+			throws SQLException {
+
+		StringBuilder sql = new StringBuilder("SELECT count(*) FROM ")
+				.append(referencing.table()).append(" WHERE ");
+
+		List<Long> values = new ArrayList<>();
+
+		for (int at = 0; at < referencing.referenced().size(); at++) {
+
+			int position = positionOf(table, referencing.referenced().get(at));
+
+			if (position < 0 || position >= key.size()) {
+				// A foreign key naming a column that is not part of this table's primary key:
+				// it cannot be the one blocking a delete by key, so it is not asked about.
+				return 0;
+			}
+
+			sql.append(at == 0 ? "" : " AND ").append(referencing.columns().get(at))
+					.append(" = ?");
+			values.add(key.get(position));
+		}
+
+		try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+
+			for (int at = 0; at < values.size(); at++) {
+				statement.setLong(at + 1, values.get(at));
+			}
+
+			try (ResultSet results = statement.executeQuery()) {
+				return results.next() ? results.getLong(1) : 0;
+			}
+		}
+	}
+
+	/** Where that column sits in the table's primary key, or -1. */
+	private static int positionOf(@NonNull DeviceTables.Table table,
+	                              @NonNull String postgres) {
+
+		for (int at = 0; at < table.primaryKey().size(); at++) {
+			if (postgres.equals(table.column(table.primaryKey().get(at)).postgres())) {
+				return at;
+			}
+		}
+
+		return -1;
+	}
+
+	/** Whether the device holds that table at all, which decides whether waiting can help. */
+	private static boolean synced(@NonNull String table) {
+
+		for (DeviceTables.Table described : DeviceTables.inDependencyOrder()) {
+			if (described.name().equals(table)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/** What is in the way, in words a person can act on. */
+	@NonNull
+	private static String describe(@NonNull String table, long rows) {
+
+		return switch (table) {
+			case "attendance_delegate" -> rows == 1
+					? "that student is the class representative of a course"
+					: "that student is the class representative of " + rows + " courses";
+			case "app_account" -> "that student has an account on the server";
+			case "attendance" -> rows + (rows == 1 ? " mark" : " marks") + " still refer to it";
+			case "student_year" -> rows + (rows == 1 ? " enrolment" : " enrolments")
+					+ " still refer to it";
+			case "batch_student_map" -> "it is still in " + rows
+					+ (rows == 1 ? " batch" : " batches");
+			case "lectures" -> rows + (rows == 1 ? " lecture" : " lectures")
+					+ " still refer to it";
+			case "course_instructor" -> "it is still named as an instructor";
+			case "course_batch_map" -> "a batch is still attached to it";
+			default -> rows + " row" + (rows == 1 ? "" : "s") + " in " + table
+					+ " still refer to it";
+		};
+	}
+
+	@NonNull
+	private static List<String> names(@Nullable java.sql.Array array) throws SQLException {
+
+		List<String> names = new ArrayList<>();
+
+		if (array == null) {
+			return names;
+		}
+
+		for (Object name : (Object[]) array.getArray()) {
+			names.add(String.valueOf(name));
+		}
+
+		return names;
 	}
 
 	/**
@@ -575,7 +827,36 @@ public final class SyncWriter {
 		}
 	}
 
-	private static void delete(@NonNull Connection connection, @NonNull Intent intent)
+	/**
+	 * Removes a row, and says so when it could not.
+	 *
+	 * <h3>Why this is not simply a DELETE</h3>
+	 * A DELETE that no policy's {@code USING} clause admits <strong>matches no rows</strong>. It
+	 * does not raise, does not warn, and reports a row count of zero — the same answer as
+	 * deleting a row that was never there. This project already wrote that finding down about
+	 * UPDATE, and then the delete path relied on the leniency: it ran the statement, ignored
+	 * the count, and told the device the deletion had been accepted.
+	 * <p>
+	 * So a professor removing a student from the roll on their phone got a successful sync, an
+	 * emptied queue, and a server that still had the student. Silently, which is the worst
+	 * shape a sync bug can have: nothing to see in the app, nothing in the log, and two copies
+	 * of the roll that disagree until somebody reads both.
+	 * <p>
+	 * Zero rows is therefore two different answers, and which one it is depends on whether the
+	 * row is still there:
+	 * <ul>
+	 * <li><b>Gone.</b> A replayed delete, or a row the server never had. Nothing to do, and
+	 * accepted — a device that cannot tell whether its batch arrived has to be able to send it
+	 * again.</li>
+	 * <li><b>Still there.</b> The policies did not admit it. Refused, permanently: the
+	 * authority will not change by sending it again, and a queue that retries it for ever is a
+	 * queue that never empties.</li>
+	 * </ul>
+	 *
+	 * @return null when the row is gone, or the sentence to report when it is still there
+	 */
+	@Nullable
+	private static String delete(@NonNull Connection connection, @NonNull Intent intent)
 			throws SQLException {
 
 		DeviceTables.Table table = DeviceTables.of(intent.table());
@@ -588,17 +869,53 @@ public final class SyncWriter {
 					.append(" = ?");
 		}
 
+		int removed;
+
 		try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
 
 			for (int at = 0; at < intent.key().size(); at++) {
 				statement.setLong(at + 1, intent.key().get(at));
 			}
 
-			// The row may not be there, and that is not a failure: a delete the device sent
-			// twice, or a row the server never received in the first place, both end here with
-			// nothing to do.
-			statement.executeUpdate();
+			removed = statement.executeUpdate();
 		}
+
+		if (removed > 0 || !exists(connection, table, intent.key())) {
+			return null;
+		}
+
+		// exists() reads under the same actor, so a row they cannot see reads as gone. That is
+		// the right answer here rather than a worry: a device holds the rows it was sent, and
+		// a row it may no longer see is not one it can assert anything about.
+		return refusedDeletion(intent.table());
+	}
+
+	/**
+	 * What to tell somebody whose deletion the policies would not make.
+	 * <p>
+	 * Named per table, because the reason differs and the useful half of the sentence is what
+	 * to do instead. The roster tables are the office's; the rest are refused because the row
+	 * is not this actor's to touch.
+	 */
+	@NonNull
+	private static String refusedDeletion(@NonNull String table) {
+
+		return switch (table) {
+			case "students", "student_year" -> "removing a student is the office's to do, so "
+					+ "this deletion stays on this device. The student is still on the "
+					+ "server, and will come back here the next time the roll is loaded.";
+			case "professors" -> "the staff list is the office's, so removing a professor "
+					+ "here cannot be sent. They are still on the server.";
+			case "courses", "course_instructor", "course_batch_map" -> "a course is the "
+					+ "department's to withdraw, and withdrawing it is marking it "
+					+ "discontinued rather than deleting it. This deletion stays on this "
+					+ "device.";
+			case "academic_years" -> "a session is the college's, so removing one here cannot "
+					+ "be sent.";
+			default -> "the server would not remove that row: it is not this account's to "
+					+ "delete. The deletion stays on this device, and the row is still on the "
+					+ "server.";
+		};
 	}
 
 	private static boolean isKeyColumn(@NonNull DeviceTables.Table table,

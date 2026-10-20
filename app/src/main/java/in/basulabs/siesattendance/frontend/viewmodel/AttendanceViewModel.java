@@ -421,6 +421,22 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return new SyncClient(getApplication()).isConfigured();
 	}
 
+	/**
+	 * What the server would not accept, newest first, until somebody dismisses it.
+	 * <p>
+	 * Separate from {@link #lastSyncError()}, which is about the connection and is true only
+	 * until the next successful run. A refusal is about something somebody did and stays until
+	 * they have read it.
+	 */
+	@NonNull
+	public java.util.List<String> refusals() {
+		return DeviceIdentity.refusals(getApplication());
+	}
+
+	public void dismissRefusals() {
+		DeviceIdentity.clearRefusals(getApplication());
+	}
+
 	/** The last thing that went wrong while syncing, or null. */
 	@Nullable
 	public String lastSyncError() {
@@ -496,6 +512,25 @@ public class AttendanceViewModel extends AndroidViewModel {
 				// answered a question nobody asks.
 				DeviceIdentity.recordDisplayName(getApplication(), session.displayName());
 
+				// The previous account's appointments go first, whatever happens next: a
+				// phone passed from one CR to another must not show the first one's courses.
+				DeviceIdentity.recordRepresents(getApplication(), null);
+
+				// What the server will let this account change, and which courses a class
+				// representative may mark. Asked here rather than guessed from the account
+				// kind: a professor who heads a department keeps the roll and one who does not
+				// cannot, and only the server knows which. A failure leaves the roll answer
+				// alone and the appointments unknown, which shows a student no course until
+				// the next sync asks again.
+				try {
+					DeviceIdentity.recordMe(getApplication(),
+							new SyncClient(getApplication()).me(
+									DeviceIdentity.mayKeepARoll(getApplication())));
+
+				} catch (java.io.IOException couldNotAsk) {
+					// Signing in worked, so this is a flaky moment rather than a state.
+				}
+
 				// The node has to reach IdGenerator before the next key is issued, and
 				// SyncSignIn has already applied it; this only tells the user.
 				toastMessage.postValue(session.mustRotate()
@@ -565,7 +600,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * with its own copy of the rule. {@code Permissions} is the rule and says what it is not.
 	 */
 	public boolean may(@NonNull Permissions.Capability what) {
-		return Permissions.may(DeviceIdentity.accountKind(getApplication()), what);
+		return Permissions.may(DeviceIdentity.accountKind(getApplication()),
+				DeviceIdentity.mayKeepARoll(getApplication()), what);
 	}
 
 	/** Why a control is missing, for a screen that has to say something. */
@@ -1236,7 +1272,14 @@ public class AttendanceViewModel extends AndroidViewModel {
 	// ── Courses ──────────────────────────────────────────────────────────
 
 	public LiveData<List<EntityCourse>> getCourses() {
-		return repository.observeCourses();
+		return Transformations.map(repository.observeCourses(), this::visible);
+	}
+
+	/** That list as this account is shown it; see {@link Permissions#visibleCourses}. */
+	@NonNull
+	private List<EntityCourse> visible(@NonNull List<EntityCourse> courses) {
+		return Permissions.visibleCourses(DeviceIdentity.accountKind(getApplication()),
+				DeviceIdentity.represents(getApplication()), courses);
 	}
 
 	/**
@@ -1267,7 +1310,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * Anything that is about to record new work wants {@link #loadActiveCoursesSync} instead.
 	 */
 	public void loadCoursesSync(@NonNull java.util.function.Consumer<List<EntityCourse>> cb) {
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.coursesSync()));
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(visible(repository.coursesSync())));
 	}
 
 	/**
@@ -1279,7 +1322,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 */
 	public void loadActiveCoursesSync(
 			@NonNull java.util.function.Consumer<List<EntityCourse>> cb) {
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.activeCoursesSync()));
+		MainDatabase.DB_EXECUTOR.execute(() ->
+				cb.accept(visible(repository.activeCoursesSync())));
 	}
 
 	/**
@@ -1298,7 +1342,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 
-			List<EntityCourse> courses = new ArrayList<>(repository.activeCoursesSync());
+			List<EntityCourse> courses = new ArrayList<>(
+					visible(repository.activeCoursesSync()));
 
 			boolean present = false;
 			for (EntityCourse course : courses) {
@@ -1310,7 +1355,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 			if (!present) {
 				EntityCourse discontinued = repository.courseSync(mustInclude);
-				if (discontinued != null) {
+				if (discontinued != null && !visible(List.of(discontinued)).isEmpty()) {
 					courses.add(discontinued);
 					// getActiveSync orders by code; keep the appended row in that order
 					// rather than leaving it stranded at the end of the dropdown.
@@ -2331,7 +2376,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	public LiveData<Integer> countCourses() {
-		return repository.observeCourseCount();
+		return Transformations.map(getCourses(), List::size);
 	}
 
 	// ── Flexible statistics ──────────────────────────────────────────────
@@ -2478,7 +2523,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 */
 	public void loadStatsFilterOptions(@NonNull StatsOptionsCallback cb) {
 		MainDatabase.DB_EXECUTOR.execute(() -> cb.onLoaded(
-				repository.coursesSync(),
+				visible(repository.coursesSync()),
 				repository.batchesSync(),
 				repository.professorsSync()));
 	}

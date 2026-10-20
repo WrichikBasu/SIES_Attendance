@@ -3,7 +3,12 @@ package in.basulabs.siesattendance.frontend.util;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
 import in.basulabs.siesattendance.backend.AccountKind;
+import in.basulabs.siesattendance.backend.EntityCourse;
 
 /**
  * What the signed-in account may change on this phone, and the one place that decides it.
@@ -28,11 +33,22 @@ import in.basulabs.siesattendance.backend.AccountKind;
  * Everything about attendance: taking a register, looking at one, the statistics, the exports,
  * and reading the lists. Reading is deliberate — a CR marking a roll has to see who is on it.
  *
- * <h3>When the kind is not known</h3>
+ * <h3>Which courses a student sees</h3>
+ * Only the ones they are a class representative of. A phone holds whatever courses reached it —
+ * a restored backup, a professor's data on a phone handed on — and a CR shown all of them could
+ * open a register for any, mark it, and learn only at the next sync that the server refused every
+ * mark. {@link #visibleCourses} narrows every course list a screen is given to the appointments
+ * {@code /me} reported, which the app asks for at sign-in and again on every sync.
+ *
+ * <h3>When nothing is known</h3>
  * Permitted, for the same reason {@code SignInGuard} lets a build with no server through: an
- * install that signed in before this build stored the kind, and a build with no server to sign
- * in to at all, would otherwise lose the ability to do anything. The next sign-in records the
- * kind and the rule applies from then on.
+ * install that signed in before this build recorded anything, and a build with no server to sign
+ * in to at all, would otherwise lose the ability to do anything. The next sign-in records both
+ * facts and the rule applies from then on.
+ * <p>
+ * Courses are the exception. A student account with no recorded appointments is shown no course
+ * rather than every course: being shown every course is the defect that rule exists to stop, and
+ * the next sync records the appointments within minutes.
  */
 public final class Permissions {
 
@@ -53,28 +69,70 @@ public final class Permissions {
 	}
 
 	/**
-	 * Whether this kind of account may change that.
+	 * Whether this account may change that.
 	 * <p>
-	 * One rule for all three today, written as a table rather than as {@code != STUDENT} so
-	 * that the day batches or sessions join the list, or professors stop being allowed to
-	 * invent courses, is a line here and not a rewrite.
+	 * Two facts, and the second is the server's own answer rather than this app's guess.
+	 * {@code mayKeepARoll} is {@code /me}'s, from {@code actor_may_keep_a_roll()}: the office,
+	 * an administrator, or the head of a department. Before it existed this class asked only
+	 * the account kind, which let every professor edit the roll locally — and the server then
+	 * refused the push, so a professor's correction lived on one phone and nowhere else. Asking
+	 * what the server will accept is the only way the two copies cannot start to disagree.
+	 * <p>
+	 * A head is offered the screens and is still refused another department's student, row by
+	 * row, by the policies. That is not a gap this class could close: it would have to know
+	 * which department every student is in, and the enrolment that says so is exactly what a
+	 * roll is. The refusal is reported now, which is what makes offering the screen honest.
 	 *
-	 * @param who  the signed-in account's kind, or null when this install has not recorded one
-	 * @param what the thing being changed
+	 * @param who          the signed-in account's kind, or null when none was recorded
+	 * @param mayKeepARoll what {@code /me} said, or the default for an install that never
+	 *                     asked
+	 * @param what         the thing being changed
 	 */
-	public static boolean may(@Nullable AccountKind who, @NonNull Capability what) {
+	public static boolean may(@Nullable AccountKind who, boolean mayKeepARoll,
+	                          @NonNull Capability what) {
 
-		if (who == null) {
-			return true;
+		// A student holds no role that keeps a roll, so this is belt and braces -- and it is
+		// the half that does not depend on having reached the server.
+		if (who == AccountKind.STUDENT) {
+			return false;
 		}
 
-		return switch (who) {
-			case STUDENT -> switch (what) {
-				case STUDENTS, PROFESSORS, COURSES -> false;
-			};
-			// Office staff keep the roll; a professor runs their own courses. Neither is
-			// stopped here, and both are still answerable to the policies on the tables.
-			case PROFESSOR, STAFF -> true;
+		return switch (what) {
+			// The three roster screens, which are now one authority.
+			case STUDENTS, PROFESSORS, COURSES -> mayKeepARoll;
 		};
+	}
+
+	/**
+	 * The courses out of that list this account is shown.
+	 * <p>
+	 * Every course for anybody but a student. For a student, the ones they represent, in the
+	 * order they were given; none at all when no appointment has been recorded. Not by session:
+	 * an appointment is for one session, and a register for a lecture in another is still the
+	 * server's to refuse.
+	 *
+	 * @param represents the course ids {@code /me} last reported, or null when it never has
+	 */
+	@NonNull
+	public static List<EntityCourse> visibleCourses(@Nullable AccountKind who,
+	                                                @Nullable Set<Long> represents,
+	                                                @NonNull List<EntityCourse> courses) {
+
+		if (who != AccountKind.STUDENT) {
+			return courses;
+		}
+
+		List<EntityCourse> visible = new ArrayList<>();
+
+		if (represents == null) {
+			return visible;
+		}
+
+		for (EntityCourse course : courses) {
+			if (represents.contains(course.courseID)) {
+				visible.add(course);
+			}
+		}
+		return visible;
 	}
 }

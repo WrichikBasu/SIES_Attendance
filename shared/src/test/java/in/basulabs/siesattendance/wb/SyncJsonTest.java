@@ -239,4 +239,21 @@ public class SyncJsonTest {
 		assertEquals(0, SyncJson.numberIn("{}", "otherSessionsRevoked"));
 		assertEquals(0, SyncJson.numberIn("not json", "otherSessionsRevoked"));
 	}
+
+	@Test
+	public void theCoursesACrRepresentsAreReadOutOfMe() {
+
+		String me = "{\"kind\":\"STUDENT\",\"mayKeepARoll\":false,\"represents\":["
+				+ "{\"studentId\":\"2001\",\"courseId\":\"370666966312026112\","
+				+ "\"courseCode\":\"CS-101\",\"live\":true},"
+				+ "{\"studentId\":\"2001\",\"courseId\":3002,\"courseCode\":\"CS-102\"}]}";
+
+		assertEquals(List.of(370666966312026112L, 3002L), SyncJson.courseIdsIn(me, "represents"));
+
+		assertEquals("none is an answer: every appointment has ended",
+				List.of(), SyncJson.courseIdsIn("{\"represents\":[]}", "represents"));
+
+		assertNull("and saying nothing is a different one",
+				SyncJson.courseIdsIn("{\"mayKeepARoll\":true}", "represents"));
+	}
 }

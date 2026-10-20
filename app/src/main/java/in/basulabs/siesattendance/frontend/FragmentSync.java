@@ -51,7 +51,9 @@ public class FragmentSync extends Fragment {
 
 	private TextView tvState, tvUp, tvDown, tvError, tvMustChange;
 
-	private View groupSignedIn, groupSyncing;
+	private View groupSignedIn, groupSyncing, cardRefusals;
+
+	private TextView tvRefusalsTitle, tvRefusals;
 
 	@Nullable
 	@Override
@@ -71,6 +73,14 @@ public class FragmentSync extends Fragment {
 		tvUp = view.findViewById(R.id.tvSyncUp);
 		tvDown = view.findViewById(R.id.tvSyncDown);
 		groupSyncing = view.findViewById(R.id.groupSyncing);
+		cardRefusals = view.findViewById(R.id.cardRefusals);
+		tvRefusalsTitle = view.findViewById(R.id.tvRefusalsTitle);
+		tvRefusals = view.findViewById(R.id.tvRefusals);
+
+		view.<MaterialButton>findViewById(R.id.btnDismissRefusals).setOnClickListener(v -> {
+			viewModel.dismissRefusals();
+			refresh();
+		});
 		tvError = view.findViewById(R.id.tvSyncError);
 		tvMustChange = view.findViewById(R.id.tvMustChangePassword);
 		groupSignedIn = view.findViewById(R.id.groupSignedIn);
@@ -201,6 +211,34 @@ public class FragmentSync extends Fragment {
 
 		tvMustChange.setVisibility(signedIn && viewModel.passwordChangeRequired()
 				? View.VISIBLE : View.GONE);
+
+		showRefusals();
+	}
+
+	/**
+	 * What the server would not accept, until somebody dismisses it.
+	 * <p>
+	 * These used to share one preference with "waiting for a connection", which every sync
+	 * rewrote — so a refusal was wiped by the next run a few seconds later, and whether
+	 * anybody ever read the sentence the server had gone to the trouble of writing depended on
+	 * which screen they happened to be on. They wait here now.
+	 */
+	private void showRefusals() {
+
+		java.util.List<String> refusals = viewModel.refusals();
+
+		cardRefusals.setVisibility(refusals.isEmpty() ? View.GONE : View.VISIBLE);
+
+		if (refusals.isEmpty()) {
+			return;
+		}
+
+		tvRefusalsTitle.setText(getResources().getQuantityString(
+				R.plurals.sync_refused_title, refusals.size(), refusals.size()));
+
+		// Newest first, each on its own line. Not a list view: there are at most twenty and
+		// the sentences are what matter, not the chrome round them.
+		tvRefusals.setText(String.join("\n\n", refusals));
 	}
 
 	/**

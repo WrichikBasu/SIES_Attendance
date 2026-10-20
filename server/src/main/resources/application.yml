@@ -9,6 +9,23 @@ spring:
   application:
     name: sies-attendance
 
+  # The pages under static/ are revalidated on every load.
+  #
+  # Spring sends Last-Modified and no Cache-Control for a classpath resource, and a browser
+  # given a Last-Modified with no freshness information applies a heuristic -- a tenth of the
+  # age of the file -- and may reuse the page without asking. For a console that changes while
+  # somebody is using it, that is the difference between "the option is not there" and "the
+  # option is not there yet": the page in the tab is older than the page on the server and
+  # nothing says so. A 304 costs a round trip of headers and makes the question impossible.
+  #
+  # no-cache, not no-store: the browser may keep the copy, it just has to ask whether it is
+  # still current.
+  web:
+    resources:
+      cache:
+        cachecontrol:
+          no-cache: true
+
   datasource:
     # 55432 rather than 5432 so a local development database cannot collide with
     # a PostgreSQL already running on the machine. See server/README.md.

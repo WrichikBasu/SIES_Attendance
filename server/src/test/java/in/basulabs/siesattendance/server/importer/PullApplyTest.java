@@ -241,6 +241,55 @@ class PullApplyTest {
 	}
 
 	@Test
+	void aMarkForAStudentThisDeviceDeletedIsFoundBeforeItIsWritten() throws Exception {
+
+		// A handset found this one: a student removed on the phone while its first snapshot
+		// was still coming down, and the server's marks for that student arriving afterwards.
+		// Written blind, the mark fails the foreign key, the page rolls back, and the
+		// watermark never moves again. OutboxDrain asks rowExists about each parent first.
+		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
+			if (!table.name().equals("attendance")) {
+				applyRow(table, DeviceDerived.fill(table, serverShapedRow(table), ZONE));
+			}
+		}
+
+		DeviceTables.Table students = DeviceTables.of("students");
+		DeviceTables.Table attendance = DeviceTables.of("attendance");
+
+		assertEquals(1, rows(DeviceSql.rowExists(students), STUDENT), "the student is here");
+
+		execute("DELETE FROM batch_student_map");
+		execute("DELETE FROM student_year");
+		execute("DELETE FROM students");
+
+		assertEquals(0, rows(DeviceSql.rowExists(students), STUDENT),
+				"and now is not, which is what the drain has to notice");
+		assertEquals(1, rows(DeviceSql.rowExists(DeviceTables.of("lectures")), LECTURE),
+				"while the mark's other parent still is");
+
+		assertThrows(SQLException.class, () -> applyRow(attendance,
+						DeviceDerived.fill(attendance, serverShapedRow(attendance), ZONE)),
+				"written anyway, the mark is refused -- which is the failure being avoided");
+	}
+
+	@Test
+	void everyParentIsKeyedOnTheColumnThatPointsAtIt() throws Exception {
+
+		// OutboxDrain.missingParent looks a parent up by one value, under the child's column
+		// name. That holds only while every parent is keyed on a single column of the same name.
+		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
+			for (Map.Entry<String, String> reference : table.foreignKeys().entrySet()) {
+
+				DeviceTables.Table parent = DeviceTables.of(reference.getValue());
+
+				assertEquals(List.of(reference.getKey()), parent.primaryKey(),
+						table.name() + "." + reference.getKey() + " points at " + parent.name()
+								+ ", which is keyed on something else");
+			}
+		}
+	}
+
+	@Test
 	void theNodeAPhonePickedForItselfIsRecoverableFromItsOwnKeys() throws Exception {
 
 		// The last resort for an install made before that node was kept in preferences: once a
@@ -404,6 +453,23 @@ class PullApplyTest {
 				statement.setObject(at + 1, row.get(columns.get(at).room()));
 			}
 			statement.executeUpdate();
+		}
+	}
+
+	/** How many rows a query with one key bound returns. */
+	private long rows(String sql, long key) throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(sql)) {
+
+			statement.setLong(1, key);
+
+			try (ResultSet results = statement.executeQuery()) {
+				long rows = 0;
+				while (results.next()) {
+					rows++;
+				}
+				return rows;
+			}
 		}
 	}
 

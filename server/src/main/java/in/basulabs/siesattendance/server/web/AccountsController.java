@@ -200,9 +200,18 @@ public final class AccountsController {
 				List<GrantBody> roles = new ArrayList<>();
 
 				for (Roles.Grant grant : Roles.of(connection, account.accountId())) {
-					roles.add(new GrantBody(grant.userRoleId(), grant.role(),
-							grant.department(), grant.academicYear(), grant.live(),
-							grant.grantedAt().toInstant().toString()));
+
+					// Live ones only. A revoked grant used to appear struck through, which
+					// reads as "this account nearly has this role" and makes a column of
+					// ghosts out of an account that has been through a few terms. What
+					// happened to it is a question for the audit trail, which keeps the grant,
+					// the revocation, who did each and when -- far more than a crossed-out tag
+					// could say. Roles.of still returns both, because that is the history.
+					if (grant.live()) {
+						roles.add(new GrantBody(grant.userRoleId(), grant.role(),
+								grant.department(), grant.academicYear(), true,
+								grant.grantedAt().toInstant().toString()));
+					}
 				}
 
 				accounts.add(new AccountBody(account.accountId(), account.kind().name(),
@@ -219,7 +228,8 @@ public final class AccountsController {
 						// account holds has to show them beside its roles.
 						account.studentId() == null
 								? List.of()
-								: Delegates.forStudent(connection, account.studentId())));
+								: live(Delegates.forStudent(connection,
+										account.studentId()))));
 			}
 
 			return accounts;
@@ -537,6 +547,38 @@ public final class AccountsController {
 	}
 
 	/**
+	 * The academic years on file, newest first.
+	 * <p>
+	 * Not an administrator's endpoint, unlike the rest of this controller: a session is a pair
+	 * of dates and a number, the representatives panel cannot offer an appointment without
+	 * one, and the professor using that panel is not an administrator. Nothing here says who
+	 * teaches what or who is enrolled.
+	 */
+	@GetMapping("/sessions")
+	@NonNull
+	public List<Integer> sessions(@NonNull HttpServletRequest http) throws SQLException {
+
+		RequestActor actor = RequestActor.of(http);
+
+		return database.inTransaction(actor, connection -> {
+
+			List<Integer> sessions = new ArrayList<>();
+
+			try (Statement statement = connection.createStatement();
+			     ResultSet results = statement.executeQuery(
+					     "SELECT academic_year FROM academic_years "
+							     + "ORDER BY academic_year DESC")) {
+
+				while (results.next()) {
+					sessions.add(results.getInt(1));
+				}
+			}
+
+			return sessions;
+		});
+	}
+
+	/**
 	 * The courses a delegation can name, for the form's picker.
 	 * <p>
 	 * Read under the caller's own actor, so the list is what the policies let them see: every
@@ -573,173 +615,14 @@ public final class AccountsController {
 		});
 	}
 
-	/**
-	 * Appoints the student behind this account as a course's class representative.
-	 *
-	 * <h3>Not administrators only</h3>
-	 * The one endpoint here that does not ask {@code refuseUnlessAdmin}. Appointing a
-	 * representative belongs to the course's instructor as much as to anybody — it is the
-	 * ordinary case, and {@code GrantAuthority.INSTRUCTOR} exists to record it — so this
-	 * honours what the policies say rather than narrowing it. {@code Delegates.capacityFor}
-	 * asks the database in which capacity the caller is acting, and the capacity is stamped on
-	 * the grant.
-	 *
-	 * <h3>Why the two refusals are checked here</h3>
-	 * {@code attendance_delegate_authorised()} refuses both of them, with
-	 * {@code check_violation}, which would reach the caller as "the server would not accept one
-	 * of those values". These two sentences are the whole content of the error: who may appoint
-	 * a representative, and that a representative has to be on the roll.
+	/*
+	 * Appointing a class representative used to live here, as POST
+	 * /accounts/{id}/delegations. It moved to RepresentativesController, keyed by the course
+	 * rather than by the account: the policies let a course's instructor appoint one, and the
+	 * form for it needed a list of student accounts, which only an administrator may read --
+	 * so the endpoint a professor was meant to use could be reached with curl and never from
+	 * the page. The roll is the list, and the roll is theirs.
 	 */
-	@PostMapping("/{accountId}/delegations")
-	@NonNull
-	public Delegates.Delegation delegate(@PathVariable long accountId,
-	                                     @RequestBody @NonNull NewDelegation body,
-	                                     @NonNull HttpServletRequest http) throws SQLException {
-
-		RequestActor actor = RequestActor.of(http);
-
-		Long courseId = key(body.courseId(), "courseId");
-
-		if (courseId == null) {
-			throw new ApiException(400, "incomplete", "courseId is needed.");
-		}
-
-		if (body.academicYear() == null) {
-			throw new ApiException(400, "incomplete",
-					"academicYear is needed: a representative of a course in one session is "
-							+ "not one in the next.");
-		}
-
-		int academicYear = body.academicYear();
-
-		return database.inTransaction(actor, connection -> {
-
-			// Before the account is looked at, so a professor who may not appoint anybody for
-			// this course learns nothing about which accounts exist.
-			GrantAuthority capacity = Delegates.capacityFor(connection, courseId, academicYear);
-
-			if (capacity == null) {
-				throw new ApiException(403, "not_yours_to_grant",
-						"A class representative is appointed by the course's instructor, by "
-								+ "the head of the department that offers it, or by an "
-								+ "administrator.");
-			}
-
-			Long studentId = studentBehind(connection, accountId);
-
-			if (!Delegates.onTheRoll(connection, studentId, courseId, academicYear)) {
-				throw new ApiException(409, "not_on_the_roll",
-						"That student is not on this course's roll for " + academicYear
-								+ ", so they cannot be its class representative. The roll "
-								+ "comes from their enrolment, which is the office's.");
-			}
-
-			Delegates.grant(connection, studentId, courseId, academicYear, capacity,
-					actor.session().accountId(), body.reason());
-
-			for (Delegates.Delegation delegation
-					: Delegates.forStudent(connection, studentId)) {
-
-				if (delegation.courseId().equals(Long.toString(courseId))
-						&& delegation.academicYear() == academicYear) {
-					return delegation;
-				}
-			}
-
-			// Unreachable: the row was just written in this transaction. Said out loud rather
-			// than returning something invented.
-			throw new IllegalStateException("the grant just written cannot be read back");
-		});
-	}
-
-	/** Ends a delegation. The row is kept, as every grant in this schema is. */
-	@PostMapping("/{accountId}/delegations/revoke")
-	@NonNull
-	public Delegates.Delegation undelegate(@PathVariable long accountId,
-	                                       @RequestBody @NonNull NewDelegation body,
-	                                       @NonNull HttpServletRequest http)
-			throws SQLException {
-
-		RequestActor actor = RequestActor.of(http);
-
-		Long courseId = key(body.courseId(), "courseId");
-
-		if (courseId == null || body.academicYear() == null) {
-			throw new ApiException(400, "incomplete",
-					"courseId and academicYear are both needed to say which grant.");
-		}
-
-		int academicYear = body.academicYear();
-
-		return database.inTransaction(actor, connection -> {
-
-			if (Delegates.capacityFor(connection, courseId, academicYear) == null) {
-				throw new ApiException(403, "not_yours_to_grant",
-						"That course's representatives are the instructor's to appoint and to "
-								+ "end, along with the department's head and an "
-								+ "administrator.");
-			}
-
-			Long studentId = studentBehind(connection, accountId);
-
-			if (!Delegates.revoke(connection, studentId, courseId, academicYear,
-					actor.session().accountId(), body.reason())) {
-
-				throw new ApiException(404, "no_live_grant",
-						"That grant is not there, or was ended already.");
-			}
-
-			for (Delegates.Delegation delegation
-					: Delegates.forStudent(connection, studentId)) {
-
-				if (delegation.courseId().equals(Long.toString(courseId))
-						&& delegation.academicYear() == academicYear) {
-					return delegation;
-				}
-			}
-
-			throw new IllegalStateException("the grant just revoked cannot be read back");
-		});
-	}
-
-	/**
-	 * The student an account is for, refusing clearly when it is not for one.
-	 * <p>
-	 * A delegation is held by a student, not by an account: it is {@code students.student_id}
-	 * that {@code attendance_delegate} references, and the account is only how that person
-	 * signs in. So an account with no student behind it cannot hold one, and saying which is
-	 * more use than a foreign key violation.
-	 */
-	private static long studentBehind(@NonNull Connection connection, long accountId)
-			throws SQLException {
-
-		try (PreparedStatement statement = connection.prepareStatement(
-				"SELECT student_id, kind::text AS kind FROM app_account WHERE account_id = ?")) {
-
-			statement.setLong(1, accountId);
-
-			try (ResultSet results = statement.executeQuery()) {
-
-				if (!results.next()) {
-					throw new ApiException(404, "no_account",
-							"There is no account " + accountId);
-				}
-
-				long studentId = results.getLong("student_id");
-
-				if (results.wasNull()) {
-					throw new ApiException(409, "not_a_student",
-							"Account " + accountId + " is a " + results.getString("kind")
-									+ " account. A class representative is a student: the "
-									+ "grant lets them mark a register that is not their own "
-									+ "to keep, and it is their enrolment that says they take "
-									+ "the course.");
-				}
-
-				return studentId;
-			}
-		}
-	}
 
 	/**
 	 * Writes a professors row and returns its key.
@@ -828,13 +711,17 @@ public final class AccountsController {
 
 		boolean head = role.equals("HOD");
 
-		if (head && (department == null || academicYear == null)) {
+		if (head && department == null) {
 			throw new ApiException(400, "incomplete_grant",
-					"A head of department is appointed for a department and a session, so "
-							+ "both are needed. A head for 2025-26 should not still be one "
-							+ "in 2027-28.");
+					"A head of department is appointed for a department, so that is needed. "
+							+ "A session is optional: without one the appointment runs until "
+							+ "it is revoked, which is what an appointment normally does.");
 		}
 
+		// A session only ever belongs to a head, and now only when somebody is standing in
+		// for one year. See V18: requiring it meant re-granting the same person the same
+		// department every June, and a grant nobody re-made was a head who silently stopped
+		// being one.
 		if (!head && (department != null || academicYear != null)) {
 			throw new ApiException(400, "scoped_grant",
 					role + " is college-wide and holds until it is revoked, so it takes "
@@ -891,6 +778,22 @@ public final class AccountsController {
 			throw new ApiException(400, "incomplete", field + " is needed.");
 		}
 		return value.trim();
+	}
+
+	/** The delegations still in force. The ended ones are in the audit trail. */
+	@NonNull
+	private static List<Delegates.Delegation> live(
+			@NonNull List<Delegates.Delegation> delegations) {
+
+		List<Delegates.Delegation> kept = new ArrayList<>();
+
+		for (Delegates.Delegation delegation : delegations) {
+			if (delegation.live()) {
+				kept.add(delegation);
+			}
+		}
+
+		return kept;
 	}
 
 	/** A key as the wire carries it — digits in a string — or null when it is absent. */

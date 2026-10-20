@@ -198,7 +198,11 @@ public final class Delegates {
 		try (PreparedStatement statement = connection.prepareStatement(
 				"SELECT d.student_id, d.course_id, c.course_code, c.course_topic, "
 						+ "       d.academic_year, d.granted_as::text AS granted_as, "
-						+ "       d.granted_at, d.revoked_at, d.reason "
+						+ "       d.granted_at, d.reason, "
+						// Ended or run out, the same as actor_represents() decides it: an
+						// expired appointment reaches nothing, so it is not one to list.
+						+ "       (d.revoked_at IS NULL "
+						+ "        AND (d.expires_at IS NULL OR d.expires_at > now())) AS live "
 						+ "FROM attendance_delegate d "
 						+ "JOIN courses c ON c.course_id = d.course_id "
 						+ "WHERE d.student_id = ? "
@@ -219,7 +223,7 @@ public final class Delegates {
 							results.getString("course_topic"),
 							results.getInt("academic_year"),
 							results.getString("granted_as"),
-							results.getTimestamp("revoked_at") == null,
+							results.getBoolean("live"),
 							granted.toInstant().toString(),
 							results.getString("reason")));
 				}

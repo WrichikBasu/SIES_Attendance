@@ -1,5 +1,6 @@
 package in.basulabs.siesattendance.wb;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -13,9 +14,16 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import in.basulabs.siesattendance.backend.AccountKind;
+import in.basulabs.siesattendance.backend.CourseType;
+import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.EntityCourse;
+import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.frontend.util.Permissions;
 
 /**
@@ -43,34 +51,113 @@ public class PermissionsTest {
 	public void aStudentChangesNoneOfTheCollegesRecords() {
 
 		for (Permissions.Capability what : Permissions.Capability.values()) {
+
+			// Both ways: a student holds no role that keeps a roll, so the kind decides it
+			// without needing the server's answer -- which is the half that still works when
+			// the server has never been reached.
 			assertFalse("a class representative must not be offered " + what,
-					Permissions.may(AccountKind.STUDENT, what));
+					Permissions.may(AccountKind.STUDENT, false, what));
+
+			assertFalse("not even if something said they may keep a roll: " + what,
+					Permissions.may(AccountKind.STUDENT, true, what));
 		}
 	}
 
 	@Test
-	public void aProfessorAndTheOfficeAreNotStoppedHere() {
+	public void aStudentSeesOnlyTheCoursesTheyRepresent() {
+
+		List<EntityCourse> all = List.of(course(3001, "CS-101"), course(3002, "CS-102"),
+				course(3003, "CS-103"));
+
+		assertEquals(List.of("CS-101", "CS-103"), codes(Permissions.visibleCourses(
+						AccountKind.STUDENT, Set.of(3001L, 3003L), all)));
+
+		assertEquals("every appointment ended is no course at all, not every course",
+				List.of(), codes(Permissions.visibleCourses(AccountKind.STUDENT, Set.of(), all)));
+
+		assertEquals("and so is a student whose appointments were never recorded",
+				List.of(), codes(Permissions.visibleCourses(AccountKind.STUDENT, null, all)));
+
+		assertEquals("a professor is not narrowed by appointments, which are a student's",
+				3, Permissions.visibleCourses(AccountKind.PROFESSOR, Set.of(3001L), all).size());
+
+		assertEquals("nor is an install that never recorded who signed in",
+				3, Permissions.visibleCourses(null, null, all).size());
+	}
+
+	@Test
+	public void everyCourseListTheScreensAreGivenIsNarrowed() throws IOException {
+
+		// The same sweep as the editors': the rule is one function and the hard part is a
+		// seventh course list that forgets to ask it. Every read of the course lists in the
+		// view model has to pass through visible().
+		String source = withoutComments(read(
+				"app/src/main/java/in/basulabs/siesattendance/frontend/viewmodel/"
+						+ "AttendanceViewModel.java"));
+
+		Matcher read = Pattern.compile(
+				"repository\\.(coursesSync|activeCoursesSync|observeCourses|observeCourseCount)"
+						+ "\\(\\)").matcher(source);
+
+		int seen = 0;
+
+		while (read.find()) {
+			seen++;
+
+			String before = source.substring(Math.max(0, read.start() - 40), read.start());
+
+			assertTrue("AttendanceViewModel reads " + read.group(1) + " without narrowing it "
+							+ "to the courses this account is shown: ..." + before + read.group(),
+					before.contains("visible(") || before.contains("Transformations.map("));
+		}
+
+		assertTrue("the sweep found nothing, so it is no longer looking at the right file",
+				seen >= 4);
+	}
+
+	private static EntityCourse course(long id, String code) {
+
+		EntityCourse course = new EntityCourse(code, "Topic", in.basulabs.siesattendance.backend
+				.Stream.BSc_unaided, Department.COMPUTER_SCIENCE, Year.FY, 1, CourseType.MAJOR,
+				null);
+		course.courseID = id;
+		return course;
+	}
+
+	private static List<String> codes(List<EntityCourse> courses) {
+		return courses.stream().map(course -> course.courseCode).toList();
+	}
+
+	@Test
+	public void whoKeepsTheRollIsTheServersAnswer() {
 
 		for (Permissions.Capability what : Permissions.Capability.values()) {
 
-			assertTrue(what + " is a professor's to change as far as this app is concerned; "
-							+ "the policies on the table are what refuse one that is not theirs",
-					Permissions.may(AccountKind.PROFESSOR, what));
+			// actor_may_keep_a_roll(): the office, an administrator, or the head of a
+			// department. A professor who heads one is offered the screens; one who does not
+			// is not, because the server would refuse the push and the correction would live
+			// on one phone and nowhere else.
+			assertTrue("a head of department keeps their department's roll: " + what,
+					Permissions.may(AccountKind.PROFESSOR, true, what));
+
+			assertFalse("a professor who heads nothing does not: " + what,
+					Permissions.may(AccountKind.PROFESSOR, false, what));
 
 			assertTrue("the office keeps the roll: " + what,
-					Permissions.may(AccountKind.STAFF, what));
+					Permissions.may(AccountKind.STAFF, true, what));
 		}
 	}
 
 	@Test
-	public void anUnknownKindIsPermitted() {
+	public void anInstallThatHasNeverAskedIsPermitted() {
 
-		// An install that signed in before the kind was recorded, and a build with no server
-		// to sign in to at all. Refusing would leave an app that can do nothing, which is the
-		// same trade SignInGuard makes for the same reason.
+		// An install that signed in before any of this was recorded, and a build with no
+		// server to sign in to at all. Refusing would leave an app that can do nothing, which
+		// is the same trade SignInGuard makes for the same reason -- and DeviceIdentity's
+		// default for the flag is true for exactly this case.
 		for (Permissions.Capability what : Permissions.Capability.values()) {
-			assertTrue("an unknown kind must not lock the app: " + what,
-					Permissions.may(null, what));
+			assertTrue("an unknown account must not lock the app: " + what,
+					Permissions.may(null, true, what));
 		}
 	}
 

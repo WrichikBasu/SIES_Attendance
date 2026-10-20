@@ -249,6 +249,65 @@ public final class SyncJson {
 	}
 
 	/**
+	 * A true/false field out of a flat answer, or {@code fallback} when it does not carry one.
+	 * <p>
+	 * {@code fallback} rather than false, because the two answers mean different things to the
+	 * caller: a server that said nothing is not a server that said no. The phone asks
+	 * {@code /me} whether to offer the roster screens, and an older server with no opinion
+	 * should leave the app as it was rather than quietly taking screens away.
+	 */
+	public static boolean flagIn(@NonNull String body, @NonNull String field,
+	                             boolean fallback) {
+
+		try {
+			Object value = asObject(new Reader(body).readValue(), "the response").get(field);
+			return value instanceof Boolean flag ? flag : fallback;
+
+		} catch (RuntimeException notJson) {
+			return fallback;
+		}
+	}
+
+	/**
+	 * The {@code courseId} of every object in a list field, or null when the answer has no
+	 * such list.
+	 * <p>
+	 * For {@code /me}'s {@code represents}: the courses a class representative may mark. Null
+	 * and empty are different answers and the caller needs both. Empty is the server saying
+	 * this account represents nothing; null is a server that said nothing at all, an older one,
+	 * and whatever the phone already knew should stand. A key travels as digits in a string,
+	 * like every key on this wire, and a number is read too.
+	 */
+	@Nullable
+	public static List<Long> courseIdsIn(@NonNull String body, @NonNull String field) {
+
+		try {
+			Object value = asObject(new Reader(body).readValue(), "the response").get(field);
+
+			if (!(value instanceof List<?> items)) {
+				return null;
+			}
+
+			List<Long> ids = new ArrayList<>();
+
+			for (Object item : items) {
+
+				Object id = asObject(item, field).get("courseId");
+
+				if (id instanceof Number number) {
+					ids.add(number.longValue());
+				} else if (id instanceof String digits) {
+					ids.add(Long.parseLong(digits.trim()));
+				}
+			}
+			return ids;
+
+		} catch (RuntimeException notJson) {
+			return null;
+		}
+	}
+
+	/**
 	 * A whole number out of a flat answer, or zero when it does not carry one.
 	 * <p>
 	 * Zero rather than an exception or a null, because the two answers read this way — how many

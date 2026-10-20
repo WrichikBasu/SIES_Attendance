@@ -779,6 +779,17 @@
     <string name="sync_down_nothing_new">Nothing new from the server %1$s</string>
     <string name="sync_running">Syncing now\u2026</string>
 
+    <!--
+        What the server would not accept, kept until somebody says they have read it. The
+        plural counts them because "3 things could not be sent" is the part that decides
+        whether to read on.
+    -->
+    <plurals name="sync_refused_title">
+        <item quantity="one">The server would not accept one change</item>
+        <item quantity="other">The server would not accept %d changes</item>
+    </plurals>
+    <string name="action_dismiss">Dismiss</string>
+
     <!-- The buckets SyncAge sorts a moment into. -->
     <string name="age_moments">a moment ago</string>
     <plurals name="age_minutes">

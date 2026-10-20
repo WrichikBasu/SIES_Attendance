@@ -9,6 +9,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -49,12 +50,16 @@ public class MigrateCommand implements ApplicationRunner {
 
 		List<String> applied = new ArrayList<>();
 
+		// This run's, and exactly this run's. The first draft said "within the last ten
+		// minutes", which reported a migration applied four minutes earlier by a previous
+		// command as though this one had done it -- "Applied 2" for one migration, which is
+		// the kind of small lie that makes somebody mistrust the whole report. The process's
+		// own start instant is the boundary, and the JVM knows it.
+		Instant began = ProcessHandle.current().info().startInstant().orElse(Instant.now());
+
 		for (MigrationInfo migration : flyway.info().applied()) {
-			// Only this run's. Flyway stamps every row it writes with the moment it wrote it,
-			// and the ones from previous deployments are not news.
 			if (migration.getInstalledOn() != null
-					&& migration.getInstalledOn().toInstant()
-							.isAfter(java.time.Instant.now().minusSeconds(600))) {
+					&& !migration.getInstalledOn().toInstant().isBefore(began)) {
 				applied.add(migration.getVersion() + " " + migration.getDescription());
 			}
 		}

@@ -705,6 +705,91 @@ class RowLevelSecurityTest {
 		}
 	}
 
+	/*
+	 * A device stores a row only when the rows it points at are there, so whatever an actor can
+	 * read has to arrive with everything it points at. Until V21 a mark could arrive without its
+	 * student: the register said who was in the room, the roll said who should have been, and
+	 * the policies on attendance and students asked those two different questions.
+	 */
+
+	@Test
+	void everyoneWhoReadsAMarkReadsTheStudentItIsFor() throws Exception {
+
+		// A Chemistry major marked on a Computer Science lecture: on the register, not on the
+		// roll. A student dropped from the roll after being marked looks exactly like this.
+		postgres.asSuperuser("INSERT INTO attendance (lecture_id, student_id, present) VALUES ("
+				+ LECTURE_CS + ", 2002, true)");
+
+		String marked = "SELECT count(*) FROM students WHERE student_id = 2002";
+
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+			assertEquals(1, count(as, marked), "the CR reads the register, so the student on it");
+		}
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals(1, count(as, marked), "and so does the professor who teaches it");
+		}
+
+		try (Connection as = postgres.actingAs(accountHeadCs, PROF_HEAD_CS, null)) {
+			assertEquals(1, count(as, marked), "and the head of the department offering it");
+		}
+
+		try (Connection as = postgres.actingAs(accountProfChem, PROF_CHEM, null)) {
+			assertEquals(0, count(as, "SELECT count(*) FROM students WHERE student_id = "
+							+ STUDENT_CR),
+					"a mark is no way into somebody else's register: CS-101's marks do not "
+							+ "show the Chemistry professor its students");
+		}
+	}
+
+	@Test
+	void nobodyReadsARowWithoutTheRowsItPointsAt() throws Exception {
+
+		postgres.asSuperuser("INSERT INTO attendance (lecture_id, student_id, present) VALUES ("
+				+ LECTURE_CS + ", 2002, true)");
+
+		// Every foreign key a device has, as DeviceTables lists them: child, column, parent.
+		String[][] references = {
+				{"student_year", "student_id", "students", "student_id"},
+				{"courses", "prof_id", "professors", "prof_id"},
+				{"batch_student_map", "batch_id", "batch_desc", "batch_id"},
+				{"batch_student_map", "student_id", "students", "student_id"},
+				{"course_batch_map", "course_id", "courses", "course_id"},
+				{"course_batch_map", "batch_id", "batch_desc", "batch_id"},
+				{"course_instructor", "course_id", "courses", "course_id"},
+				{"course_instructor", "prof_id", "professors", "prof_id"},
+				{"lectures", "course_id", "courses", "course_id"},
+				{"lectures", "batch_id", "batch_desc", "batch_id"},
+				{"attendance", "lecture_id", "lectures", "lecture_id"},
+				{"attendance", "student_id", "students", "student_id"},
+		};
+
+		Object[][] actors = {
+				{"the CS professor", accountProfCs, PROF_CS, null},
+				{"the Chemistry professor", accountProfChem, PROF_CHEM, null},
+				{"the CS head", accountHeadCs, PROF_HEAD_CS, null},
+				{"the CR", accountCr, null, STUDENT_CR},
+				{"the office", accountOffice, null, null},
+				{"the auditor", accountAuditor, null, null},
+				{"the admin", accountAdmin, null, null},
+		};
+
+		for (Object[] actor : actors) {
+			try (Connection as = postgres.actingAs((Long) actor[1], (Long) actor[2],
+					(Long) actor[3])) {
+
+				for (String[] reference : references) {
+					assertEquals(0, count(as, "SELECT count(*) FROM " + reference[0] + " c "
+									+ "WHERE c." + reference[1] + " IS NOT NULL AND NOT EXISTS ("
+									+ "SELECT 1 FROM " + reference[2] + " p WHERE p." + reference[3]
+									+ " = c." + reference[1] + ")"),
+							actor[0] + " reads " + reference[0] + " rows whose " + reference[1]
+									+ " they cannot read, and a device cannot store those");
+				}
+			}
+		}
+	}
+
 	// ── Fixture helpers ──────────────────────────────────────────────────
 
 	/** Creates an account as the superuser and returns the id the sequence gave it. */
