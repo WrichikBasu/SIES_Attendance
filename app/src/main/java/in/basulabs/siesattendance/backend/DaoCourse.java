@@ -139,6 +139,24 @@ public abstract class DaoCourse {
 	@Query("DELETE FROM course_batch_map WHERE courseID = :courseID AND batchID = :batchID")
 	public abstract void unlinkBatch(long courseID, long batchID);
 
+	@Query("DELETE FROM course_batch_map WHERE courseID = :courseID "
+			+ "AND batchID NOT IN (:batchIDs)")
+	abstract void unlinkBatchesExcept(long courseID, List<Long> batchIDs);
+
+	/**
+	 * Makes these the batches this course is for. Diffed, as {@code DaoBatch.setCourseLinks} is
+	 * from the other side and for the same reason: a link that stays sends nothing.
+	 */
+	@Transaction
+	public void setBatchLinks(long courseID, List<Long> batchIDs) {
+
+		unlinkBatchesExcept(courseID, batchIDs);
+
+		for (long batchID : batchIDs) {
+			linkBatch(new EntityCourseBatchMap(courseID, batchID));
+		}
+	}
+
 	/*
 	 * Instructors. A course is taught by one or more professors; courses.profID names only the
 	 * coordinator among them. See EntityCourseInstructor for why the column was kept rather

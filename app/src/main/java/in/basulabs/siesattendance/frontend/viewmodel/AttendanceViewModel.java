@@ -1289,11 +1289,15 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 *                      the coordinator is folded in by {@code DaoCourse.setInstructors}
 	 */
 	public void addCourse(@NonNull EntityCourse course, @NonNull List<Long> instructorIDs,
-	                      @NonNull Runnable onDone) {
+	                      @Nullable List<Long> batchIDs, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				repository.insertCourse(course);
 				repository.setCourseInstructors(course.courseID, instructorIDs);
+
+				if (batchIDs != null) {
+					repository.setCourseBatches(course.courseID, batchIDs);
+				}
 				toastMessage.postValue("Course saved");
 				onDone.run();
 			} catch (Exception e) {
@@ -1909,13 +1913,69 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	/** @see #addCourse for what {@code instructorIDs} does and does not have to contain */
 	public void updateCourse(@NonNull EntityCourse course, @NonNull List<Long> instructorIDs,
-	                         @NonNull Runnable onDone) {
+	                         @Nullable List<Long> batchIDs, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				repository.updateCourse(course);
 				repository.setCourseInstructors(course.courseID, instructorIDs);
+
+				if (batchIDs != null) {
+					repository.setCourseBatches(course.courseID, batchIDs);
+				}
 				toastMessage.postValue("Course updated");
 				onDone.run();
+			} catch (Exception e) {
+				toastMessage.postValue("Could not update: " + e.getMessage());
+			}
+		});
+	}
+
+	/**
+	 * The batches a course may be linked to, and the ones it is linked to now.
+	 * <p>
+	 * The current session's batches, since that is where a course is being set up, plus any
+	 * batch already linked from another session: leaving those out would untick them, and
+	 * confirming the dialog would then remove a link nobody chose to remove.
+	 *
+	 * @param courseID the course, or -1 for one not saved yet, which has no links
+	 */
+	public void loadCourseBatchOptions(long courseID,
+	                                   @NonNull java.util.function.BiConsumer<
+			                                   List<EntityBatchDesc>, List<Long>> cb) {
+
+		final int acadYear = academicYearValue();
+
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+
+			List<Long> linked = courseID > 0
+					? repository.courseBatchIdsSync(courseID) : new ArrayList<>();
+
+			List<EntityBatchDesc> options = new ArrayList<>(
+					repository.batchesForYearSync(acadYear));
+
+			for (long batchID : linked) {
+
+				boolean listed = false;
+				for (EntityBatchDesc batch : options) {
+					listed |= batch.batchID == batchID;
+				}
+
+				EntityBatchDesc other = listed ? null : repository.batchSync(batchID);
+				if (other != null) {
+					options.add(other);
+				}
+			}
+
+			cb.accept(options, linked);
+		});
+	}
+
+	/** Links a course to exactly these batches, for a professor who is not editing the course. */
+	public void setCourseBatches(long courseID, @NonNull List<Long> batchIDs) {
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+			try {
+				repository.setCourseBatches(courseID, batchIDs);
+				toastMessage.postValue("Batches updated");
 			} catch (Exception e) {
 				toastMessage.postValue("Could not update: " + e.getMessage());
 			}

@@ -286,6 +286,11 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	}
 
 	@Override
+	public void setCourseBatches(long courseID, @NonNull List<Long> batchIDs) {
+		db.daoCourse().setBatchLinks(courseID, batchIDs);
+	}
+
+	@Override
 	public void setBatchCourses(long batchID, @NonNull List<Long> courseIDs) {
 		db.daoBatch().setCourseLinks(batchID, courseIDs);
 	}

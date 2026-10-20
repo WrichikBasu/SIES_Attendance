@@ -3,6 +3,7 @@ package in.basulabs.siesattendance.frontend.util;
 import android.content.Context;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
@@ -59,9 +60,15 @@ public final class ReadOnlyDetails {
 		show(context, batch.batchName, text);
 	}
 
+	/**
+	 * @param onAssignBatches what the Assign batches button does, or null for no button: a
+	 *                        professor may link batches to a course they cannot edit, and
+	 *                        nobody else may
+	 */
 	public static void showCourse(@NonNull Context context, @NonNull EntityCourse course,
 	                              @NonNull List<EntityProfessor> instructors,
-	                              @NonNull List<EntityBatchDesc> batches) {
+	                              @NonNull List<EntityBatchDesc> batches,
+	                              @Nullable Runnable onAssignBatches) {
 
 		StringBuilder text = new StringBuilder(course.courseTopic).append("\n\n")
 				.append(course.courseType).append(" · ").append(course.offeringDepartment)
@@ -84,7 +91,7 @@ public final class ReadOnlyDetails {
 
 		List<String> batchNames = new ArrayList<>();
 		for (EntityBatchDesc batch : batches) {
-			batchNames.add(batch.batchName);
+			batchNames.add(BatchPicker.describe(batch));
 		}
 
 		text.append("\n\n").append(context.getString(R.string.tab_batches)).append('\n')
@@ -92,15 +99,27 @@ public final class ReadOnlyDetails {
 						? context.getString(R.string.label_no_linked_batches)
 						: String.join(", ", batchNames));
 
-		show(context, course.courseCode, text);
+		MaterialAlertDialogBuilder dialog = builder(context, course.courseCode, text);
+
+		if (onAssignBatches != null) {
+			dialog.setNeutralButton(R.string.action_assign_batches,
+					(d, w) -> onAssignBatches.run());
+		}
+		dialog.show();
 	}
 
 	private static void show(@NonNull Context context, @NonNull String title,
 	                         @NonNull CharSequence text) {
-		new MaterialAlertDialogBuilder(context)
+		builder(context, title, text).show();
+	}
+
+	@NonNull
+	private static MaterialAlertDialogBuilder builder(@NonNull Context context,
+	                                                  @NonNull String title,
+	                                                  @NonNull CharSequence text) {
+		return new MaterialAlertDialogBuilder(context)
 				.setTitle(title)
 				.setMessage(text)
-				.setPositiveButton(R.string.action_close, null)
-				.show();
+				.setPositiveButton(R.string.action_close, null);
 	}
 }

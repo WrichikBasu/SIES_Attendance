@@ -19,6 +19,7 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.frontend.adapter.AdapterCourse;
+import in.basulabs.siesattendance.frontend.util.BatchPicker;
 import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.frontend.util.ReadOnlyDetails;
 import in.basulabs.siesattendance.frontend.util.Ui;
@@ -97,11 +98,27 @@ public class FragmentCourseList extends Fragment {
 		viewModel.getCourses().observe(getViewLifecycleOwner(), adapter::submitList);
 	}
 
-	/** The course, who teaches it and its batches, with nothing to change. */
+	/**
+	 * The course, who teaches it and its batches. Nothing to change, except that a professor may
+	 * assign batches to it: any professor may, for any course, whether or not they may edit the
+	 * course itself.
+	 */
 	private void showReadOnly(@NonNull EntityCourse course) {
+
+		Runnable assign = viewModel.may(Permissions.Capability.BATCHES)
+				? () -> assignBatches(course) : null;
+
 		viewModel.loadCourseDetails(course.courseID, (loaded, instructors, batches) ->
 				Ui.onMain(this, () -> ReadOnlyDetails.showCourse(requireContext(), loaded,
-						instructors, batches)));
+						instructors, batches, assign)));
+	}
+
+	private void assignBatches(@NonNull EntityCourse course) {
+		viewModel.loadCourseBatchOptions(course.courseID, (options, linked) ->
+				Ui.onMain(this, () -> BatchPicker.show(requireContext(), options,
+						new java.util.LinkedHashSet<>(linked), picked ->
+								viewModel.setCourseBatches(course.courseID,
+										new java.util.ArrayList<>(picked)))));
 	}
 
 	/**

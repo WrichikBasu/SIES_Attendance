@@ -185,6 +185,8 @@ public interface AttendanceRepository {
 	@NonNull
 	List<Long> courseBatchIdsSync(long courseID);
 
+	void setCourseBatches(long courseID, @NonNull List<Long> batchIDs);
+
 	void setBatchCourses(long batchID, @NonNull List<Long> courseIDs);
 
 

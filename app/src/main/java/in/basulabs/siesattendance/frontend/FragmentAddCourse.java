@@ -28,10 +28,12 @@ import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
+import in.basulabs.siesattendance.frontend.util.BatchPicker;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.util.Permissions;
@@ -87,6 +89,23 @@ public class FragmentAddCourse extends Fragment {
 	 * as well would mean two places could disagree about whether they are on the course.
 	 */
 	private final Set<Long> otherInstructorIDs = new LinkedHashSet<>();
+
+	/** Whether this account may say which batches sit the course: professors only. */
+	private boolean mayAssignBatches;
+
+	private TextInputEditText etBatches;
+
+	/** The batches the field offers, and the ones ticked, by ID. */
+	private final List<EntityBatchDesc> batchOptions = new ArrayList<>();
+
+	private final Set<Long> batchIDs = new LinkedHashSet<>();
+
+	/**
+	 * Whether the course's current links have arrived. Until they have, {@link #batchIDs} is
+	 * empty because nothing is known, not because nothing is linked, and saving it would remove
+	 * every link the course has.
+	 */
+	private boolean batchesLoaded;
 
 	// Tracked as values because the stream list depends on the department and "BSc" alone
 	// cannot say whether the aided or unaided constant is meant.
@@ -146,6 +165,21 @@ public class FragmentAddCourse extends Fragment {
 		actvProfessor = view.findViewById(R.id.actvProfessor);
 		etOtherInstructors = view.findViewById(R.id.etOtherInstructors);
 		etOtherInstructors.setOnClickListener(v -> showInstructorPicker());
+
+		mayAssignBatches = viewModel.may(Permissions.Capability.BATCHES);
+		etBatches = view.findViewById(R.id.etCourseBatches);
+
+		if (mayAssignBatches) {
+			etBatches.setOnClickListener(v -> BatchPicker.show(requireContext(), batchOptions,
+					batchIDs, picked -> {
+						batchIDs.clear();
+						batchIDs.addAll(picked);
+						showBatchSummary();
+					}));
+			loadBatches();
+		} else {
+			view.findViewById(R.id.tilCourseBatches).setVisibility(View.GONE);
+		}
 
 		bindDropdowns();
 
@@ -228,6 +262,35 @@ public class FragmentAddCourse extends Fragment {
 				showInstructorSummary();
 			});
 		});
+	}
+
+	/** The batches this course may be linked to and is linked to, for the Batches field. */
+	private void loadBatches() {
+		viewModel.loadCourseBatchOptions(editingCourseID, (options, linked) ->
+				Ui.onMain(this, () -> {
+					batchOptions.clear();
+					batchOptions.addAll(options);
+
+					batchIDs.clear();
+					batchIDs.addAll(linked);
+					batchesLoaded = true;
+
+					showBatchSummary();
+				}));
+	}
+
+	private void showBatchSummary() {
+
+		List<String> names = new ArrayList<>();
+
+		for (EntityBatchDesc batch : batchOptions) {
+			if (batchIDs.contains(batch.batchID)) {
+				names.add(BatchPicker.describe(batch));
+			}
+		}
+
+		etBatches.setText(names.isEmpty()
+				? getString(R.string.label_no_linked_batches) : String.join(", ", names));
 	}
 
 	/**
@@ -471,15 +534,20 @@ public class FragmentAddCourse extends Fragment {
 		// arrived from.
 		List<Long> instructorIDs = new ArrayList<>(otherInstructorIDs);
 
+		// Null leaves the links alone: the office edits a course without touching batches, and
+		// a save made before the links have loaded must not write an empty set over them.
+		List<Long> chosenBatches = mayAssignBatches && batchesLoaded
+				? new ArrayList<>(batchIDs) : null;
+
 		Runnable navigateBack = () -> Ui.onMain(this, () -> {
 			Navigation.findNavController(button).navigateUp();
 		});
 
 		if (editingCourseID > 0) {
 			course.courseID = editingCourseID;
-			viewModel.updateCourse(course, instructorIDs, navigateBack);
+			viewModel.updateCourse(course, instructorIDs, chosenBatches, navigateBack);
 		} else {
-			viewModel.addCourse(course, instructorIDs, navigateBack);
+			viewModel.addCourse(course, instructorIDs, chosenBatches, navigateBack);
 		}
 	}
 
