@@ -46,3 +46,5 @@ google-services.json
 
 __pycache__/
 app/src/test/sql/__pycache__/
+
+*.siesbak
