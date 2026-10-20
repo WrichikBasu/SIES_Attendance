@@ -19,8 +19,10 @@ import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.EntitySyncState;
 import in.basulabs.siesattendance.backend.sync.SyncClient;
 import in.basulabs.siesattendance.frontend.util.PasswordChange;
+import in.basulabs.siesattendance.frontend.util.SyncAge;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -47,9 +49,9 @@ public class FragmentSync extends Fragment {
 
 	private AttendanceViewModel viewModel;
 
-	private TextView tvState, tvPending, tvError, tvMustChange;
+	private TextView tvState, tvUp, tvDown, tvError, tvMustChange;
 
-	private View groupSignedIn;
+	private View groupSignedIn, groupSyncing;
 
 	@Nullable
 	@Override
@@ -66,7 +68,9 @@ public class FragmentSync extends Fragment {
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
 
 		tvState = view.findViewById(R.id.tvSyncState);
-		tvPending = view.findViewById(R.id.tvPendingChanges);
+		tvUp = view.findViewById(R.id.tvSyncUp);
+		tvDown = view.findViewById(R.id.tvSyncDown);
+		groupSyncing = view.findViewById(R.id.groupSyncing);
 		tvError = view.findViewById(R.id.tvSyncError);
 		tvMustChange = view.findViewById(R.id.tvMustChangePassword);
 		groupSignedIn = view.findViewById(R.id.groupSignedIn);
@@ -74,10 +78,6 @@ public class FragmentSync extends Fragment {
 		view.<MaterialButton>findViewById(R.id.btnSyncNow)
 				.setOnClickListener(v -> viewModel.syncNow());
 
-		// The way back from a queue the server emptied by refusing it: the rows are still
-		// here, and the triggers will not offer them again because they fire on a write.
-		view.<MaterialButton>findViewById(R.id.btnResendEverything)
-				.setOnClickListener(v -> viewModel.resendEverything());
 		view.<MaterialButton>findViewById(R.id.btnChangePassword)
 				.setOnClickListener(v -> askForNewPassword());
 		// Out means out: the whole graph is popped and the door is what is left. Nothing of
@@ -88,15 +88,24 @@ public class FragmentSync extends Fragment {
 						Navigation.findNavController(requireView())
 								.navigate(R.id.action_global_signIn))));
 
+		// Both directions, both live. The queue count is a Room query and the state row is
+		// another, so the two lines keep themselves current while a sync is running rather
+		// than only when somebody returns to this screen.
 		viewModel.getPendingChanges().observe(getViewLifecycleOwner(), pending -> {
 
 			int waiting = pending == null ? 0 : pending;
 
-			tvPending.setText(waiting == 0
-					? getString(R.string.sync_nothing_waiting)
+			tvUp.setText(waiting == 0
+					? getString(R.string.sync_up_nothing)
 					: getResources().getQuantityString(R.plurals.sync_changes_waiting, waiting,
 							waiting));
 		});
+
+		viewModel.getSyncState().observe(getViewLifecycleOwner(), this::showWhatCameDown);
+
+		viewModel.getSyncRunning().observe(getViewLifecycleOwner(), running ->
+				groupSyncing.setVisibility(Boolean.TRUE.equals(running)
+						? View.VISIBLE : View.GONE));
 
 		// Nothing observes a message here. Signing in and out report through the ViewModel's
 		// toast channel, which the activity shows wherever the user has got to by then --
@@ -113,6 +122,46 @@ public class FragmentSync extends Fragment {
 		refresh();
 	}
 
+	/**
+	 * The second direction: what the server has sent this phone, and when.
+	 * <p>
+	 * Three states, and the difference between the last two is the one that matters. No
+	 * watermark means the server's copy has never arrived — a phone that has pushed happily for
+	 * a week can still be in that state, which is exactly the confusion the old single line
+	 * caused. A watermark with nothing new means this phone is in step. A watermark with rows
+	 * means the last run brought those down.
+	 */
+	private void showWhatCameDown(@Nullable EntitySyncState state) {
+
+		if (state == null || state.watermark == null || state.lastPullAt <= 0) {
+			tvDown.setText(R.string.sync_down_never);
+			return;
+		}
+
+		String when = describe(SyncAge.of(state.lastPullAt, System.currentTimeMillis()));
+		int received = viewModel.lastReceived();
+
+		tvDown.setText(received == 0
+				? getString(R.string.sync_down_nothing_new, when)
+				: getResources().getQuantityString(R.plurals.sync_down_received, received,
+						received, when));
+	}
+
+	/** One bucket from {@link SyncAge}, in words. */
+	@NonNull
+	private String describe(@NonNull SyncAge.Age age) {
+
+		return switch (age.scale()) {
+			case NEVER, MOMENTS -> getString(R.string.age_moments);
+			case MINUTES -> getResources().getQuantityString(R.plurals.age_minutes,
+					age.quantity(), age.quantity());
+			case HOURS -> getResources().getQuantityString(R.plurals.age_hours,
+					age.quantity(), age.quantity());
+			case DAYS -> getResources().getQuantityString(R.plurals.age_days,
+					age.quantity(), age.quantity());
+		};
+	}
+
 	/** Shows what is true now: signed in or not, and what went wrong if anything did. */
 	private void refresh() {
 
@@ -126,16 +175,24 @@ public class FragmentSync extends Fragment {
 
 		if (!configured) {
 			tvState.setText(R.string.sync_no_server);
-			tvPending.setVisibility(View.GONE);
+			tvUp.setVisibility(View.GONE);
+			tvDown.setVisibility(View.GONE);
 			tvError.setVisibility(View.GONE);
 			return;
 		}
 
-		tvPending.setVisibility(View.VISIBLE);
+		tvUp.setVisibility(View.VISIBLE);
+		tvDown.setVisibility(View.VISIBLE);
 
-		tvState.setText(signedIn
-				? getString(R.string.sync_signed_in, viewModel.deviceNode())
-				: getString(R.string.sync_not_signed_in));
+		// Who, not which device. The node is the key-issuing number and belongs to the sync
+		// machinery, not to the person holding the phone.
+		String who = viewModel.signedInAs();
+
+		tvState.setText(!signedIn
+				? getString(R.string.sync_not_signed_in)
+				: who == null || who.isBlank()
+						? getString(R.string.sync_signed_in)
+						: getString(R.string.sync_signed_in_as, who));
 
 		String error = viewModel.lastSyncError();
 

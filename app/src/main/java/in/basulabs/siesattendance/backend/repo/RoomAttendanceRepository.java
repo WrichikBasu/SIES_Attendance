@@ -20,6 +20,7 @@ import in.basulabs.siesattendance.backend.EntityLecture;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.backend.EntityStudent;
 import androidx.sqlite.db.SupportSQLiteDatabase;
+import in.basulabs.siesattendance.backend.EntitySyncState;
 import in.basulabs.siesattendance.backend.sync.DeviceSql;
 import in.basulabs.siesattendance.backend.sync.DeviceTables;
 import in.basulabs.siesattendance.backend.MainDatabase;
@@ -536,23 +537,8 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	// ── Sync, as far as a screen needs to know ──────────────────────
 
 	@Override
-	@NonNull
-	public int requeueEverythingForSync() {
-
-		// A whole-file operation, like the ones database() exists for: eleven statements
-		// generated from the shared table description, in one transaction. The applying guard
-		// is deliberately NOT set -- these intents are exactly what should be queued, which is
-		// the opposite of what that guard is for.
-		db.runInTransaction(() -> {
-
-			SupportSQLiteDatabase sqlite = db.getOpenHelper().getWritableDatabase();
-
-			for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
-				sqlite.execSQL(DeviceSql.requeueRows(table));
-			}
-		});
-
-		return db.daoOutbox().countPendingSync();
+	public LiveData<EntitySyncState> observeSyncState() {
+		return db.daoOutbox().observeState();
 	}
 
 	@Override

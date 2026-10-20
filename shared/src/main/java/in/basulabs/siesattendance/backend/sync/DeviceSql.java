@@ -136,44 +136,6 @@ public final class DeviceSql {
 	}
 
 	/**
-	 * Queues every row of a table for sending, as one statement.
-	 * <p>
-	 * The recovery path, and it exists because of a real morning: a device that had been taking
-	 * attendance for a term was pointed at a server, every row it held was refused because the
-	 * keys carried the node it had picked for itself before registering, and the drain dropped
-	 * the intents as settled refusals. The rows were still on the phone and nothing would ever
-	 * send them again — the triggers only fire on a write, and these rows were written months
-	 * ago.
-	 * <p>
-	 * {@code INSERT OR REPLACE}, keyed the same way the triggers key it, so a row already
-	 * waiting keeps one intent rather than gaining a second. The unused key columns are zero,
-	 * which is what {@link OutboxTriggers#UNUSED_KEY} means.
-	 */
-	@NonNull
-	public static String requeueRows(@NonNull DeviceTables.Table table) {
-
-		StringBuilder sql = new StringBuilder("INSERT OR REPLACE INTO `")
-				.append(OutboxTriggers.OUTBOX)
-				.append("` (`tableName`, `key1`, `key2`, `key3`, `op`, `queuedAt`) SELECT '")
-				.append(table.name()).append("'");
-
-		for (int at = 0; at < 3; at++) {
-
-			sql.append(", ");
-
-			if (at < table.primaryKey().size()) {
-				sql.append('`').append(table.primaryKey().get(at)).append('`');
-			} else {
-				sql.append(OutboxTriggers.UNUSED_KEY);
-			}
-		}
-
-		return sql.append(", '").append(OutboxOp.UPSERT.name())
-				.append("', CAST(strftime('%s','now') AS INTEGER) * 1000 FROM `")
-				.append(table.name()).append('`').toString();
-	}
-
-	/**
 	 * The self-picked nodes appearing in this device's own keys, commonest first.
 	 * <p>
 	 * The last resort for an install made before the node it picked for itself was recorded in

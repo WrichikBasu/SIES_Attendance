@@ -3,6 +3,10 @@ package in.basulabs.siesattendance.backend.sync;
 import android.content.Context;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.lifecycle.LiveData;
+import androidx.lifecycle.MediatorLiveData;
+import androidx.lifecycle.Transformations;
 import androidx.room.InvalidationTracker;
 import androidx.work.BackoffPolicy;
 import androidx.work.Constraints;
@@ -11,8 +15,10 @@ import androidx.work.ExistingWorkPolicy;
 import androidx.work.NetworkType;
 import androidx.work.OneTimeWorkRequest;
 import androidx.work.PeriodicWorkRequest;
+import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -92,6 +98,55 @@ public final class SyncScheduler {
 						// worse.
 						.setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
 						.build());
+	}
+
+	/**
+	 * Whether a sync is running right now, for a screen to say so.
+	 * <p>
+	 * Asked of WorkManager rather than tracked in a field: the worker runs in its own process
+	 * state and may have been started by the hourly schedule, by a write three screens away, or
+	 * by a button — and a flag kept here would be wrong after every one of those. The unique
+	 * name is this class's own, which is why the question is answered here.
+	 * <p>
+	 * Both names are watched. A run asked for by hand and the hourly one are the same work
+	 * doing the same thing, and a screen that said "not syncing" during the second would be
+	 * lying for an hour at a time.
+	 */
+	@NonNull
+	public static LiveData<Boolean> observeRunning(@NonNull Context context) {
+
+		WorkManager manager = WorkManager.getInstance(context.getApplicationContext());
+
+		LiveData<Boolean> onceOff = Transformations.map(
+				manager.getWorkInfosForUniqueWorkLiveData(ONE_OFF), SyncScheduler::anyRunning);
+
+		LiveData<Boolean> hourly = Transformations.map(
+				manager.getWorkInfosForUniqueWorkLiveData(HOURLY), SyncScheduler::anyRunning);
+
+		MediatorLiveData<Boolean> either = new MediatorLiveData<>();
+
+		either.setValue(false);
+		either.addSource(onceOff, running -> either.setValue(
+				Boolean.TRUE.equals(running) || Boolean.TRUE.equals(hourly.getValue())));
+		either.addSource(hourly, running -> either.setValue(
+				Boolean.TRUE.equals(running) || Boolean.TRUE.equals(onceOff.getValue())));
+
+		return either;
+	}
+
+	private static boolean anyRunning(@Nullable List<WorkInfo> infos) {
+
+		if (infos == null) {
+			return false;
+		}
+
+		for (WorkInfo info : infos) {
+			if (info.getState() == WorkInfo.State.RUNNING) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	private static void scheduleHourly(@NonNull Context context) {

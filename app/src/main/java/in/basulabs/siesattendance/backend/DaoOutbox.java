@@ -70,6 +70,16 @@ public interface DaoOutbox {
 	EntitySyncState stateSync();
 
 	/**
+	 * The same row, observed.
+	 * <p>
+	 * For the one screen that reports on syncing. Room invalidates it when a pull records its
+	 * watermark or a push records its time, so the screen's two directions update themselves
+	 * while a sync is running rather than when somebody comes back to the screen.
+	 */
+	@Query("SELECT * FROM sync_state WHERE id = 1")
+	LiveData<EntitySyncState> observeState();
+
+	/**
 	 * Marks the beginning and end of applying what the server sent.
 	 * <p>
 	 * Must be called inside the same transaction as the writes it guards, so that a crash takes

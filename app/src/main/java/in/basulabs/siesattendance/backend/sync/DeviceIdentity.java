@@ -67,6 +67,12 @@ public final class DeviceIdentity {
 
 	private static final String ACCOUNT_KIND = "accountKind";
 
+	private static final String DISPLAY_NAME = "displayName";
+
+	private static final String LAST_SENT = "lastSent";
+
+	private static final String LAST_RECEIVED = "lastReceived";
+
 	/** The Keystore entry the token is encrypted with. One per installation. */
 	private static final String KEY_ALIAS = "sies_sync_token";
 
@@ -179,6 +185,42 @@ public final class DeviceIdentity {
 
 	public static void recordSyncError(@NonNull Context context, @Nullable String error) {
 		prefs(context).edit().putString(WATERMARK_HINT, error).apply();
+	}
+
+	/**
+	 * Who is signed in, as the server's own display name, or null.
+	 * <p>
+	 * For the screen to say "Signed in as A Rao" rather than a node number, which is what it
+	 * used to say and which answered a question nobody was asking.
+	 */
+	@Nullable
+	public static String displayName(@NonNull Context context) {
+		return prefs(context).getString(DISPLAY_NAME, null);
+	}
+
+	public static void recordDisplayName(@NonNull Context context, @Nullable String name) {
+		prefs(context).edit().putString(DISPLAY_NAME, name).apply();
+	}
+
+	/**
+	 * How many rows the last sync sent, and how many it received.
+	 * <p>
+	 * In preferences rather than in {@code sync_state}, for the same reason the last error is:
+	 * it is a note for a screen, not part of the device's position in the feed, and a phone
+	 * with no signal must not be writing a database row every quarter of an hour. The two
+	 * timestamps <em>are</em> in {@code sync_state}, because a watermark and the moment it
+	 * moved belong together.
+	 */
+	public static int lastSent(@NonNull Context context) {
+		return prefs(context).getInt(LAST_SENT, 0);
+	}
+
+	public static int lastReceived(@NonNull Context context) {
+		return prefs(context).getInt(LAST_RECEIVED, 0);
+	}
+
+	public static void recordLastRun(@NonNull Context context, int sent, int received) {
+		prefs(context).edit().putInt(LAST_SENT, sent).putInt(LAST_RECEIVED, received).apply();
 	}
 
 	/**

@@ -1531,10 +1531,16 @@ LEFT-JOIN-onto-an-RLS-table trap that cost this project a day in Phase 5.5. The 
 either of the device's nodes, and another install's provisional node is still refused — both
 stated as tests.
 
-The dropped intents needed a way back, since the triggers fire on a write and those rows were
-written weeks ago: `AttendanceRepository.requeueEverythingForSync()`, behind a **Send everything
-again** button on the sync screen. Harmless twice over — the statement is `INSERT OR REPLACE` on
-the triggers' own key, so a row already waiting stays one intent.
+The dropped intents needed a way back at the time, since the triggers fire on a write and those
+rows were written weeks ago: a statement that re-queued every row of every table, behind a **Send
+everything again** button. **Both are gone now**, and deliberately. V13 removed the reason they
+existed — the server accepts a pre-registration key, so the drain no longer drops the rows that
+button was for — and what remained droppable is the rows that can *never* be pushed: a legacy key,
+or a roster row that belongs to the office. Re-queueing those gets them refused again, which is a
+button that cannot work. A queue filled by triggers on every write already holds everything that
+has not reached the server, so "send everything again" was either a no-op or a lie. The way back
+for a device whose own rows cannot sync is the backup importer and then taking the server's copy,
+which is a different operation with a different confirmation.
 
 **A device whose data predates the id scheme cannot sync any of it, and said so a hundred times
 a minute.** The third thing a handset found. Keys issued before schema v7 were counted out from 1

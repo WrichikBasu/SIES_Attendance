@@ -18,6 +18,7 @@ import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.EntityLecture;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.backend.EntityStudent;
+import in.basulabs.siesattendance.backend.EntitySyncState;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.pojo.AttendanceRow;
@@ -327,19 +328,13 @@ public interface AttendanceRepository {
 	LiveData<Integer> observePendingChangeCount();
 
 	/**
-	 * Queues every row this device holds for sending, and says how many are waiting.
+	 * The device's sync bookkeeping, observed: the watermark and the two timestamps.
 	 * <p>
-	 * The way back from a queue the server emptied by refusing it. A refusal the server calls
-	 * final makes the device drop the intent — otherwise the queue never empties — but the row
-	 * itself is still here, and nothing else will offer it again: the outbox triggers fire on a
-	 * write, and the rows in question were written weeks ago.
-	 * <p>
-	 * It was needed the first time a phone with a term's attendance on it met a server. Every
-	 * key it held carried the node it had picked for itself before registering, every push was
-	 * refused, and the intents were dropped. Harmless to run twice: an intent already waiting
-	 * stays one intent.
+	 * Here rather than read from the DAO by the screen, like every other database read: the
+	 * fragments do not touch Room. See {@code RepositorySeamTest}.
 	 */
-	int requeueEverythingForSync();
+	LiveData<EntitySyncState> observeSyncState();
+
 
 	// ── The two writes that are one unit ─────────────────────────────────
 

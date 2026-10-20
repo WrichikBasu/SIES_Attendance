@@ -60,6 +60,7 @@ import in.basulabs.siesattendance.backend.util.ExportFilter;
 import in.basulabs.siesattendance.backend.IdGenerator;
 import in.basulabs.siesattendance.backend.repo.AttendanceRepository;
 import in.basulabs.siesattendance.backend.repo.RoomAttendanceRepository;
+import in.basulabs.siesattendance.backend.EntitySyncState;
 import in.basulabs.siesattendance.backend.sync.DeviceIdentity;
 import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.backend.sync.SyncClient;
@@ -431,6 +432,31 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return IdGenerator.nodeID();
 	}
 
+	/** Who is signed in, as the server named them, or null. */
+	@Nullable
+	public String signedInAs() {
+		return DeviceIdentity.displayName(getApplication());
+	}
+
+	/** The device's own sync bookkeeping, observed: the watermark and the two timestamps. */
+	public LiveData<EntitySyncState> getSyncState() {
+		return repository.observeSyncState();
+	}
+
+	/** Whether a sync is running at this moment. */
+	public LiveData<Boolean> getSyncRunning() {
+		return SyncScheduler.observeRunning(getApplication());
+	}
+
+	/** How many rows the last run sent, and how many it brought down. */
+	public int lastSent() {
+		return DeviceIdentity.lastSent(getApplication());
+	}
+
+	public int lastReceived() {
+		return DeviceIdentity.lastReceived(getApplication());
+	}
+
 	/**
 	 * Signs in, registers this device if the server has not seen it before, and asks for a
 	 * sync.
@@ -465,6 +491,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 				// from a professor to a class representative does not keep the first one's
 				// permissions.
 				DeviceIdentity.recordAccountKind(getApplication(), session.kind());
+
+				// So the screen can say who is signed in. It used to say "device 3", which
+				// answered a question nobody asks.
+				DeviceIdentity.recordDisplayName(getApplication(), session.displayName());
 
 				// The node has to reach IdGenerator before the next key is issued, and
 				// SyncSignIn has already applied it; this only tells the user.
@@ -508,39 +538,23 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 			DeviceIdentity.forgetToken(getApplication());
 			DeviceIdentity.recordSyncError(getApplication(), null);
+			DeviceIdentity.recordDisplayName(getApplication(), null);
 			toastMessage.postValue("Signed out");
 			onDone.run();
 		});
 	}
 
 	/**
-	 * Queues everything on this phone for sending, and asks for a sync.
+	 * Asks for a sync now, rather than waiting for the hourly one.
 	 * <p>
-	 * For the case where the server refused rows and the device dropped the intents: the rows
-	 * are still here, and nothing else will offer them again. Harmless to run twice — an intent
-	 * already waiting stays one intent — and on a phone with a term's attendance on it, it is
-	 * a few thousand rows going up over a few minutes.
+	 * Both directions, as every sync is: the worker drains the outbox and then pulls whatever
+	 * the server has had since this device's watermark. There is no separate "fetch" and no
+	 * separate "send everything again" — the queue is filled by triggers on every write, so a
+	 * row that has not reached the server is in it, and asking twice cannot help.
 	 */
-	public void resendEverything() {
-
-		busy.setValue(true);
-
-		NETWORK_TASK_EXECUTOR.execute(() -> {
-
-			int waiting = repository.requeueEverythingForSync();
-
-			SyncScheduler.requestSync(getApplication());
-
-			busy.postValue(false);
-			toastMessage.postValue(waiting + " change" + (waiting == 1 ? "" : "s")
-					+ " queued for the server");
-		});
-	}
-
-	/** Asks for a sync now, rather than waiting for the hourly one. */
 	public void syncNow() {
 		SyncScheduler.requestSync(getApplication());
-		toastMessage.setValue("Syncing");
+		toastMessage.setValue("Looking for changes, both ways");
 	}
 
 	/**

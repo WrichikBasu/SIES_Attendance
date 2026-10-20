@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The activity's own menu, so it is on every screen that has an app bar.
+  ActivityHome hides the item on the two destinations where it would be pointless: the sync
+  screen itself, and the sign-in screen, which has no bar at all.
+-->
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/action_open_sync"
+        android:icon="@drawable/ic_cloud_sync"
+        android:title="@string/title_sync"
+        app:showAsAction="ifRoom" />
+
+</menu>

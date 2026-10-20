@@ -241,57 +241,6 @@ class PullApplyTest {
 	}
 
 	@Test
-	void everyRowCanBeQueuedAgainAfterTheServerRefusedThem() throws Exception {
-
-		// The recovery path, and it exists because of a real morning: a phone whose rows were
-		// all refused -- the keys carried the node it had picked for itself before registering
-		// -- had its intents dropped as settled refusals. The rows were still there and
-		// nothing would ever offer them again, because the triggers fire on a write and these
-		// were written weeks ago.
-		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
-			applyRow(table, DeviceDerived.fill(table, serverShapedRow(table), ZONE));
-		}
-
-		execute("DELETE FROM outbox");
-		assertEquals(0, count("SELECT count(*) FROM outbox"));
-
-		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
-			execute(DeviceSql.requeueRows(table));
-		}
-
-		assertEquals(11, count("SELECT count(*) FROM outbox"),
-				"one intent per row, across every table a device holds");
-		assertEquals(11, count("SELECT count(*) FROM outbox WHERE op = 'UPSERT'"));
-		assertEquals(0, count("SELECT count(*) FROM outbox WHERE queuedAt = 0"),
-				"queued now, so the oldest-first drain sends them");
-
-		// The keys are the ones the drain will read back, padded the way the triggers pad
-		// them: a table keyed on one column leaves the other two as the unused zero.
-		assertEquals(1, count("SELECT count(*) FROM outbox WHERE tableName = 'attendance' "
-						+ "AND key1 = " + LECTURE + " AND key2 = " + STUDENT + " AND key3 = 0"),
-				"a two-column key, in the table's own key order");
-		assertEquals(1, count("SELECT count(*) FROM outbox WHERE tableName = 'academic_years' "
-				+ "AND key1 = " + SESSION + " AND key2 = 0 AND key3 = 0"));
-	}
-
-	@Test
-	void queueingEverythingTwiceLeavesOneIntentPerRow() throws Exception {
-
-		applyRow(DeviceTables.of("students"),
-				serverShapedRow(DeviceTables.of("students")));
-		execute("DELETE FROM outbox");
-
-		DeviceTables.Table students = DeviceTables.of("students");
-
-		execute(DeviceSql.requeueRows(students));
-		execute(DeviceSql.requeueRows(students));
-
-		assertEquals(1, count("SELECT count(*) FROM outbox"),
-				"INSERT OR REPLACE on the triggers' own key, so a row already waiting stays "
-						+ "one intent rather than gaining a second");
-	}
-
-	@Test
 	void theNodeAPhonePickedForItselfIsRecoverableFromItsOwnKeys() throws Exception {
 
 		// The last resort for an install made before that node was kept in preferences: once a

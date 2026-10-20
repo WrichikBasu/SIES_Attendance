@@ -1,6 +1,8 @@
 package in.basulabs.siesattendance.frontend;
 
 import android.os.Bundle;
+import android.view.Menu;
+import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 
@@ -8,6 +10,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
+import androidx.core.view.MenuProvider;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.lifecycle.ViewModelProvider;
@@ -115,6 +118,7 @@ public class ActivityHome extends AppCompatActivity {
 
 		navController.addOnDestinationChangedListener(this::onDestinationChanged);
 
+		addSyncToTheAppBar();
 		observeToasts();
 	}
 
@@ -173,6 +177,11 @@ public class ActivityHome extends AppCompatActivity {
 		bottomNav.setVisibility(!locked && TOP_LEVEL.contains(destination.getId())
 				? View.VISIBLE
 				: View.GONE);
+
+		// The app bar's sync item is shown or hidden by where we are, so the menu has to be
+		// asked again whenever that changes. Without this it keeps whatever it decided on the
+		// screen it was first built for.
+		invalidateMenu();
 	}
 
 	/**
@@ -207,6 +216,49 @@ public class ActivityHome extends AppCompatActivity {
 		}
 
 		navController.navigate(R.id.action_global_signIn);
+	}
+
+	/**
+	 * A way to the sync screen from wherever somebody is.
+	 * <p>
+	 * On the activity rather than on each fragment, which is the only arrangement that puts it
+	 * on all two dozen screens and keeps it there when the twenty-fifth is added. The fragments
+	 * that have menus of their own — a student's record, one register — keep them; Android
+	 * merges the two, and this item is the activity's, so it sits after theirs.
+	 * <p>
+	 * Hidden on the sync screen itself, where it would lead nowhere, and on the sign-in screen,
+	 * which has no app bar at all and nothing a signed-out phone should reach.
+	 */
+	private void addSyncToTheAppBar() {
+
+		addMenuProvider(new MenuProvider() {
+
+			@Override
+			public void onCreateMenu(@NonNull Menu menu, @NonNull MenuInflater inflater) {
+				inflater.inflate(R.menu.menu_app_bar, menu);
+			}
+
+			@Override
+			public void onPrepareMenu(@NonNull Menu menu) {
+
+				NavDestination current = navController.getCurrentDestination();
+				int id = current == null ? 0 : current.getId();
+
+				menu.findItem(R.id.action_open_sync).setVisible(
+						id != R.id.fragmentSync && id != R.id.fragmentSignIn);
+			}
+
+			@Override
+			public boolean onMenuItemSelected(@NonNull MenuItem item) {
+
+				if (item.getItemId() != R.id.action_open_sync) {
+					return false;
+				}
+
+				navController.navigate(R.id.action_global_sync);
+				return true;
+			}
+		});
 	}
 
 	/**

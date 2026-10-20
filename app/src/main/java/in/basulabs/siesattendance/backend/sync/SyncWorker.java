@@ -73,8 +73,13 @@ public final class SyncWorker extends Worker {
 
 		try {
 			Pushed pushed = pushEverything(drain);
-			boolean more = pushed.morePending();
-			more |= pullEverything(drain);
+			Pulled pulled = pullEverything(drain);
+
+			boolean more = pushed.morePending() || pulled.morePending();
+
+			// Both directions, for the screen. The timestamps are in sync_state, written by
+			// the drain as each half succeeds; these are the two numbers that go with them.
+			DeviceIdentity.recordLastRun(context, pushed.sent(), pulled.applied());
 
 			// The refusal, or null to clear whatever was there. A sync that went through and
 			// dropped a row the server will never take is not a failed sync, and it is not a
@@ -128,45 +133,63 @@ public final class SyncWorker extends Worker {
 	 *                    path below clears that field and would otherwise wipe the one message
 	 *                    worth keeping
 	 */
-	private record Pushed(boolean morePending, @Nullable String refusal) {
+	private record Pushed(boolean morePending, @Nullable String refusal, int sent) {
 	}
 
 	@NonNull
 	private Pushed pushEverything(@NonNull OutboxDrain drain) throws IOException {
 
 		String refusal = null;
+		int sent = 0;
 
 		for (int batch = 0; batch < MAX_BATCHES; batch++) {
 
 			OutboxDrain.Result result = drain.push();
+			sent += result.sent();
 
 			if (result.refusal() != null) {
 				refusal = result.refusal();
 			}
 
 			if (!result.morePending()) {
-				return new Pushed(false, refusal);
+				return new Pushed(false, refusal, sent);
 			}
 
 			if (result.sent() == 0 && result.dropped() == 0) {
 				// Nothing moved, nothing left the queue, and something is still pending: every
 				// intent in this batch was refused and kept. Trying the same batch again in
 				// the same run would spin.
-				return new Pushed(false, refusal);
+				return new Pushed(false, refusal, sent);
 			}
 		}
-		return new Pushed(true, refusal);
+		return new Pushed(true, refusal, sent);
 	}
 
-	/** @return whether the server says there is more to fetch */
-	private boolean pullEverything(@NonNull OutboxDrain drain) throws IOException {
+	/**
+	 * How much came down, and whether there is more.
+	 *
+	 * @param applied the rows written into this device's own tables. Counted so the screen can
+	 *                say what arrived: "everything has reached the server" answers half of
+	 *                "is this phone in step", and the half it answers is the half a professor
+	 *                is not usually asking about
+	 */
+	private record Pulled(boolean morePending, int applied) {
+	}
+
+	@NonNull
+	private Pulled pullEverything(@NonNull OutboxDrain drain) throws IOException {
+
+		int applied = 0;
 
 		for (int page = 0; page < MAX_PAGES; page++) {
 
-			if (!drain.pull().morePending()) {
-				return false;
+			OutboxDrain.Result result = drain.pull();
+			applied += result.applied();
+
+			if (!result.morePending()) {
+				return new Pulled(false, applied);
 			}
 		}
-		return true;
+		return new Pulled(true, applied);
 	}
 }

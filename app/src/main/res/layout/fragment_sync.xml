@@ -32,12 +32,52 @@
                     android:textAppearance="?attr/textAppearanceTitleMedium"
                     tools:text="Not signed in" />
 
+                <!--
+                    Up and down, on their own lines. One line saying "everything has reached
+                    the server" was a report on half the traffic, and the half it left out is
+                    the one somebody asks about when a roll looks wrong.
+                -->
                 <TextView
-                    android:id="@+id/tvPendingChanges"
+                    android:id="@+id/tvSyncUp"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
+                    android:layout_marginTop="6dp"
+                    android:drawablePadding="8dp"
                     android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+                <TextView
+                    android:id="@+id/tvSyncDown"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:drawablePadding="8dp"
+                    android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+                <!-- Visible only while a sync is actually running. -->
+                <LinearLayout
+                    android:id="@+id/groupSyncing"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <com.google.android.material.progressindicator.CircularProgressIndicator
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:indeterminate="true"
+                        app:indicatorSize="18dp"
+                        app:trackThickness="2dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:text="@string/sync_running"
+                        android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/tvSyncError"
@@ -83,14 +123,6 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/action_sync_now" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnResendEverything"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="@string/action_resend_everything" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnChangePassword"

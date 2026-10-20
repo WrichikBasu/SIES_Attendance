@@ -754,16 +754,44 @@
     <string name="action_sign_in">Sign in</string>
     <string name="action_sign_out">Sign out</string>
     <string name="action_sync_now">Sync now</string>
-    <string name="action_resend_everything">Send everything again</string>
     <string name="error_email_required">Enter your email address</string>
     <string name="error_sync_password_required">Enter your password</string>
     <string name="sync_no_server">This build has no server</string>
     <string name="sync_not_signed_in">Not signed in</string>
-    <string name="sync_signed_in">Signed in · device %1$d</string>
-    <string name="sync_nothing_waiting">Everything has reached the server</string>
+    <string name="sync_signed_in">Signed in</string>
+    <string name="sync_signed_in_as">Signed in as %1$s</string>
+
+    <!--
+        Both directions, because "everything has reached the server" answers half of "is this
+        phone in step" and the other half is the half somebody is usually asking about: has
+        this phone got what the office and the other phones have put there.
+    -->
+    <string name="sync_up_nothing">Everything here has reached the server</string>
     <plurals name="sync_changes_waiting">
         <item quantity="one">%d change waiting to be sent</item>
         <item quantity="other">%d changes waiting to be sent</item>
+    </plurals>
+    <string name="sync_down_never">Nothing received from the server yet</string>
+    <plurals name="sync_down_received">
+        <item quantity="one">%1$d row received from the server %2$s</item>
+        <item quantity="other">%1$d rows received from the server %2$s</item>
+    </plurals>
+    <string name="sync_down_nothing_new">Nothing new from the server %1$s</string>
+    <string name="sync_running">Syncing now\u2026</string>
+
+    <!-- The buckets SyncAge sorts a moment into. -->
+    <string name="age_moments">a moment ago</string>
+    <plurals name="age_minutes">
+        <item quantity="one">%d minute ago</item>
+        <item quantity="other">%d minutes ago</item>
+    </plurals>
+    <plurals name="age_hours">
+        <item quantity="one">%d hour ago</item>
+        <item quantity="other">%d hours ago</item>
+    </plurals>
+    <plurals name="age_days">
+        <item quantity="one">%d day ago</item>
+        <item quantity="other">%d days ago</item>
     </plurals>
     <string name="sync_explained">Attendance is saved on this phone first and sent when there
         is a connection, so marking a register never needs a signal. Nothing is removed from
