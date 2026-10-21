@@ -85,7 +85,14 @@ public final class Permissions {
 		NEW_SESSION,
 
 		/** Correcting a session's dates, or removing one: the office's and an administrator's. */
-		SESSIONS
+		SESSIONS,
+
+		/**
+		 * Importing students from a CSV: a professor and up -- heads, the office and
+		 * administrators -- and never a student. A professor's rows are held to their own
+		 * department (V27), which the import checks row by row.
+		 */
+		IMPORT_STUDENTS
 	}
 
 	private Permissions() {
@@ -152,6 +159,7 @@ public final class Permissions {
 
 			case NEW_SESSION -> admin;
 			case SESSIONS -> admin || office;
+			case IMPORT_STUDENTS -> who == null || who == AccountKind.PROFESSOR || mayKeepARoll;
 		};
 	}
 

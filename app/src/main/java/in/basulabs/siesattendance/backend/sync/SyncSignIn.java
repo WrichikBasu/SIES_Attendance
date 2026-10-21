@@ -65,9 +65,11 @@ public final class SyncSignIn {
 	 * @param kind what the server says this account is, or null if it did not say. The screens
 	 *             consult it so as not to offer what the policies would refuse; see
 	 *             {@code Permissions}. It is not an authority — that is on the table.
+	 * @param somebodyElse whether the phone held another account's data, now deleted, so
+	 *                     whatever the screens kept from it has to go too
 	 */
 	public record Session(long accountId, @NonNull String displayName, boolean mustRotate,
-	                      int node, @Nullable AccountKind kind) {
+	                      int node, @Nullable AccountKind kind, boolean somebodyElse) {
 	}
 
 	/** The server said no. The message is the server's own and is meant to be shown. */
@@ -77,6 +79,36 @@ public final class SyncSignIn {
 
 		public Refused(@NonNull String message) {
 			super(message);
+		}
+	}
+
+	/**
+	 * The phone holds changes the previous account made and never sent, and signing in as
+	 * somebody else would delete them. Nothing has changed: the new session has been ended.
+	 */
+	public static final class UnsentFromSomebodyElse extends IOException {
+
+		private static final long serialVersionUID = 1L;
+
+		private final int unsent;
+
+		@Nullable
+		private final String previous;
+
+		UnsentFromSomebodyElse(int unsent, @Nullable String previous) {
+			super(unsent + " changes from the previous account have not been sent");
+			this.unsent = unsent;
+			this.previous = previous;
+		}
+
+		public int unsent() {
+			return unsent;
+		}
+
+		/** Who signed in before, as the phone last knew them, or null. */
+		@Nullable
+		public String previous() {
+			return previous;
 		}
 	}
 
@@ -90,43 +122,81 @@ public final class SyncSignIn {
 	}
 
 	/**
+	 * Gets the phone ready for the account signing in, when it is not the one this database
+	 * was filled for.
+	 * <p>
+	 * What a pull brings is what the server lets the signed-in account read, and after the
+	 * first snapshot only what has <em>changed</em> since. Signing out empties the phone, but a
+	 * session can also end without one: it expires, or an administrator ends it. The next
+	 * person to sign in then found the last one's rows still there — a professor saw what a
+	 * student had downloaded, and a student could have seen what a professor had. So another
+	 * account empties the phone first, exactly as signing out would have, and starts from a
+	 * snapshot of its own.
+	 * <p>
+	 * The outbox goes with it, and it holds the previous account's changes. Those cannot be sent
+	 * under this account, so unless the user has agreed to lose them the sign-in is undone and
+	 * {@link UnsentFromSomebodyElse} says how many there are.
+	 * <p>
+	 * An install that never recorded an account is not emptied: it is either empty already, or
+	 * it predates signing in and everything on it is waiting to be sent. It only starts its
+	 * pull from a snapshot.
+	 *
+	 * @return whether another account's data was deleted
+	 */
+	private static boolean startOverIfSomebodyElse(@NonNull Context context, long accountId,
+	                                               boolean discardUnsent)
+			throws UnsentFromSomebodyElse {
+
+		long previous = DeviceIdentity.lastAccountId(context);
+
+		if (previous == accountId && accountId != 0L) {
+			return false;
+		}
+
+		MainDatabase db = MainDatabase.getInstance(context);
+
+		if (previous == 0L) {
+			db.daoOutbox().forgetWatermarkSync();
+			DeviceIdentity.recordLastAccountId(context, accountId);
+			return false;
+		}
+
+		int unsent = db.daoOutbox().countPendingSync();
+
+		if (unsent > 0 && !discardUnsent) {
+
+			try {
+				new SyncClient(context).logout();
+			} catch (IOException e) {
+				// Best effort: the token is forgotten either way.
+			}
+			DeviceIdentity.forgetToken(context);
+
+			throw new UnsentFromSomebodyElse(unsent, DeviceIdentity.displayName(context));
+		}
+
+		SignOut.emptyThePhone(context);
+		DeviceIdentity.recordLastAccountId(context, accountId);
+		return true;
+	}
+
+	/**
 	 * Signs in, registers this phone if it is new, and stores the token.
 	 * <p>
 	 * The password array is wiped before this returns, however it returns — the same contract
 	 * the server's {@code AccountDirectory} keeps, for the same reason: a {@code String} cannot
 	 * be cleared and sits in the heap until it is collected.
 	 *
-	 * @throws Refused     if the server refused the details or the registration
-	 * @throws IOException if it could not be reached
+	 * @param discardUnsent whether changes another account left unsent may be deleted
+	 * @throws Refused                if the server refused the details or the registration
+	 * @throws UnsentFromSomebodyElse if signing in would delete another account's unsent
+	 *                                changes and {@code discardUnsent} is false
+	 * @throws IOException            if it could not be reached
 	 */
-	/**
-	 * Makes the next pull a snapshot when the account signing in is not the one this database
-	 * was filled for.
-	 * <p>
-	 * What a pull brings is what the server lets the signed-in account read, and after the
-	 * first snapshot it brings only what has <em>changed</em> since. So a phone that synced as
-	 * a class representative and is then signed in to by a professor held the CR's handful of
-	 * courses and batches, and went on holding only those: everything else the professor may
-	 * read had not changed, so no pull ever sent it. Starting over from a snapshot sends all
-	 * of it. Safe over a database that already has the rows, because a pulled row is changed
-	 * where it is and only inserted when it is not.
-	 * <p>
-	 * An install that never recorded an account counts as somebody else: it costs one
-	 * snapshot, and guessing that the same person is signing in again is how this went wrong.
-	 */
-	private static void startOverIfSomebodyElse(@NonNull Context context, long accountId) {
-
-		if (DeviceIdentity.lastAccountId(context) == accountId && accountId != 0L) {
-			return;
-		}
-
-		MainDatabase.getInstance(context).daoOutbox().forgetWatermarkSync();
-		DeviceIdentity.recordLastAccountId(context, accountId);
-	}
-
 	@NonNull
 	public static Session signIn(@NonNull Context context, @NonNull String email,
-	                             @NonNull Door door, @NonNull char[] password)
+	                             @NonNull Door door, @NonNull char[] password,
+	                             boolean discardUnsent)
 			throws IOException {
 
 		try {
@@ -161,14 +231,15 @@ public final class SyncSignIn {
 			Long accountId = longValue(answer, "accountId");
 			String name = string(answer, "displayName");
 
-			startOverIfSomebodyElse(context, accountId == null ? 0L : accountId);
+			boolean somebodyElse = startOverIfSomebodyElse(context,
+					accountId == null ? 0L : accountId, discardUnsent);
 
 			// "kind" is nested inside the response's account object, which this reader
 			// reaches because no field name repeats in that answer. See valueOf.
 			return new Session(accountId == null ? 0L : accountId,
 					name == null ? email : name,
 					"true".equals(flag(answer, "mustRotate")), node,
-					AccountKind.fromAny(string(answer, "kind")));
+					AccountKind.fromAny(string(answer, "kind")), somebodyElse);
 
 		} finally {
 			Arrays.fill(password, '\0');

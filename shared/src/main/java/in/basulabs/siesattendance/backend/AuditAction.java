@@ -74,7 +74,10 @@ public enum AuditAction {
 	DELEGATE_REVOKE("CR revoked"),
 
 	/** A phone was registered and issued a node number. */
-	DEVICE_REGISTER("Device registered");
+	DEVICE_REGISTER("Device registered"),
+
+	/** An administrator ended every session of an account. The count goes in {@code detail}. */
+	SESSIONS_END("Sessions ended");
 
 	@NonNull
 	private final String label;

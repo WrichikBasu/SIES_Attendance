@@ -786,6 +786,86 @@ class WireTest {
 	}
 
 	@Test
+	void aProfessorLoadsTheirOwnDepartmentsStudentsAndNoOthers() throws Exception {
+
+		String professor = tokenFor("a.cs@sies.edu.in", "STAFF");
+
+		var imports = get("/me", professor, null).body().get("imports");
+		assertTrue(imports.get("students").booleanValue());
+		assertFalse(imports.get("anyDepartment").booleanValue());
+		assertEquals("COMPUTER_SCIENCE", imports.get("departments").get(0).stringValue());
+		assertTrue(imports.get("attendance").booleanValue());
+
+		assertTrue(get("/me", tokenFor("office@sies.edu.in", "STAFF"), null).body()
+				.get("imports").get("anyDepartment").booleanValue(), "the office, anywhere");
+
+		Reply reply = postCsv("/roster?year=" + SESSION, """
+				rollNo,name,pronouns,email,year,stream,majorDept,semester
+				CS-FY-030,New CS Student,they/them,,FY,BSc_unaided,COMPUTER_SCIENCE,1
+				CH-FY-030,New Chemistry Student,they/them,,FY,BSc,CHEMISTRY,1
+				""", professor);
+
+		assertEquals(200, reply.status(), reply::toString);
+		assertEquals(1, reply.body().get("created").intValue(), reply::toString);
+		assertEquals(1, reply.body().get("failed").intValue());
+		assertTrue(reply.raw().contains("Line 3: ") && reply.raw().contains("not a department"),
+				"the refusal says which line and why: " + reply.raw());
+	}
+
+	@Test
+	void anAttendanceSheetIsPreviewedAndThenImported() throws Exception {
+
+		// A batch for the class, which every imported lecture is filed against.
+		postgres.asSuperuser("""
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year)
+				    VALUES (5101, 'CS-101 class', 2025);
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year)
+				    VALUES (5101, 2001, 2025);
+				""");
+
+		String sheet = """
+				Course code,CS-101
+				Date,21/07/2025
+				Start time,09:00
+				End time,10:00
+				CS-FY-001,P
+				""";
+
+		String professor = tokenFor("a.cs@sies.edu.in", "STAFF");
+		long lectures = count("SELECT count(*) FROM lectures");
+
+		Reply preview = postCsv("/attendance/import?dryRun=true", sheet, professor);
+
+		assertEquals(200, preview.status(), preview::toString);
+		assertTrue(preview.body().get("canImport").booleanValue(), preview::toString);
+		assertEquals("CS-101 class",
+				preview.body().get("lectures").get(0).get("batchName").stringValue());
+		assertEquals(lectures, count("SELECT count(*) FROM lectures"), "a preview writes nothing");
+
+		Reply imported = postCsv("/attendance/import?dryRun=false", sheet, professor);
+
+		assertEquals(200, imported.status(), imported::toString);
+		assertEquals(1, imported.body().get("written").get("created").intValue());
+		assertEquals(lectures + 1, count("SELECT count(*) FROM lectures"));
+		assertEquals(1, count("SELECT count(*) FROM attendance a JOIN lectures l "
+				+ "USING (lecture_id) WHERE a.student_id = 2001 AND a.present "
+				+ "AND (l.start_at AT TIME ZONE 'Asia/Kolkata')::date = '2025-07-21'"));
+
+		// The same sheet from somebody in another department, who cannot see the course at
+		// all -- so the preview says so, rather than confirming the course exists.
+		Reply refused = postCsv("/attendance/import?dryRun=true", sheet,
+				tokenFor("b.chem@sies.edu.in", "STAFF"));
+
+		assertEquals(200, refused.status(), refused::toString);
+		assertFalse(refused.body().get("canImport").booleanValue());
+		assertTrue(refused.raw().contains("No course you can see has the code CS-101"),
+				refused.raw());
+
+		assertEquals(400, postCsv("/attendance/import?dryRun=false", sheet,
+				tokenFor("b.chem@sies.edu.in", "STAFF")).status());
+	}
+
+	@Test
 	void theOfficeLoadsARoster() throws Exception {
 
 		Reply reply = postCsv("/roster?year=" + SESSION, """
@@ -817,19 +897,30 @@ class WireTest {
 	}
 
 	@Test
-	void aProfessorMayNotLoadARoster() throws Exception {
+	void aProfessorMayNotLoadAnotherDepartmentsRoster() throws Exception {
 
+		// V27: a professor's own department, and no other. A Chemistry professor loading a
+		// Computer Science roster has every row refused, with the reason.
 		Reply refused = postCsv("/roster?year=" + SESSION, """
 				rollNo,name,year,stream,majorDept
 				CS-FY-010,New Student,FY,BSc_unaided,COMPUTER_SCIENCE
-				""", tokenFor("a.cs@sies.edu.in", "STAFF"));
+				""", tokenFor("b.chem@sies.edu.in", "STAFF"));
 
-		assertEquals(403, refused.status(), refused::toString);
-		assertEquals("not_allowed", refused.body().get("code").stringValue());
+		assertEquals(200, refused.status(), refused::toString);
+		assertEquals(0, refused.body().get("created").intValue());
+		assertEquals(1, refused.body().get("failed").intValue());
 
 		assertEquals(0, count("SELECT count(*) FROM student_year "
 				+ "WHERE roll_no = 'CS-FY-010'"), "and nothing was written");
-		assertEquals(0, count("SELECT count(*) FROM audit_log WHERE action = 'CSV_IMPORT'"));
+
+		// A student account never may, CR or not.
+		Reply student = postCsv("/roster?year=" + SESSION, """
+				rollNo,name,year,stream,majorDept
+				CS-FY-011,Another,FY,BSc_unaided,COMPUTER_SCIENCE
+				""", tokenFor("r.rao@sies.edu.in", "STUDENT"));
+
+		assertEquals(403, student.status(), student::toString);
+		assertEquals("not_allowed", student.body().get("code").stringValue());
 	}
 
 	@Test
@@ -1201,6 +1292,42 @@ class WireTest {
 		// live grant to revoke.
 		assertEquals(404, post("/accounts/" + accountOffice + "/roles/" + grantId + "/revoke",
 				json("reason", "again"), token, null).status());
+	}
+
+	@Test
+	void anAdministratorEndsSomebodysSessionsEverywhere() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+		String phone = tokenFor("b.chem@sies.edu.in", "STAFF");
+		String laptop = tokenFor("b.chem@sies.edu.in", "STAFF");
+
+		assertEquals(200, get("/me", phone, null).status());
+
+		assertEquals(403, post("/accounts/" + accountProfChem + "/sessions/end", "{}",
+						tokenFor("a.cs@sies.edu.in", "STAFF"), null).status(),
+				"ending somebody's sessions is an administrator's");
+		assertEquals(200, get("/me", phone, null).status());
+
+		Reply ended = post("/accounts/" + accountProfChem + "/sessions/end", "{}", admin, null);
+
+		assertEquals(200, ended.status(), ended::toString);
+		assertEquals(2, ended.body().get("ended").intValue());
+
+		assertEquals(401, get("/me", phone, null).status(), "at once, on the next request");
+		assertEquals(401, get("/me", laptop, null).status());
+
+		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'SESSIONS_END' "
+				+ "AND (detail->>'account_id')::bigint = " + accountProfChem
+				+ " AND (detail->>'ended')::int = 2"));
+
+		// The account is untouched: its owner signs straight back in.
+		assertEquals(200, get("/me", tokenFor("b.chem@sies.edu.in", "STAFF"), null).status());
+
+		// Their own sessions, from this page, leave the page signed in.
+		post("/accounts/" + accountAdmin + "/sessions/end", "{}", admin, null);
+		assertEquals(200, get("/me", admin, null).status());
+
+		assertEquals(404, post("/accounts/999999/sessions/end", "{}", admin, null).status());
 	}
 
 	@Test

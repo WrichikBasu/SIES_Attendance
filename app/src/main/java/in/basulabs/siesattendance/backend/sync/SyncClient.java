@@ -201,10 +201,16 @@ public final class SyncClient {
 	 *                     or null when the server did not say
 	 * @param roles        the roles this account holds right now ({@code ADMIN},
 	 *                     {@code OFFICE}, ...), or null when the server did not say
+	 * @param importDepartments the departments this account may import students into, or
+	 *                     null when the server did not say. {@link #ANY_DEPARTMENT} alone for
+	 *                     the office and an administrator, who may import into any
 	 */
 	public record Me(boolean mayKeepARoll, @Nullable List<Long> represents,
-	                 @Nullable List<String> roles) {
+	                 @Nullable List<String> roles, @Nullable List<String> importDepartments) {
 	}
+
+	/** What {@link Me#importDepartments} holds for an account that may import anywhere. */
+	public static final String ANY_DEPARTMENT = "*";
 
 	/**
 	 * Asks the server what this account may do.
@@ -223,9 +229,13 @@ public final class SyncClient {
 
 		String body = call("GET", "/me", null);
 
+		List<String> departments = SyncJson.flagAt(body, "imports", "anyDepartment", false)
+				? List.of(ANY_DEPARTMENT)
+				: SyncJson.textListAt(body, "imports", "departments");
+
 		return new Me(SyncJson.flagIn(body, "mayKeepARoll", fallback),
 				SyncJson.courseIdsIn(body, "represents"),
-				SyncJson.textsIn(body, "roles", "role"));
+				SyncJson.textsIn(body, "roles", "role"), departments);
 	}
 
 	/** One password as a JSON string, escaped the little that a password can need. */

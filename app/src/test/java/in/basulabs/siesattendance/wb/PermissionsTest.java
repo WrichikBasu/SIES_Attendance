@@ -199,6 +199,20 @@ public class PermissionsTest {
 	}
 
 	@Test
+	public void professorsAndUpImportStudentsAndStudentsDoNot() {
+
+		Permissions.Capability importing = Permissions.Capability.IMPORT_STUDENTS;
+
+		assertTrue("any professor, held to their own department row by row",
+				Permissions.may(AccountKind.PROFESSOR, false, importing));
+		assertTrue("the office", Permissions.may(AccountKind.STAFF, true, importing));
+		assertFalse("staff who keep no roll, such as an auditor",
+				Permissions.may(AccountKind.STAFF, false, importing));
+		assertFalse("never a student, CR or not",
+				Permissions.may(AccountKind.STUDENT, true, importing));
+	}
+
+	@Test
 	public void whoKeepsTheRollIsTheServersAnswer() {
 
 		for (Permissions.Capability what : ROSTER) {

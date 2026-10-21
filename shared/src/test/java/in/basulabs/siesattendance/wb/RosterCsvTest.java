@@ -288,6 +288,31 @@ public class RosterCsvTest {
 		assertTrue(reading.errors().get(1), reading.errors().get(1).contains("before the join"));
 	}
 
+	@Test
+	public void theFormatTheScreensShowIsTheFormatThatIsRead() throws IOException {
+
+		String help = RosterCsv.formatHelp();
+
+		for (Year year : Year.values()) {
+			assertTrue("the help never names " + year, help.contains(year.toString()));
+		}
+		for (Stream stream : Stream.values()) {
+			assertTrue("the help never names " + stream.name(), help.contains(stream.name()));
+		}
+
+		RosterCsv.Reading example = read(RosterCsv.templateCsv());
+		assertFalse("the example the help shows has to import: " + example.errors(),
+				example.hasErrors());
+		assertEquals(3, example.rows().size());
+
+		in.basulabs.siesattendance.backend.util.AttendanceCsvParser.Sheet sheet =
+				in.basulabs.siesattendance.backend.util.AttendanceCsvParser.parse(
+						java.util.Arrays.asList(in.basulabs.siesattendance.backend.util
+								.AttendanceCsvParser.templateCsv().split("\n")));
+		assertTrue("and so does the attendance example: " + sheet.errors,
+				sheet.errors.isEmpty());
+	}
+
 	private static RosterCsv.Reading read(String csv) throws IOException {
 		return RosterCsv.read(new StringReader(csv));
 	}

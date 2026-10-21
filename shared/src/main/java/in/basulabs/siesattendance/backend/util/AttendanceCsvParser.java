@@ -262,7 +262,7 @@ public final class AttendanceCsvParser {
 
 		List<List<String>> cells = new ArrayList<>();
 		for (String line : heading) {
-			cells.add(CsvImporter.splitCsvLine(line));
+			cells.add(RosterCsv.splitCsvLine(line));
 		}
 
 		int[] roles = resolveRoles(cells);
@@ -409,7 +409,7 @@ public final class AttendanceCsvParser {
 				continue;
 			}
 
-			List<String> cells = CsvImporter.splitCsvLine(raw);
+			List<String> cells = RosterCsv.splitCsvLine(raw);
 			String rollNo = cells.isEmpty() ? "" : cells.get(0).trim();
 
 			if (rollNo.isEmpty()) {
@@ -561,6 +561,45 @@ public final class AttendanceCsvParser {
 	@NonNull
 	private static String stripByteOrderMark(@NonNull String line) {
 		return line.isEmpty() || line.charAt(0) != '\uFEFF' ? line : line.substring(1);
+	}
+
+	/**
+	 * The file format, written out for a person: what the app's format dialog and the web
+	 * console's import panel both show.
+	 */
+	@NonNull
+	public static String formatHelp() {
+		return "A CSV file laid out like a register: one row per student, one column per "
+				+ "class.\n\n"
+				+ "THE FIRST FOUR ROWS name each class, one fact per row, with a label in the "
+				+ "first cell:\n"
+				+ "• Course code: the course's code, such as PHYS101\n"
+				+ "• Date: 2025-07-01, 01/07/2025, 1-7-2025, 1.7.2025, 1 Jul 2025 or "
+				+ "1-Jul-2025\n"
+				+ "• Start time and End time: 09:00, 9:00 AM or 9 AM\n"
+				+ "The labels may be in any order when they are recognisable (Course, Date, "
+				+ "Start, End); without labels the rows are read in that order.\n\n"
+				+ "EVERY ROW AFTER THAT is one student:\n"
+				+ "• the first cell is the roll number in the session the date falls in. "
+				+ "Capitals, spaces, hyphens and slashes don't matter.\n"
+				+ "• each class's cell is P (or Present) for present, AB (or A, Absent) for "
+				+ "absent, and blank or a dash when the student was not in that class at "
+				+ "all.\n\n"
+				+ "WHAT HAPPENS\n"
+				+ "• Each class is filed under the session its date falls in, which has to "
+				+ "exist.\n"
+				+ "• The blank cells decide which batch was in the room: the batch that best "
+				+ "matches who was marked. That batch has to exist first; a class taught to "
+				+ "everybody needs a batch holding everybody. Marks for students outside that "
+				+ "batch are left out.\n"
+				+ "• A class already on record for the same course, batch and time has its "
+				+ "marks replaced.\n"
+				+ "• Roll numbers nobody is enrolled under are listed and ignored.\n"
+				+ "• Nothing is saved until you have seen the preview and confirmed it. A "
+				+ "column with a problem is skipped; the rest still import.\n\n"
+				+ "WHO MAY IMPORT\n"
+				+ "A professor imports the classes of courses they teach, a head their "
+				+ "department's, and an administrator any.";
 	}
 
 	/**

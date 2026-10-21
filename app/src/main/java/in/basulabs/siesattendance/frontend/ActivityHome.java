@@ -120,6 +120,15 @@ public class ActivityHome extends AppCompatActivity {
 
 		addSyncToTheAppBar();
 		observeToasts();
+
+		// A sync that finds the session ended forgets the token and stops. Without this the
+		// person stayed where they were, and every Sync now asked a server that had already
+		// said no, until the app happened to be reopened.
+		viewModel.getSyncRunning().observe(this, running -> {
+			if (!Boolean.TRUE.equals(running)) {
+				leaveIfSignedOut();
+			}
+		});
 	}
 
 	/**
@@ -199,8 +208,12 @@ public class ActivityHome extends AppCompatActivity {
 	 */
 	@Override
 	protected void onStart() {
-
 		super.onStart();
+		leaveIfSignedOut();
+	}
+
+	/** Goes to the sign-in screen when this phone has a server and no session; see onStart. */
+	private void leaveIfSignedOut() {
 
 		if (SignInGuard.gate(viewModel.hasServer(), viewModel.isSignedIn())
 				!= SignInGuard.Gate.SIGN_IN) {

@@ -269,6 +269,58 @@ public final class SyncJson {
 	}
 
 	/**
+	 * A flag inside an object field, such as {@code imports.anyDepartment} in {@code /me}, or
+	 * {@code fallback} when the answer does not carry it.
+	 */
+	public static boolean flagAt(@NonNull String body, @NonNull String object,
+	                             @NonNull String field, boolean fallback) {
+
+		try {
+			Object outer = asObject(new Reader(body).readValue(), "the response").get(object);
+
+			if (!(outer instanceof Map<?, ?>)) {
+				return fallback;
+			}
+			return asObject(outer, object).get(field) instanceof Boolean flag ? flag : fallback;
+
+		} catch (RuntimeException notJson) {
+			return fallback;
+		}
+	}
+
+	/**
+	 * A list of text inside an object field, such as {@code imports.departments}, or null when
+	 * the answer does not carry it.
+	 */
+	@Nullable
+	public static List<String> textListAt(@NonNull String body, @NonNull String object,
+	                                      @NonNull String field) {
+
+		try {
+			Object outer = asObject(new Reader(body).readValue(), "the response").get(object);
+
+			if (!(outer instanceof Map<?, ?>)) {
+				return null;
+			}
+
+			if (!(asObject(outer, object).get(field) instanceof List<?> items)) {
+				return null;
+			}
+
+			List<String> texts = new ArrayList<>();
+			for (Object item : items) {
+				if (item instanceof String text) {
+					texts.add(text);
+				}
+			}
+			return texts;
+
+		} catch (RuntimeException notJson) {
+			return null;
+		}
+	}
+
+	/**
 	 * One text field of every object in a list field, or null when the answer has no such list.
 	 * <p>
 	 * For {@code /me}'s {@code roles}: the {@code role} of each grant in force. Null and empty

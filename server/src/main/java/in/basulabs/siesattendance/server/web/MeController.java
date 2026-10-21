@@ -61,7 +61,25 @@ public final class MeController {
 	public record Who(long accountId, @NonNull String kind, @NonNull String displayName,
 	                  boolean mustRotate, boolean mayManageAccounts, boolean mayKeepARoll,
 	                  @NonNull String auditEntries, @NonNull List<Held> roles,
-	                  @NonNull List<Delegates.Delegation> represents) {
+	                  @NonNull List<Delegates.Delegation> represents,
+	                  @NonNull Imports imports) {
+	}
+
+	/**
+	 * What this account may import, so a client offers the right screens and can refuse a
+	 * row before sending it.
+	 *
+	 * @param students        whether to offer the student import at all (V27)
+	 * @param anyDepartment   true for the office and an administrator, who may add students
+	 *                        to any department
+	 * @param departments     otherwise, the departments they may: a professor's own and any
+	 *                        they head
+	 * @param attendance      whether to offer the attendance import: a professor or an
+	 *                        administrator. Which lectures they may write is still the
+	 *                        policies' decision
+	 */
+	public record Imports(boolean students, boolean anyDepartment,
+	                      @NonNull List<String> departments, boolean attendance) {
 	}
 
 	/**
@@ -137,8 +155,38 @@ public final class MeController {
 					// signed in and narrowed what each of them sees, so "may you read it" is
 					// no longer the useful question. "Is there anything in it for you" is.
 					Long.toString(counted(connection, "SELECT audit_size() AS total")),
-					roles, represents);
+					roles, represents, imports(connection, roles));
 		});
+	}
+
+	@NonNull
+	private static Imports imports(@NonNull java.sql.Connection connection,
+	                               @NonNull List<Held> roles) throws SQLException {
+
+		List<String> departments = new ArrayList<>();
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT actor_prof_department()::text");
+		     ResultSet results = statement.executeQuery()) {
+
+			if (results.next() && results.getString(1) != null) {
+				departments.add(results.getString(1));
+			}
+		}
+
+		for (Held role : roles) {
+			if ("HOD".equals(role.role()) && role.department() != null
+					&& !departments.contains(role.department())) {
+				departments.add(role.department());
+			}
+		}
+
+		return new Imports(
+				asked(connection, "SELECT actor_may_import_roster()"),
+				asked(connection, "SELECT actor_may_manage_roster()"),
+				departments,
+				asked(connection, "SELECT current_prof_id() IS NOT NULL "
+						+ "OR actor_has_role('ADMIN')"));
 	}
 
 	private static boolean asked(@NonNull java.sql.Connection connection, @NonNull String sql)

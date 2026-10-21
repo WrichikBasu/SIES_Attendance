@@ -77,7 +77,7 @@ final class AuditMessages {
 		try {
 			String sentence = switch (action) {
 				case "INSERT", "UPDATE", "DELETE" -> row(action, table, key, before, after);
-				default -> event(action, detail);
+				default -> event(action, table, detail);
 			};
 			return sentence != null ? sentence : fallback(action, table);
 
@@ -396,7 +396,8 @@ final class AuditMessages {
 	// ── Events no trigger writes ─────────────────────────────────────────
 
 	@Nullable
-	private String event(@NonNull String action, @Nullable Map<String, Object> detail) {
+	private String event(@NonNull String action, @Nullable String table,
+	                     @Nullable Map<String, Object> detail) {
 
 		return switch (action) {
 
@@ -424,7 +425,11 @@ final class AuditMessages {
 						+ ": " + rows + (rows == 1 ? " row" : " rows");
 			}
 
-			case "CSV_IMPORT" -> "Loaded a roster CSV for "
+			case "CSV_IMPORT" -> "attendance".equals(table)
+					? "Imported an attendance sheet: " + number(detail, "created")
+							+ " lectures added, " + number(detail, "replaced") + " replaced, "
+							+ number(detail, "marks") + " marks"
+					: "Loaded a roster CSV for "
 					+ session(AuditNames.id(detail, "academic_year")) + ": "
 					+ number(detail, "created") + " added, " + number(detail, "updated")
 					+ " updated, " + number(detail, "failed") + " refused";
@@ -450,6 +455,13 @@ final class AuditMessages {
 			case "ROLE_REVOKE" -> "Revoked a role";
 			case "DELEGATE_GRANT" -> "Appointed a class representative";
 			case "DELEGATE_REVOKE" -> "Ended a class representative's appointment";
+
+			case "SESSIONS_END" -> {
+				long ended = number(detail, "ended");
+				yield "Signed " + account(AuditNames.id(detail, "account_id"))
+						+ " out everywhere: " + ended + (ended == 1 ? " session" : " sessions")
+						+ " ended";
+			}
 
 			default -> null;
 		};

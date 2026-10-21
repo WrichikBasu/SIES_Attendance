@@ -105,7 +105,12 @@ public class FragmentSync extends Fragment {
 		groupSignedIn = view.findViewById(R.id.groupSignedIn);
 
 		view.<MaterialButton>findViewById(R.id.btnSyncNow)
-				.setOnClickListener(v -> viewModel.syncNow());
+				.setOnClickListener(v -> {
+					if (!viewModel.syncNow()) {
+						Navigation.findNavController(requireView())
+								.navigate(R.id.action_global_signIn);
+					}
+				});
 
 		view.<MaterialButton>findViewById(R.id.btnChangePassword)
 				.setOnClickListener(v -> askForNewPassword());

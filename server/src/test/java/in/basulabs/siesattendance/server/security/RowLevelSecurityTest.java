@@ -609,17 +609,18 @@ class RowLevelSecurityTest {
 	}
 
 	@Test
-	void aProfessorMayNotRewriteTheRoll() throws Exception {
+	void aProfessorMayNotRewriteAnotherDepartmentsRoll() throws Exception {
 
-		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+		// V27 lets a professor keep their own department's roll. Another department's stays
+		// out of reach: R RAO is a Computer Science major, and this is the Chemistry professor.
+		try (Connection as = postgres.actingAs(accountProfChem, PROF_CHEM, null)) {
 
 			// No exception: a row no policy's USING clause admits is a row the UPDATE does
 			// not see, so it matches nothing. That is the quiet form of a refusal, and it is
 			// why every one of these tests checks the read side as well.
 			assertEquals(0, update(as,
 							"UPDATE students SET name = 'CHANGED' WHERE student_id = 2001"),
-					"a roll number is what every other session's records are matched by, so "
-							+ "the roll is the office's");
+					"another department's student is not this professor's to correct");
 
 			assertEquals(0, update(as, "UPDATE student_year SET roll_no = 'CS-FY-999' "
 					+ "WHERE student_id = 2001 AND academic_year = 2025"));
@@ -627,9 +628,10 @@ class RowLevelSecurityTest {
 			// The loud form, for completeness: an INSERT has nothing to filter, so the WITH
 			// CHECK refuses it outright.
 			assertThrows(SQLException.class, () -> execute(as,
-							"INSERT INTO students (student_id, name, pronouns) "
-									+ "VALUES (2009, 'NEW PERSON', 'they/them')"),
-					"and a professor may not add a student either");
+							"INSERT INTO student_year (student_id, academic_year, roll_no, year, "
+									+ "stream, major_dept, semester) VALUES (2002, 2026, "
+									+ "'CS-SY-777', 'SY', 'BSc_unaided', 'COMPUTER_SCIENCE', 3)"),
+					"nor enrol anybody into it");
 		}
 
 		try (Connection as = postgres.actingAs(accountOffice, null, null)) {
@@ -948,6 +950,40 @@ class RowLevelSecurityTest {
 			assertEquals(1, update(as, "UPDATE academic_years SET end_date = '2028-05-30' "
 							+ "WHERE academic_year = 2027"),
 					"correcting a session's dates is still the office's");
+		}
+	}
+
+	@Test
+	void aProfessorEnrolsTheirOwnDepartmentAndNoOther() throws Exception {
+
+		String enrol = "INSERT INTO student_year (student_id, academic_year, roll_no, year, "
+				+ "stream, major_dept, semester) VALUES ";
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			execute(as, "INSERT INTO students (student_id, name, pronouns) "
+					+ "VALUES (2010, 'NEW CS', 'they/them')");
+			execute(as, enrol + "(2010, 2025, 'CS-FY-010', 'FY', 'BSc_unaided', "
+					+ "'COMPUTER_SCIENCE', 1)");
+			assertEquals(1, update(as, "UPDATE students SET name = 'NEW CS RENAMED' "
+					+ "WHERE student_id = 2010"), "and correct them afterwards");
+			as.commit();
+		}
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			execute(as, "INSERT INTO students (student_id, name, pronouns) "
+					+ "VALUES (2011, 'NOT CS', 'they/them')");
+			assertThrows(SQLException.class, () -> execute(as, enrol + "(2011, 2025, "
+							+ "'CH-FY-011', 'FY', 'BSc', 'CHEMISTRY', 1)"),
+					"a Chemistry enrolment is not a CS professor's to make");
+		}
+
+		// A student on two departments' rolls is read by both and corrected by neither.
+		postgres.asSuperuser(enrol + "(2010, 2026, 'CH-SY-010', 'SY', 'BSc', 'CHEMISTRY', 3)");
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals(1, count(as, "SELECT count(*) FROM students WHERE student_id = 2010"));
+			assertEquals(0, update(as, "UPDATE students SET name = 'NO' WHERE student_id = 2010"),
+					"Chemistry's as much as Computer Science's now");
 		}
 	}
 

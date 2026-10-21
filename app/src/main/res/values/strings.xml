@@ -125,10 +125,7 @@
     <string name="dialog_import_message">Students will be imported into %1$d-%2$02d. Existing roll numbers are updated; nobody is removed.</string>
     <string name="dialog_import_result_title">Import finished</string>
     <string name="dialog_csv_format_title">CSV format</string>
-    <string name="dialog_csv_format_message">The first row must be a header. Column order does
-        not matter.\n\nRequired: rollNo, name, year, stream, majorDept\nOptional: pronouns,
-        email, minorDept, oeDept, semester, division\n\nDivision applies only to BSc and BA
-        (A to D); leave it blank for every other stream.\n\nExample:\n\n%1$s</string>
+    <string name="dialog_csv_format_message">%1$s\n\nEXAMPLE\n%2$s</string>
 
     <!-- Warnings and errors -->
     <string name="error_required">Required</string>
@@ -215,12 +212,20 @@
     <string name="label_apaar">APAAR ID</string>
     <string name="label_not_recorded">Not recorded</string>
     <string name="label_sessions">Sessions</string>
+    <string name="message_sync_before_import">Sync once first, so the app knows which departments you may import into.</string>
     <string name="dialog_sign_out_unsent_title">Changes not sent yet</string>
     <plurals name="dialog_sign_out_unsent_message">
         <item quantity="one">%1$d change hasn\'t reached the server and will be lost if you sign out.</item>
         <item quantity="other">%1$d changes haven\'t reached the server and will be lost if you sign out.</item>
     </plurals>
     <string name="action_sign_out_anyway">Sign out anyway</string>
+    <plurals name="dialog_sign_in_unsent_message">
+        <item quantity="one">%1$d change made by %2$s hasn\'t reached the server. Signing in as someone else deletes it. To keep it, sign in as %2$s instead.</item>
+        <item quantity="other">%1$d changes made by %2$s haven\'t reached the server. Signing in as someone else deletes them. To keep them, sign in as %2$s instead.</item>
+    </plurals>
+    <string name="the_previous_account">the previous account</string>
+    <string name="action_sign_in_anyway">Sign in anyway</string>
+    <string name="message_sign_in_again">You\'ve been signed out. Sign in again to keep syncing.</string>
     <string name="helper_no_linked_batches_cr">No batch is linked to your courses yet. Ask a professor to link one.</string>
     <string name="hint_course_batches">Batches</string>
     <string name="action_assign_batches">Assign batches</string>
@@ -550,14 +555,7 @@
     <string name="hint_import_attendance_intro">Nothing is saved until you confirm.</string>
 
     <string name="dialog_attendance_format_title">Attendance file format</string>
-    <string name="dialog_attendance_format_message">The first column holds the roll numbers.
-        Every column after it is one class, named by four heading lines: course code, date,
-        start time and end time.\n\nIn a student\'s cell, P means present and AB means absent.
-        Leave it empty if the student was not in that class at all — that is how the app works
-        out which batch the class was held for, and it is not the same as an absence.\n\nEvery
-        imported class is saved against a batch, so the batch that was in the room has to exist
-        in the app before you import. A class taught to everybody needs a batch holding
-        everybody.\n\nExample:\n\n%1$s</string>
+    <string name="dialog_attendance_format_message">%1$s\n\nEXAMPLE\n%2$s</string>
 
     <string name="label_import_batch">%1$s · %2$d marked, %3$d not in this class</string>
     <string name="label_import_batch_all">%1$s · %2$d marked</string>

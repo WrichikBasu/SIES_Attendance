@@ -97,7 +97,9 @@ public final class CsvImporter {
 	 */
 	@NonNull
 	public static Result importStudents(@NonNull Context context, @NonNull Uri uri,
-	                                    int academicYear) {
+	                                    int academicYear,
+	                                    @androidx.annotation.Nullable
+	                                    java.util.Set<String> allowedDepartments) {
 
 		Result result = new Result();
 		MainDatabase db = MainDatabase.getInstance(context);
@@ -121,6 +123,17 @@ public final class CsvImporter {
 			}
 
 			for (RosterCsv.Row row : reading.rows()) {
+
+				// The server takes a professor's rows for their own department only (V27).
+				// Refused here, before it is written, so the phone never holds a roster the
+				// server will not.
+				if (allowedDepartments != null
+						&& !allowedDepartments.contains(row.majorDept().name())) {
+					result.failed++;
+					result.errors.add("Line " + row.line() + ": " + row.majorDept()
+							+ " is not a department you may add students to.");
+					continue;
+				}
 
 				try {
 					if (write(db, row, academicYear)) {

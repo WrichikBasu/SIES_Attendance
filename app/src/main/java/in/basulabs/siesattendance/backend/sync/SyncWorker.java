@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.MainDatabase;
 
 /**
@@ -128,7 +129,8 @@ public final class SyncWorker extends Worker {
 			// password rather than retrying a credential the server has already refused.
 			Log.w(TAG, "the session is no longer valid");
 			DeviceIdentity.forgetToken(context);
-			DeviceIdentity.recordSyncError(context, "Sign in again to keep syncing");
+			DeviceIdentity.recordSyncError(context,
+					context.getString(R.string.message_sign_in_again));
 			return Result.failure();
 
 		} catch (SyncClient.Refused e) {

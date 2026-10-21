@@ -183,14 +183,16 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 | sign in on the web console | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | take and edit a register | courses they represent | their courses | the department's | — | — | ✓ |
 | read students | their courses' rolls | their courses' rolls | the department's | all | all | all |
-| add or remove students and enrolments | — | — | the department's | ✓ | — | ✓ |
+| add or correct students and enrolments | — | their own department | the department's | ✓ | — | ✓ |
+| remove students | — | — | the department's | ✓ | — | ✓ |
 | add or correct a professor | — | — | — | ✓ | — | ✓ |
 | add or withdraw a course | — | — | the department's | ✓ | — | ✓ |
 | open a new academic session | — | — | — | — | — | ✓ |
 | correct or remove a session | — | — | — | ✓ | — | ✓ |
 | create, edit, delete batches; link them to courses | — | any course | any course | — | — | — |
 | read batches | those linked to their courses | all | all | all | all | all |
-| load a roster CSV | — | — | — | ✓ | — | ✓ |
+| import students (CSV) | — | their own department | the department's | ✓ | — | ✓ |
+| import attendance (CSV) | — | their courses | the department's | — | — | ✓ |
 | appoint a CR | — | their courses | the department's | — | — | ✓ |
 | create accounts, grant or revoke roles | — | — | — | — | — | ✓ |
 | read the audit trail | their own actions | their department's teaching | their department's | their own actions | all | all |
@@ -243,7 +245,10 @@ POST /sync/push                           the phone's queued changes
 GET  /sync/pull?since=&limit=             a snapshot, or changes since the watermark
 
 GET  /export                              a register, as JSON rows
-POST /roster                              a roster CSV (office, admin)
+POST /roster?year=                        a roster CSV (professors for their own department,
+                                          heads for theirs, the office and admins for any)
+POST /attendance/import?dryRun=           an attendance sheet: preview (true) or import (false)
+GET  /import/formats                      both CSV formats, described, with examples
 GET  /data, /data/{table}?after=&limit=   browse tables, under your own policies
 GET  /audit?limit=&beforeAt=&beforeId=    the audit trail, as far as you may read it
 
@@ -252,6 +257,7 @@ GET  /accounts/options, /accounts/people?kind=, /accounts/sessions, /accounts/co
 POST /accounts                            create an account (optionally with a role, or a new professor)
 POST /accounts/{id}/roles                 grant a role
 POST /accounts/{id}/roles/{grantId}/revoke
+POST /accounts/{id}/sessions/end           sign an account out everywhere (admin)
 
 GET  /courses/{id}/roll?academicYear=     a course's roll, for appointing a CR
 POST /courses/{id}/representatives        appoint a CR
@@ -263,7 +269,9 @@ an account is locked, and each address gets `LOGIN_ATTEMPTS` tries per five minu
 
 ## The web console
 
-`/console.html` holds the Accounts, Data, Representatives and Audit trail panels. Only the staff
+`/console.html` holds the Accounts, Data, Representatives, Import and Audit trail panels. Import
+has a student import (pick the session, choose the file) and an attendance import (preview, then
+import), each with its CSV format written out. Only the staff
 sign-in is accepted, so students cannot use it. The page shows only the panels `/me` says the
 account can use, and refreshes the visible panel every ten seconds. The old URLs
 `/accounts.html` and `/data.html` redirect to it.
@@ -282,7 +290,10 @@ The audit trail shows each entry as a sentence ("Marked R RAO absent in CS-101 o
   every row is read under the caller's policies.
 - **Push:** applied by primary key, and safe to repeat. A row the phone created must carry the
   phone's node in its key.
-- **Signing in as a different account** resets the watermark, so the next pull is a fresh snapshot.
+- **Signing in as a different account** empties the phone first, as signing out would, so
+  nothing from the previous account survives a session that expired or was ended. If the
+  previous account left changes unsent, the sign-in asks before discarding them. Either way the
+  next pull is a fresh snapshot.
 - **Signing out** sends the queue (asking before discarding anything unsent), then empties the
   phone's synced tables.
 

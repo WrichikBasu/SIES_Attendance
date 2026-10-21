@@ -90,8 +90,10 @@ deployment.
 
 ## Roster CSV
 
-The same file is read by the app's **Students → Import CSV** and by the server's `POST /roster`,
-using the same parser:
+The same file is read by the app's **Students → Import CSV**, the web console's **Import** tab and
+the server's `POST /roster`, using the same parser. Professors import students into their own
+department, heads into the departments they head, and the office and administrators into any.
+Students can't import. Both screens show the full format; this is the summary:
 
 ```
 rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept,semester,division,
@@ -109,6 +111,13 @@ apaarId,joinDate,leaveDate
   date keeps the one already stored.
 - A student is matched by roll number in that session, then by APAAR ID, then by email. The
   APAAR ID is what recognises the same person in a new session under a new roll number.
+
+### Attendance sheets
+
+Imported from **Attendance → Import attendance** in the app, or the console's **Import** tab. The
+first four rows name each class (course code, date, start time, end time) and every row after
+that is a student: their roll number, then `P`, `AB`, or blank for "not in this class". The blank
+cells decide which batch was in the room. Nothing is saved until the preview has been confirmed.
 
 ### Joining late and leaving
 

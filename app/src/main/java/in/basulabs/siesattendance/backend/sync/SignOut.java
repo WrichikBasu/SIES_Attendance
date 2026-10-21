@@ -90,6 +90,19 @@ public final class SignOut {
 		DeviceIdentity.forgetToken(context);
 		SyncScheduler.cancelPending(context);
 
+		emptyThePhone(context);
+		DeviceIdentity.recordLastAccountId(context, 0L);
+	}
+
+	/**
+	 * Deletes every synced row, the outbox and what the last account's sign-in recorded about it.
+	 * <p>
+	 * The session's token and the installation are left alone, so this serves a sign-in by
+	 * somebody else as well as a sign-out: see {@code SyncSignIn}. Whatever is still in the
+	 * outbox is lost, so a caller has either sent it or been told to discard it.
+	 */
+	static void emptyThePhone(@NonNull Context context) {
+
 		MainDatabase db = MainDatabase.getInstance(context);
 
 		db.runInTransaction(() -> {
@@ -114,7 +127,7 @@ public final class SignOut {
 		DeviceIdentity.recordAccountKind(context, null);
 		DeviceIdentity.recordRepresents(context, null);
 		DeviceIdentity.recordRoles(context, null);
-		DeviceIdentity.recordLastAccountId(context, 0L);
+		DeviceIdentity.recordImportDepartments(context, null);
 		DeviceIdentity.recordLastRun(context, 0, 0);
 		DeviceIdentity.clearRefusals(context);
 	}

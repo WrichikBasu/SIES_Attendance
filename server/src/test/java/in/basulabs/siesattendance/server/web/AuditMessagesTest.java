@@ -207,6 +207,20 @@ class AuditMessagesTest {
 	}
 
 	@Test
+	void anAttendanceSheetIsNotARoster() {
+		assertEquals("Imported an attendance sheet: 3 lectures added, 1 replaced, 240 marks",
+				messages.describe("CSV_IMPORT", "attendance", null, null, null,
+						row("created", 3L, "replaced", 1L, "marks", 240L, "skipped", 0L)));
+	}
+
+	@Test
+	void endingSessionsNamesWhoseTheyWere() {
+		assertEquals("Signed Dr. Manoj Singh out everywhere: 2 sessions ended",
+				messages.describe("SESSIONS_END", "app_account", null, null, null,
+						row("account_id", 10L, "ended", 2L)));
+	}
+
+	@Test
 	void somethingThisBuildHasNeverSeenStillReadsAsASentence() {
 
 		assertEquals("Added a row to some new table",

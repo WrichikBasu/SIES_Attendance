@@ -133,6 +133,10 @@
     .note.after { margin: 0.8rem 0 0; }
     [hidden] { display: none !important; }
     .muted { color: var(--ink-3); }
+    .format { white-space: pre-wrap; font-size: 0.85rem; background: var(--bg-2, #f4f4f2);
+        padding: 0.8rem; border-radius: 7px; margin: 0.4rem 0 0.9rem; }
+    .problems { margin: 0.4rem 0 0; padding-left: 1.2rem; font-size: 0.85rem; }
+    .problems li.bad { color: var(--bad); }
 </style>
 </head>
 <body>
@@ -147,6 +151,7 @@
         <button id="tabAccounts" data-panel="accounts">Accounts</button>
         <button id="tabData" data-panel="data">Data</button>
         <button id="tabReps" data-panel="reps">Representatives</button>
+        <button id="tabImport" data-panel="import">Import</button>
         <button id="tabAudit" data-panel="audit">Audit trail</button>
     </nav>
 </header>
@@ -224,7 +229,7 @@
             <div class="scroll"><table>
                 <thead><tr>
                     <th>#</th><th>Name</th><th>Email</th><th>Kind</th>
-                    <th>Roles</th><th>Represents</th><th>State</th>
+                    <th>Roles</th><th>Represents</th><th>State</th><th></th>
                 </tr></thead>
                 <tbody id="rows"></tbody>
             </table></div>
@@ -288,6 +293,41 @@
                 <tbody id="roll"></tbody>
             </table></div>
             <p class="note after" id="rollNote"></p>
+        </section>
+    </div>
+
+    <!-- ── Import ────────────────────────────────────────────────── -->
+    <div id="panelImport" hidden>
+
+        <section id="importStudents" hidden>
+            <h2>Import students</h2>
+            <details>
+                <summary>CSV format</summary>
+                <div class="format" id="studentsFormat"></div>
+            </details>
+            <div class="row">
+                <div><label for="importSession">Session</label>
+                     <select id="importSession"></select></div>
+                <div><label for="studentsFile">File</label>
+                     <input id="studentsFile" type="file" accept=".csv,text/csv"></div>
+            </div>
+            <button id="studentsImport">Import students</button>
+            <div id="studentsResult"></div>
+        </section>
+
+        <section id="importAttendance" hidden>
+            <h2>Import attendance</h2>
+            <details>
+                <summary>CSV format</summary>
+                <div class="format" id="attendanceFormat"></div>
+            </details>
+            <div class="row">
+                <div><label for="attendanceFile">File</label>
+                     <input id="attendanceFile" type="file" accept=".csv,text/csv"></div>
+            </div>
+            <button id="attendancePreview">Preview</button>
+            <div id="attendanceResult"></div>
+            <button id="attendanceImport" hidden>Import</button>
         </section>
     </div>
 
@@ -412,6 +452,39 @@ async function request(method, path, body) {
 }
 
 const api = (path) => request("GET", path);
+
+/** Sends a CSV file's text as the body, with the same error handling as everything else. */
+async function sendCsv(path, text) {
+
+    const response = await fetch("/api/v1" + path, {
+        method: "POST",
+        headers: {"Accept": "application/json", "Content-Type": "text/csv",
+            "Authorization": "Bearer " + token},
+        body: text,
+    });
+
+    const reply = await response.text();
+    let parsed = null;
+
+    try {
+        parsed = reply ? JSON.parse(reply) : null;
+    } catch (e) {
+        throw new Error("The server answered with something that is not JSON: "
+            + reply.slice(0, 200));
+    }
+
+    if (response.status === 401) {
+        forget();
+        throw new Error(parsed && parsed.message ? parsed.message : "Sign in again.");
+    }
+
+    if (!response.ok) {
+        throw new Error(parsed && parsed.message ? parsed.message
+            : "POST " + path + " answered " + response.status);
+    }
+
+    return parsed;
+}
 const post = (path, body) => request("POST", path, body === undefined ? {} : body);
 
 // ── Signing in and out ───────────────────────────────────────────────
@@ -519,6 +592,7 @@ function forget() {
     $("panelAccounts").hidden = true;
     $("panelData").hidden = true;
     $("panelReps").hidden = true;
+    $("panelImport").hidden = true;
     $("panelAudit").hidden = true;
     $("signInCard").hidden = false;
     $("live").textContent = "";
@@ -537,6 +611,17 @@ async function opened() {
     // all -- not greyed out, not there.
     $("tabAccounts").hidden = !admin;
     $("tabAudit").hidden = !anyTrail;
+
+    // The two imports, each offered to whoever /me says may use it. Which rows land is
+    // still the server's decision, row by row and column by column.
+    const imports = me.imports || {};
+    $("importStudents").hidden = !imports.students;
+    $("importAttendance").hidden = !imports.attendance;
+    $("tabImport").hidden = !(imports.students || imports.attendance);
+
+    if (imports.students || imports.attendance) {
+        await loadImportPanel();
+    }
 
     // Appointing a representative is the course instructor's before it is anybody's, so this
     // panel is offered to whoever has a course to appoint one for. /accounts/courses answers
@@ -602,6 +687,7 @@ function show(which) {
     $("panelAccounts").hidden = which !== "accounts";
     $("panelData").hidden = which !== "data";
     $("panelReps").hidden = which !== "reps";
+    $("panelImport").hidden = which !== "import";
     $("panelAudit").hidden = which !== "audit";
 
     refresh();
@@ -655,6 +741,9 @@ async function refresh(quietly) {
             await loadTables();
         } else if (panel === "reps") {
             await loadRoll();
+        } else if (panel === "import") {
+            // Nothing to poll: an import is something somebody does, and reloading the
+            // panel under them would throw away a preview they are reading.
         } else {
             await loadTrail(null);
         }
@@ -930,6 +1019,13 @@ async function loadAccounts() {
         if (!account.lastLoginAt) { state.push("never signed in"); }
         cell(state.join(", ") || "in use").className = state.length ? "" : "muted";
 
+        const end = document.createElement("button");
+        end.className = "quiet";
+        end.textContent = "End sessions";
+        end.title = "Sign " + account.displayName + " out on every phone and browser";
+        end.addEventListener("click", () => endSessions(account));
+        cell("").appendChild(end);
+
         rows.appendChild(row);
     });
 
@@ -937,6 +1033,27 @@ async function loadAccounts() {
         accounts.map((a) => a.accountId),
         accounts.map((a) => a.accountId + " · " + a.displayName + " · " + a.kind));
 
+}
+
+async function endSessions(account) {
+
+    if (!confirm("Sign " + account.displayName + " out on every phone and browser? "
+            + "Their password stays the same.")) {
+        return;
+    }
+
+    clearSay();
+
+    try {
+        const reply = await post("/accounts/" + account.accountId + "/sessions/end", {});
+        say(reply.ended === 0
+            ? account.displayName + " had no open sessions."
+            : "Ended " + reply.ended + (reply.ended === 1 ? " session" : " sessions")
+                + " for " + account.displayName + ".", true);
+
+    } catch (e) {
+        say(e.message, false);
+    }
 }
 
 async function revokeRole(account, grant) {
@@ -1290,6 +1407,179 @@ async function rows(which, after) {
 }
 
 $("more").addEventListener("click", () => rows(table, nextCursor));
+
+// ── Import ───────────────────────────────────────────────────────────
+
+/** The two formats, from the server, and the sessions a roster can go into. */
+async function loadImportPanel() {
+
+    const formats = await api("/import/formats");
+
+    $("studentsFormat").textContent = formats.students + "\n\nEXAMPLE\n" + formats.studentsExample;
+    $("attendanceFormat").textContent = formats.attendance + "\n\nEXAMPLE\n"
+        + formats.attendanceExample;
+
+    const sessions = await api("/accounts/sessions");
+    fill($("importSession"), sessions, sessions.map((year) =>
+        year + "–" + String((year + 1) % 100).padStart(2, "0")));
+}
+
+/** The chosen file's text, or an error saying none was chosen. */
+async function chosenFile(input) {
+    const file = $(input).files[0];
+    if (!file) {
+        throw new Error("Choose a CSV file first.");
+    }
+    return await file.text();
+}
+
+/** A list of lines, each marked bad or not. */
+function lineList(items) {
+    const list = document.createElement("ul");
+    list.className = "problems";
+    items.forEach(([text, bad]) => {
+        const item = document.createElement("li");
+        item.textContent = text;
+        if (bad) {
+            item.className = "bad";
+        }
+        list.appendChild(item);
+    });
+    return list;
+}
+
+$("studentsImport").addEventListener("click", async () => {
+
+    clearSay();
+    const result = $("studentsResult");
+    result.textContent = "";
+
+    try {
+        const text = await chosenFile("studentsFile");
+        const reply = await sendCsv("/roster?year=" + encodeURIComponent($("importSession").value),
+            text);
+
+        say(reply.created + " added, " + reply.updated + " updated, " + reply.failed
+            + " refused.", reply.failed === 0);
+
+        if (reply.errors && reply.errors.length > 0) {
+            result.appendChild(lineList(reply.errors.map((line) => [line, true])));
+        }
+
+    } catch (e) {
+        say(e.message, false);
+    }
+});
+
+/** The text of the file the preview was made from, so Import sends exactly that. */
+let previewedAttendance = null;
+
+$("attendancePreview").addEventListener("click", async () => {
+
+    clearSay();
+    $("attendanceImport").hidden = true;
+    previewedAttendance = null;
+
+    try {
+        const text = await chosenFile("attendanceFile");
+        const plan = await sendCsv("/attendance/import?dryRun=true", text);
+
+        showAttendancePlan(plan);
+
+        if (plan.canImport) {
+            previewedAttendance = text;
+            $("attendanceImport").hidden = false;
+            $("attendanceImport").textContent = "Import " + plan.usable + " class"
+                + (plan.usable === 1 ? "" : "es") + ", " + plan.marks + " marks";
+        }
+
+    } catch (e) {
+        say(e.message, false);
+    }
+});
+
+$("attendanceImport").addEventListener("click", async () => {
+
+    clearSay();
+
+    try {
+        const reply = await sendCsv("/attendance/import?dryRun=false", previewedAttendance);
+        const written = reply.written;
+
+        say(written.created + " classes added, " + written.replaced + " replaced, "
+            + written.marks + " marks saved" + (written.skipped > 0
+                ? "; " + written.skipped + " skipped" : "") + ".", true);
+
+        $("attendanceImport").hidden = true;
+        previewedAttendance = null;
+        $("attendanceResult").textContent = "";
+
+    } catch (e) {
+        say(e.message, false);
+    }
+});
+
+/** One row per class: what it will be filed as, and anything stopping it. */
+function showAttendancePlan(plan) {
+
+    const result = $("attendanceResult");
+    result.textContent = "";
+
+    const lines = [];
+    plan.errors.forEach((error) => lines.push([error, true]));
+    plan.warnings.forEach((warning) => lines.push([warning, false]));
+
+    if (lines.length > 0) {
+        result.appendChild(lineList(lines));
+    }
+
+    if (plan.lectures.length === 0) {
+        return;
+    }
+
+    const table = document.createElement("table");
+    const head = document.createElement("tr");
+    ["Class", "Batch", "Present", "Absent", ""].forEach((title) => {
+        const th = document.createElement("th");
+        th.textContent = title;
+        head.appendChild(th);
+    });
+    table.appendChild(head);
+
+    plan.lectures.forEach((lecture) => {
+
+        const row = document.createElement("tr");
+        const cell = (value) => {
+            const td = document.createElement("td");
+            td.textContent = value === null || value === undefined ? "" : String(value);
+            row.appendChild(td);
+            return td;
+        };
+
+        cell(lecture.label);
+        cell(lecture.batchName || "—");
+        cell(lecture.problems.length ? "" : lecture.present);
+        cell(lecture.problems.length ? "" : lecture.absent);
+
+        const notes = cell("");
+        const items = lecture.problems.map((problem) => [problem, true])
+            .concat(lecture.notes.map((note) => [note, false]));
+
+        if (lecture.replacesExisting && lecture.problems.length === 0) {
+            items.push(["Replaces the marks already recorded for this class.", false]);
+        }
+        if (items.length > 0) {
+            notes.appendChild(lineList(items));
+        }
+
+        table.appendChild(row);
+    });
+
+    const scroll = document.createElement("div");
+    scroll.className = "scroll";
+    scroll.appendChild(table);
+    result.appendChild(scroll);
+}
 
 // ── The audit trail ──────────────────────────────────────────────────
 

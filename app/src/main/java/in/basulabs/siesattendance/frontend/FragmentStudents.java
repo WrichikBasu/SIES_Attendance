@@ -430,7 +430,8 @@ public class FragmentStudents extends Fragment {
 		// one at a time.
 		View importCsv = view.findViewById(R.id.btnImportCsv);
 
-		if (!viewModel.may(Permissions.Capability.STUDENTS)) {
+		// A professor and up; see Permissions.Capability.IMPORT_STUDENTS.
+		if (!viewModel.may(Permissions.Capability.IMPORT_STUDENTS)) {
 			importCsv.setVisibility(View.GONE);
 		}
 
@@ -690,6 +691,7 @@ public class FragmentStudents extends Fragment {
 		new AlertDialog.Builder(requireContext())
 				.setTitle(R.string.dialog_csv_format_title)
 				.setMessage(getString(R.string.dialog_csv_format_message,
+						in.basulabs.siesattendance.backend.util.RosterCsv.formatHelp(),
 						in.basulabs.siesattendance.backend.util.CsvImporter.templateCsv()))
 				.setPositiveButton(android.R.string.ok, null)
 				.show();

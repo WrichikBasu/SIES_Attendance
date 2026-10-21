@@ -103,6 +103,16 @@ public final class RosterImporter {
 
 		for (RosterCsv.Row row : reading.rows()) {
 
+			// Each row in a department the caller may enrol in (V27): the office and an
+			// administrator anywhere, a head in theirs, a professor in their own. Said here,
+			// with the line, rather than left to the policy's "violates row-level security".
+			if (!mayEnrolIn(connection, row.majorDept())) {
+				failed++;
+				errors.add("Line " + row.line() + ": " + row.majorDept()
+						+ " is not a department you may add students to.");
+				continue;
+			}
+
 			Savepoint savepoint = connection.setSavepoint();
 
 			try {
@@ -157,6 +167,20 @@ public final class RosterImporter {
 
 		upsertStudentYear(connection, studentId, academicYear, row);
 		return updated;
+	}
+
+	private static boolean mayEnrolIn(@NonNull Connection connection,
+	                                  @NonNull Department department) throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT actor_may_enrol_in(?::" + PostgresEnumTypes.of(Department.class) + ")")) {
+
+			statement.setString(1, department.name());
+
+			try (ResultSet results = statement.executeQuery()) {
+				return results.next() && results.getBoolean(1);
+			}
+		}
 	}
 
 	@Nullable

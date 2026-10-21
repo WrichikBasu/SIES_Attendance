@@ -352,12 +352,76 @@ public final class RosterCsv {
 	@NonNull
 	public static String templateCsv() {
 		return "rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept,semester,"
-				+ "division\n"
+				+ "division,apaarId,joinDate,leaveDate\n"
 				+ "2024CS032,Aarav Patil,he/him,aarav@sies.edu.in,SY,BSc,COMPUTER_SCIENCE,"
-				+ "MATHEMATICS,ENGLISH,3,\n"
+				+ "MATHEMATICS,ENGLISH,3,,123456789012,,\n"
 				+ "2024CS033,Sneha Mehta,she/her,sneha@sies.edu.in,SY,BSc,COMPUTER_SCIENCE,,,3,"
-				+ "\n"
-				+ "2024PH017,Ishaan Rao,he/him,ishaan@sies.edu.in,SY,BSc,PHYSICS,,,3,B\n";
+				+ ",,15/07/2024,\n"
+				+ "2024PH017,Ishaan Rao,he/him,ishaan@sies.edu.in,SY,BSc,PHYSICS,,,3,B,,,\n";
+	}
+
+	/**
+	 * The file format, written out for a person: what the app's format dialog and the web
+	 * console's import panel both show. Built from the same rules the parser enforces -- the
+	 * years, the streams, which semesters fit which year -- so the description cannot drift
+	 * from what is accepted.
+	 */
+	@NonNull
+	public static String formatHelp() {
+
+		StringBuilder years = new StringBuilder();
+		StringBuilder semesters = new StringBuilder();
+
+		for (Year year : Year.values()) {
+			years.append(years.length() == 0 ? "" : ", ").append(year);
+			List<Integer> fit = AcademicRules.semestersFor(year);
+			if (!fit.isEmpty()) {
+				semesters.append(semesters.length() == 0 ? "" : "; ").append(year).append(" ")
+						.append(fit.get(0)).append(fit.size() > 1 ? "–" + fit.get(fit.size() - 1)
+								: "");
+			}
+		}
+
+		StringBuilder streams = new StringBuilder();
+		for (Stream stream : Stream.values()) {
+			streams.append(streams.length() == 0 ? "" : ", ").append(stream.name());
+		}
+
+		return "A CSV file with one row per student, after a header row naming the columns. "
+				+ "Columns can be in any order, and capitals, spaces and underscores in their "
+				+ "names don't matter.\n\n"
+				+ "REQUIRED COLUMNS\n"
+				+ "• rollNo: the roll number in this session, such as 2024CS032\n"
+				+ "• name\n"
+				+ "• year: " + years + "\n"
+				+ "• stream: " + streams + ". BSc and MSc are read as the unaided course "
+				+ "when that is the only one the department runs.\n"
+				+ "• majorDept: the department's name or code, such as Computer Science or "
+				+ "COMPUTER_SCIENCE\n\n"
+				+ "OPTIONAL COLUMNS (leave out, or leave the cell blank)\n"
+				+ "• pronouns: they/them when blank\n"
+				+ "• email\n"
+				+ "• minorDept, oeDept: the minor and open elective departments, each different "
+				+ "from the major and from each other\n"
+				+ "• semester: " + semesters + "\n"
+				+ "• division: A to D, only for the aided BSc and BA\n"
+				+ "• apaarId: digits only. It recognises the same student in a later session, "
+				+ "under a new roll number.\n"
+				+ "• joinDate: if they joined after the session began. Attendance counts from "
+				+ "this day.\n"
+				+ "• leaveDate: if they have left. They come off the rolls and the exports.\n"
+				+ "Dates are written 2026-06-15, 15/06/2026 or 15-06-2026.\n\n"
+				+ "HOW ROWS ARE MATCHED\n"
+				+ "A row updates a student already on file when its roll number is in this "
+				+ "session, or its APAAR ID or email belongs to a student; otherwise it adds "
+				+ "one. A blank APAAR ID or date keeps the one already stored. An import never "
+				+ "removes anybody.\n\n"
+				+ "WHO MAY IMPORT\n"
+				+ "A professor adds students to their own department, a head to the departments "
+				+ "they head, and the office or an administrator to any. A row for another "
+				+ "department is refused.\n\n"
+				+ "A row with a problem is skipped and listed with its line number; the rest "
+				+ "still import.";
 	}
 
 	// ── Cell helpers ─────────────────────────────────────────────────────

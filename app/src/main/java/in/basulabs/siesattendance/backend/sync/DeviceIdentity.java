@@ -88,6 +88,8 @@ public final class DeviceIdentity {
 
 	private static final String ROLES = "roles";
 
+	private static final String IMPORT_DEPARTMENTS = "importDepartments";
+
 	/** How many refusals are kept. Enough to read; not a log. */
 	private static final int REFUSALS_KEPT = 20;
 
@@ -369,6 +371,45 @@ public final class DeviceIdentity {
 		if (me.roles() != null) {
 			recordRoles(context, me.roles());
 		}
+
+		if (me.importDepartments() != null) {
+			recordImportDepartments(context, me.importDepartments());
+		}
+	}
+
+	/**
+	 * The departments this account may import students into, as {@code /me} last said: a
+	 * professor's own and any they head. Null when it has never said, and
+	 * {@link SyncClient#ANY_DEPARTMENT} alone for the office and an administrator.
+	 */
+	@Nullable
+	public static Set<String> importDepartments(@NonNull Context context) {
+
+		String stored = prefs(context).getString(IMPORT_DEPARTMENTS, null);
+
+		if (stored == null) {
+			return null;
+		}
+
+		Set<String> departments = new HashSet<>();
+		for (String department : stored.split(",")) {
+			if (!department.isEmpty()) {
+				departments.add(department);
+			}
+		}
+		return departments;
+	}
+
+	/** Null forgets them, as signing in again and signing out do. */
+	public static void recordImportDepartments(@NonNull Context context,
+	                                           @Nullable Collection<String> departments) {
+
+		if (departments == null) {
+			prefs(context).edit().remove(IMPORT_DEPARTMENTS).apply();
+			return;
+		}
+		prefs(context).edit().putString(IMPORT_DEPARTMENTS, String.join(",", departments))
+				.apply();
 	}
 
 	/**

@@ -21,13 +21,16 @@ import java.util.List;
 import java.util.Locale;
 
 import in.basulabs.siesattendance.backend.AccountKind;
+import in.basulabs.siesattendance.backend.AuditAction;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.GrantAuthority;
 import in.basulabs.siesattendance.server.importer.ServerIds;
 import in.basulabs.siesattendance.server.security.AccountDirectory;
+import in.basulabs.siesattendance.server.security.AuditLog;
 import in.basulabs.siesattendance.server.security.Delegates;
 import in.basulabs.siesattendance.server.security.Passwords;
 import in.basulabs.siesattendance.server.security.Roles;
+import in.basulabs.siesattendance.server.security.Sessions;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -543,6 +546,45 @@ public final class AccountsController {
 
 			throw new ApiException(404, "no_live_grant",
 					"That grant does not belong to account " + accountId + ".");
+		});
+	}
+
+	/** @param ended how many live sessions this put an end to */
+	public record SessionsEnded(int ended) {
+	}
+
+	/**
+	 * Ends every session of an account, wherever it is signed in.
+	 * <p>
+	 * For a lost phone, or one being handed to somebody else. The account itself is untouched:
+	 * its owner signs in again with the same password. Each phone finds out at its next
+	 * request, drops its token and shows the sign-in screen; the next account to sign in there
+	 * empties it first. The administrator's own session is left alone, so ending their own
+	 * accounts sessions does not sign this page out.
+	 */
+	@PostMapping("/{accountId}/sessions/end")
+	@NonNull
+	public SessionsEnded endSessions(@PathVariable long accountId,
+	                                 @NonNull HttpServletRequest http) throws SQLException {
+
+		RequestActor actor = RequestActor.of(http);
+
+		return database.inTransaction(actor, connection -> {
+
+			refuseUnlessAdmin(connection);
+
+			if (!accountExists(connection, accountId)) {
+				throw new ApiException(404, "no_account", "There is no account " + accountId);
+			}
+
+			int ended = Sessions.revokeAllFor(connection, accountId,
+					actor.session().sessionId(), "ended by an administrator");
+
+			AuditLog.record(connection, AuditAction.SESSIONS_END, "app_account",
+					AuditLog.detail("account_id", accountId),
+					AuditLog.detail("account_id", accountId, "ended", ended));
+
+			return new SessionsEnded(ended);
 		});
 	}
 

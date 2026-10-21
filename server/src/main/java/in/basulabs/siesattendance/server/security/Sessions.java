@@ -198,11 +198,20 @@ public final class Sessions {
 	public int revokeAllFor(long accountId, @Nullable UUID except, @NonNull String reason)
 			throws SQLException {
 
-		try (Connection connection = dataSource.getConnection();
-		     PreparedStatement statement = connection.prepareStatement(
-				     "UPDATE app_session SET revoked_at = now(), reason = ? "
-						     + "WHERE account_id = ? AND revoked_at IS NULL "
-						     + "AND (?::uuid IS NULL OR session_id <> ?::uuid)")) {
+		try (Connection connection = dataSource.getConnection()) {
+			return revokeAllFor(connection, accountId, except, reason);
+		}
+	}
+
+	/** The same, on a connection the caller holds, so it commits with the rest of its work. */
+	public static int revokeAllFor(@NonNull Connection connection, long accountId,
+	                               @Nullable UUID except, @NonNull String reason)
+			throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"UPDATE app_session SET revoked_at = now(), reason = ? "
+						+ "WHERE account_id = ? AND revoked_at IS NULL "
+						+ "AND (?::uuid IS NULL OR session_id <> ?::uuid)")) {
 
 			statement.setString(1, reason);
 			statement.setLong(2, accountId);

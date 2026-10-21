@@ -492,13 +492,20 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * <p>
 	 * The password array is wiped by {@code SyncSignIn}, however this ends.
 	 *
-	 * @param onDone run on a background thread with the display name on success, or null on
-	 *               failure. What to show the user goes to {@link #getToastMessage()}, which
-	 *               the activity shows wherever the user has got to by then — the same channel
-	 *               every other background result in this app reports through
+	 * @param discardUnsent whether changes another account left unsent may be deleted
+	 * @param onUnsent      run on a background thread instead of {@code onDone} when they may
+	 *                      not, with how many there are and who made them, if known. Nothing
+	 *                      has changed; the screen asks, and signs in again with
+	 *                      {@code discardUnsent} set once somebody has said yes
+	 * @param onDone        run on a background thread with the display name on success, or
+	 *                      null on failure. What to show the user goes to
+	 *                      {@link #getToastMessage()}, which the activity shows wherever the
+	 *                      user has got to by then — the same channel every other background
+	 *                      result in this app reports through
 	 */
 	public void signIn(@NonNull String email, @NonNull SyncSignIn.Door door,
-	                   @NonNull char[] password,
+	                   @NonNull char[] password, boolean discardUnsent,
+	                   @NonNull java.util.function.BiConsumer<Integer, String> onUnsent,
 	                   @NonNull java.util.function.Consumer<String> onDone) {
 
 		busy.setValue(true);
@@ -506,7 +513,11 @@ public class AttendanceViewModel extends AndroidViewModel {
 		NETWORK_TASK_EXECUTOR.execute(() -> {
 			try {
 				SyncSignIn.Session session = SyncSignIn.signIn(getApplication(), email, door,
-						password);
+						password, discardUnsent);
+
+				if (session.somebodyElse()) {
+					forgetTheLastAccount();
+				}
 
 				// What the server said about the password, so the screen can offer the one
 				// thing that works instead of leaving somebody to discover it by syncing and
@@ -529,6 +540,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				// phone passed from one CR to another must not show the first one's courses.
 				DeviceIdentity.recordRepresents(getApplication(), null);
 				DeviceIdentity.recordRoles(getApplication(), null);
+				DeviceIdentity.recordImportDepartments(getApplication(), null);
 
 				// What the server will let this account change, and which courses a class
 				// representative may mark. Asked here rather than guessed from the account
@@ -555,6 +567,9 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 				SyncScheduler.requestSync(getApplication());
 				onDone.accept(session.displayName());
+
+			} catch (SyncSignIn.UnsentFromSomebodyElse unsent) {
+				onUnsent.accept(unsent.unsent(), unsent.previous());
 
 			} catch (java.io.IOException e) {
 				// The server's own sentence where there is one: every refusal to sign in reads
@@ -593,8 +608,57 @@ public class AttendanceViewModel extends AndroidViewModel {
 			}
 
 			SignOut.forgetEverything(getApplication());
+			forgetTheLastAccount();
 			toastMessage.postValue("Signed out");
 			onDone.run();
+		});
+	}
+
+	/**
+	 * Lets go of everything this ViewModel kept from the account whose data has just been
+	 * deleted.
+	 * <p>
+	 * It outlives a sign-out, because it belongs to the activity, and much of what it holds is
+	 * not watching the database: the students list and the report are the results of their
+	 * last query, and the filters name courses, batches and sessions that were the last
+	 * account's. Left alone, the next account to sign in was shown the previous one's students
+	 * until something happened to query again. Any thread.
+	 */
+	private void forgetTheLastAccount() {
+
+		new Handler(Looper.getMainLooper()).post(() -> {
+
+			studentFilter = null;
+			studentYearChosenByUser = false;
+			filteredStudents.setValue(new ArrayList<>());
+
+			lectureFilter.clearPeriod();
+			lectureFilter.courseID = null;
+			lectureFilter.professorID = null;
+			lectureFilter.department = null;
+			lectureFilter.batchID = null;
+			lectureFilter.courseType = null;
+			refreshLectures();
+
+			statsHandler.removeCallbacks(statsRunnable);
+			statsFilter = null;
+			statsYearChosenByUser = false;
+			statRows.setValue(new ArrayList<>());
+			statsSummary.setValue(null);
+			statsBelowCount.setValue(0);
+
+			breakdownFilter = null;
+			breakdownStudentID = -1L;
+
+			clearRoll();
+			importResult.setValue(null);
+			attendancePlan.setValue(null);
+			attendanceImportResult.setValue(null);
+			exportResult.setValue(null);
+
+			// The session too: the one this phone was using came from the deleted rows.
+			stopAwaitingSessions();
+			resolveCurrentSession();
 		});
 	}
 
@@ -605,10 +669,20 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * the server has had since this device's watermark. There is no separate "fetch" and no
 	 * separate "send everything again" — the queue is filled by triggers on every write, so a
 	 * row that has not reached the server is in it, and asking twice cannot help.
+	 *
+	 * @return false when there is no session to sync with, and the person has been told to
+	 * sign in again instead
 	 */
-	public void syncNow() {
+	public boolean syncNow() {
+
+		if (hasServer() && !isSignedIn()) {
+			toastMessage.setValue(getApplication().getString(R.string.message_sign_in_again));
+			return false;
+		}
+
 		SyncScheduler.requestSync(getApplication());
 		toastMessage.setValue("Looking for changes, both ways");
+		return true;
 	}
 
 	/**
@@ -1105,12 +1179,40 @@ public class AttendanceViewModel extends AndroidViewModel {
 	// ── CSV import ───────────────────────────────────────────────────────
 
 	public void importCsv(@NonNull Uri uri) {
+
+		if (!may(Permissions.Capability.IMPORT_STUDENTS)) {
+			sayNotPermitted();
+			return;
+		}
+
+		// Which departments the rows may be in: any, for the office and an administrator and
+		// for a phone with no server; a professor's own and the ones they head otherwise.
+		Set<String> allowed = null;
+
+		if (DeviceIdentity.accountKind(getApplication()) != null) {
+
+			Set<String> departments = DeviceIdentity.importDepartments(getApplication());
+
+			if (departments == null) {
+				// Never recorded: a sign-in from before this build. Guessing would either
+				// refuse a whole roster or let rows through that the server will not take.
+				toastMessage.setValue(getApplication().getString(
+						R.string.message_sync_before_import));
+				return;
+			}
+
+			if (!departments.contains(SyncClient.ANY_DEPARTMENT)) {
+				allowed = departments;
+			}
+		}
+
 		busy.setValue(true);
 		final int acadYear = studentFilter().academicYear;
+		final Set<String> departments = allowed;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			CsvImporter.Result result =
-					CsvImporter.importStudents(getApplication(), uri, acadYear);
+					CsvImporter.importStudents(getApplication(), uri, acadYear, departments);
 			importResult.postValue(result);
 			busy.postValue(false);
 			refreshStudents();

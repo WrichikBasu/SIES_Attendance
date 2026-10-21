@@ -97,9 +97,10 @@ public final class RosterController {
 
 		return database.inTransaction(actor, connection -> {
 
-			if (!mayManageRoster(connection)) {
+			if (!mayImportRoster(connection)) {
 				throw new ApiException(403, "not_allowed",
-						"Loading a roster is for the office and an administrator.");
+						"Loading a roster is for professors, heads of department, the office "
+								+ "and administrators.");
 			}
 
 			RosterImporter.Result result;
@@ -129,10 +130,11 @@ public final class RosterController {
 		});
 	}
 
-	private static boolean mayManageRoster(@NonNull Connection connection) throws SQLException {
+	/** V27: the office, an administrator, a head or a professor. Each row is still checked. */
+	private static boolean mayImportRoster(@NonNull Connection connection) throws SQLException {
 
 		try (Statement statement = connection.createStatement();
-		     ResultSet results = statement.executeQuery("SELECT actor_may_manage_roster()")) {
+		     ResultSet results = statement.executeQuery("SELECT actor_may_import_roster()")) {
 
 			return results.next() && results.getBoolean(1);
 		}

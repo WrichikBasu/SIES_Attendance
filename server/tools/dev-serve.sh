@@ -6,6 +6,12 @@
 #   PORT=8081 server/tools/dev-serve.sh  somewhere else
 #   server/tools/dev-serve.sh --check    only check what is already running
 #
+# Before starting, it makes sure the database is answering. The dev database
+# is the sies-pg container from dev-database.sh, and Docker does not restart
+# it after a reboot unless told to, so it is started here when it is stopped
+# rather than leaving bootRun to fail with "Connection to localhost:55432
+# refused". DB_HOST, DB_PORT and DB_CONTAINER override where to look.
+#
 # This exists because of a mistake made twice: a bootRun that fails with
 # "Port 8080 was already in use" leaves the OLD process serving, and
 # /actuator/health answers exactly the same from both. A stale server
@@ -123,6 +129,71 @@ if curl -sf --max-time 2 "$BASE/actuator/health" >/dev/null 2>&1; then
     echo "    Stop it, then run this again. --check says what it has."
     exit 1
 fi
+
+# ── The database ────────────────────────────────────────────────────
+
+DB_HOST="${DB_HOST:-localhost}"
+DB_PORT="${DB_PORT:-55432}"
+DB_CONTAINER="${DB_CONTAINER:-sies-pg}"
+
+db_answers() {
+    # Bash's own TCP, so this needs neither psql nor nc on the machine. Under a
+    # timeout, because a host that drops packets leaves connect() waiting for minutes.
+    timeout 3 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$DB_HOST" "$DB_PORT" 2>/dev/null
+}
+
+ensure_database() {
+
+    if db_answers; then
+        echo "==> the database is answering on $DB_HOST:$DB_PORT"
+        return 0
+    fi
+
+    if [ "$DB_HOST" != "localhost" ] && [ "$DB_HOST" != "127.0.0.1" ]; then
+        echo "FAILED: nothing is answering on $DB_HOST:$DB_PORT, and that is not a local"
+        echo "        container this script can start."
+        return 1
+    fi
+
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "FAILED: nothing is answering on $DB_HOST:$DB_PORT, and docker is not installed"
+        echo "        to start $DB_CONTAINER with."
+        return 1
+    fi
+
+    local state
+    state="$(docker inspect -f '{{.State.Status}}' "$DB_CONTAINER" 2>/dev/null || true)"
+
+    if [ -z "$state" ]; then
+        echo "FAILED: nothing is answering on $DB_HOST:$DB_PORT, and there is no container"
+        echo "        called $DB_CONTAINER. Create it with:"
+        echo
+        echo "    ./server/tools/dev-database.sh"
+        return 1
+    fi
+
+    if [ "$state" != "running" ]; then
+        echo "==> $DB_CONTAINER is $state; starting it"
+        docker start "$DB_CONTAINER" >/dev/null
+    fi
+
+    # Up is not ready: PostgreSQL takes a few seconds to accept connections, and the
+    # port is published before it does.
+    local waited=0
+    until docker exec "$DB_CONTAINER" pg_isready -q -U postgres >/dev/null 2>&1 && db_answers; do
+        if [ "$waited" -ge 30 ]; then
+            echo "FAILED: $DB_CONTAINER did not accept connections on $DB_HOST:$DB_PORT within"
+            echo "        30 seconds. docker logs $DB_CONTAINER says why."
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    echo "==> the database is answering on $DB_HOST:$DB_PORT"
+}
+
+ensure_database || exit 1
 
 echo "==> port $PORT is free; starting"
 exec "$ROOT/gradlew" -p "$ROOT" :server:bootRun --args="$EXPOSE --server.port=$PORT"

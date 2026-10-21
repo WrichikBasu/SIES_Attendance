@@ -77,6 +77,12 @@ public class PostgresSchemaDriftTest {
 
 	private static final Pattern QUOTED = Pattern.compile("'([^']*)'");
 
+	/** A value appended later, which V1 allows; BEFORE and AFTER would reorder and are refused. */
+	private static final Pattern ADD_VALUE = Pattern.compile(
+			"ALTER\\s+TYPE\\s+(\\w+)\\s+ADD\\s+VALUE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?'([^']*)'"
+					+ "(\\s+(?:BEFORE|AFTER))?",
+			Pattern.CASE_INSENSITIVE);
+
 	/** Three-column tuples from the department_stream seed. */
 	private static final Pattern SEED_ROW = Pattern.compile(
 			"\\(\\s*'(\\w+)'\\s*,\\s*'(\\w+)'\\s*,\\s*(\\d+)\\s*\\)");
@@ -872,10 +878,24 @@ public class PostgresSchemaDriftTest {
 		Map<String, List<String>> all = new LinkedHashMap<>();
 
 		for (String file : migrationFileNames()) {
-			for (Map.Entry<String, List<String>> entry : enumTypesIn(read(file)).entrySet()) {
-				List<String> clash = all.put(entry.getKey(), entry.getValue());
+
+			String sql = read(file);
+
+			for (Map.Entry<String, List<String>> entry : enumTypesIn(sql).entrySet()) {
+				List<String> clash = all.put(entry.getKey(), new ArrayList<>(entry.getValue()));
 				assertTrue("enum type '" + entry.getKey() + "' is declared by more than one "
 						+ "migration", clash == null);
+			}
+
+			Matcher added = ADD_VALUE.matcher(sql);
+
+			while (added.find()) {
+				List<String> values = all.get(added.group(1));
+				assertTrue(file + " adds a value to enum type '" + added.group(1)
+						+ "', which no earlier migration declares", values != null);
+				assertTrue(file + " puts '" + added.group(2) + "' BEFORE or AFTER another "
+						+ "value; values are only ever appended", added.group(3) == null);
+				values.add(added.group(2));
 			}
 		}
 		return all;

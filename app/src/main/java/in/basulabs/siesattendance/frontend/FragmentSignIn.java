@@ -19,6 +19,7 @@ import androidx.navigation.NavOptions;
 import androidx.navigation.Navigation;
 
 import com.google.android.material.button.MaterialButton;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
@@ -162,8 +163,23 @@ public class FragmentSignIn extends Fragment {
 		// password is never kept anywhere after this and why the token is what gets stored.
 		etPassword.setText("");
 
-		viewModel.signIn(email, door, characters, displayName ->
-				Ui.onMain(this, () -> {
+		signIn(email, characters, false);
+	}
+
+	/**
+	 * Signs in with a copy of the password, keeping this one until the answer is in: the
+	 * question about another account's unsent changes needs it a second time, and asking for
+	 * it again would only be asking the user to retype what they have just typed.
+	 */
+	private void signIn(@NonNull String email, @NonNull char[] characters,
+	                    boolean discardUnsent) {
+
+		viewModel.signIn(email, door, characters.clone(), discardUnsent,
+				(unsent, previous) -> Ui.onMain(this, () ->
+						askToDiscard(email, characters, unsent, previous)),
+				displayName -> Ui.onMain(this, () -> {
+
+					Arrays.fill(characters, '\0');
 
 					if (displayName == null) {
 						// The server's own sentence is already on its way to the snackbar;
@@ -171,9 +187,29 @@ public class FragmentSignIn extends Fragment {
 						return;
 					}
 
-					Arrays.fill(characters, '\0');
 					enterTheApp();
 				}));
+	}
+
+	/**
+	 * The previous account left changes that never reached the server, and this sign-in would
+	 * delete them along with the rest of its data. The same question signing out asks.
+	 */
+	private void askToDiscard(@NonNull String email, @NonNull char[] characters, int unsent,
+	                          @Nullable String previous) {
+
+		String who = previous == null ? getString(R.string.the_previous_account) : previous;
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_sign_out_unsent_title)
+				.setMessage(getResources().getQuantityString(
+						R.plurals.dialog_sign_in_unsent_message, unsent, unsent, who))
+				.setPositiveButton(R.string.action_sign_in_anyway,
+						(d, w) -> signIn(email, characters, true))
+				.setNegativeButton(R.string.action_cancel,
+						(d, w) -> Arrays.fill(characters, '\0'))
+				.setOnCancelListener(d -> Arrays.fill(characters, '\0'))
+				.show();
 	}
 
 	/**
