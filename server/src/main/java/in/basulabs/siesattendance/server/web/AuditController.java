@@ -16,6 +16,9 @@ import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+
+import tools.jackson.databind.ObjectMapper;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -60,7 +63,15 @@ public final class AuditController {
 	                    @Nullable String rowKey, @Nullable String sessionId,
 	                    @Nullable String deviceNode, @Nullable String clientIp,
 	                    @Nullable String appVersion, @Nullable String before,
-	                    @Nullable String after, @Nullable String detail) {
+	                    @Nullable String after, @Nullable String detail,
+	                    @Nullable String summary) {
+
+		@NonNull
+		Entry withSummary(@NonNull String sentence) {
+			return new Entry(auditId, occurredAt, actorAccount, actorLabel, action, tableName,
+					rowKey, sessionId, deviceNode, clientIp, appVersion, before, after, detail,
+					sentence);
+		}
 	}
 
 	/**
@@ -123,6 +134,8 @@ public final class AuditController {
 				}
 			}
 
+			entries = summarised(connection, entries);
+
 			String total;
 
 			try (PreparedStatement statement =
@@ -165,7 +178,78 @@ public final class AuditController {
 				results.getString("app_version"),
 				results.getString("before_image"),
 				results.getString("after_image"),
-				results.getString("detail"));
+				results.getString("detail"),
+				null);
+	}
+
+	/**
+	 * The page with a sentence on every entry, saying what happened in words.
+	 * <p>
+	 * The names in it are looked up once for the page and under the caller's own actor, so a
+	 * sentence names nothing its reader could not read; see {@link AuditNames}.
+	 */
+	@NonNull
+	private static List<Entry> summarised(@NonNull java.sql.Connection connection,
+	                                      @NonNull List<Entry> entries) throws SQLException {
+
+		AuditNames names = new AuditNames();
+		List<List<Map<String, Object>>> parsed = new ArrayList<>();
+		List<Map.Entry<String, Map<String, Object>>> images = new ArrayList<>();
+
+		for (Entry entry : entries) {
+
+			// Key, before, after, detail: in that order, and any of them may be null.
+			List<Map<String, Object>> maps = java.util.Arrays.asList(json(entry.rowKey()),
+					json(entry.before()), json(entry.after()), json(entry.detail()));
+			parsed.add(maps);
+
+			for (int at = 0; at < maps.size(); at++) {
+
+				Map<String, Object> map = maps.get(at);
+
+				if (map != null) {
+					// Names from the images only (1 and 2): a key names nothing. Every map is
+					// searched for IDs to look up, the key and the detail included.
+					if (at == 1 || at == 2) {
+						names.learnFrom(entry.tableName(), map);
+					}
+					images.add(Map.entry(entry.tableName() == null ? "" : entry.tableName(), map));
+				}
+			}
+		}
+
+		names.lookUp(connection, images);
+
+		AuditMessages messages = new AuditMessages(names);
+		List<Entry> described = new ArrayList<>();
+
+		for (int at = 0; at < entries.size(); at++) {
+
+			Entry entry = entries.get(at);
+			List<Map<String, Object>> maps = parsed.get(at);
+
+			described.add(entry.withSummary(messages.describe(entry.action(), entry.tableName(),
+					maps.get(0), maps.get(1), maps.get(2), maps.get(3))));
+		}
+		return described;
+	}
+
+	private static final ObjectMapper JSON = new ObjectMapper();
+
+	@Nullable
+	@SuppressWarnings("unchecked")
+	private static Map<String, Object> json(@Nullable String text) {
+
+		if (text == null || text.isBlank()) {
+			return null;
+		}
+
+		try {
+			Object value = JSON.readValue(text, Object.class);
+			return value instanceof Map<?, ?> map ? (Map<String, Object>) map : null;
+		} catch (RuntimeException notJson) {
+			return null;
+		}
 	}
 
 	@Nullable

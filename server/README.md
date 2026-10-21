@@ -262,6 +262,11 @@ sign-in is accepted, so students cannot use it. The page shows only the panels `
 account can use, and refreshes the visible panel every ten seconds. The old URLs
 `/accounts.html` and `/data.html` redirect to it.
 
+The audit trail shows each entry as a sentence ("Marked R RAO absent in CS-101 on Tue 14 Jul 2025,
+09:00"), built by `AuditMessages` from the entry's row images. Names are looked up by
+`AuditNames` as the reader, so a sentence names nothing the reader couldn't otherwise see.
+**Details** on each row shows the raw action, table, key and the before and after images.
+
 ## Sync
 
 - **On the phone,** triggers on every synced table queue each change in an outbox, and the app

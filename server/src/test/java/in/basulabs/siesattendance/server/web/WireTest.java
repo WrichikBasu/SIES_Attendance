@@ -1459,6 +1459,29 @@ class WireTest {
 	}
 
 	@Test
+	void everyEntryInTheTrailIsSaidInWords() throws Exception {
+
+		// The console shows these instead of an action, a table and a key. The names come
+		// from lookups run as this professor, so the fixture's mark on their own lecture reads
+		// with the student and the course named.
+		Reply mine = get("/audit?limit=200", tokenFor("a.cs@sies.edu.in", "STAFF"), null);
+
+		assertEquals(200, mine.status(), mine::toString);
+
+		boolean sawTheMark = false;
+
+		for (var entry : mine.body().get("entries")) {
+
+			String summary = entry.get("summary").stringValue();
+			assertFalse(summary.isBlank(), "an entry with no sentence: " + entry);
+
+			sawTheMark |= summary.startsWith("Marked R RAO ") && summary.contains(" in CS-101 on ");
+		}
+
+		assertTrue(sawTheMark, "the fixture's mark, by name: " + mine.raw());
+	}
+
+	@Test
 	void theDepartmentsHeadReadsTheDepartmentsTrail() throws Exception {
 
 		String head = tokenFor("c.head@sies.edu.in", "STAFF");

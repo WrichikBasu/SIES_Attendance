@@ -324,8 +324,9 @@
 
         <section>
             <h2>Audit trail</h2>
-            <p class="note">Every write you may read, newest first, with who made it: the
-                account, the session, the device and the address. An auditor or an
+            <p class="note">Every change you may read, newest first, said in words, with who
+                made it and from where. <em>Details</em> shows the database's own record of
+                it, before and after. An auditor or an
                 administrator reads the whole trail; a professor reads what happened to their
                 own lectures, marks and courses, whoever did it, and what they themselves did;
                 a head of department reads their department's. The service's own database role
@@ -1357,7 +1358,20 @@ async function loadTrail(after) {
         + " entries" + (trailCursor ? "" : " — the whole trail");
 }
 
-/** One entry, with its two images behind a disclosure. */
+/** The database's own description of an entry: the action, the table and the key. */
+function rawEntry(entry) {
+    return entry.action
+        + (entry.tableName ? " " + entry.tableName : "")
+        + (entry.rowKey ? " " + entry.rowKey : "");
+}
+
+/**
+ * One entry: the server's sentence for it, and the database's own record behind a disclosure.
+ *
+ * The sentence is what a person reads -- "Marked R RAO absent in CS201 on Tue 14 Jul 2025, 09:00"
+ * rather than an action, a table and a key. The record is still there for when the question is
+ * what exactly changed. An older server sends no sentence, and then the record is all there is.
+ */
 function trailRow(entry) {
 
     const row = document.createElement("tr");
@@ -1375,12 +1389,7 @@ function trailRow(entry) {
 
     const what = document.createElement("td");
     what.className = "what";
-    const action = document.createElement("b");
-    action.textContent = entry.action;
-    what.appendChild(action);
-    what.appendChild(document.createTextNode(
-        (entry.tableName ? " " + entry.tableName : "")
-        + (entry.rowKey ? " " + entry.rowKey : "")));
+    what.textContent = entry.summary || rawEntry(entry);
     row.appendChild(what);
 
     const from = document.createElement("td");
@@ -1390,14 +1399,22 @@ function trailRow(entry) {
 
     const more = document.createElement("td");
 
-    if (entry.before || entry.after || entry.detail) {
-
+    {
         const peek = document.createElement("button");
         peek.className = "peek";
-        peek.textContent = "show";
+        peek.textContent = "details";
 
         const panel = document.createElement("div");
         panel.hidden = true;
+
+        const technical = document.createElement("div");
+        technical.className = "muted";
+        technical.textContent = "Technical details";
+        panel.appendChild(technical);
+
+        const raw = document.createElement("pre");
+        raw.textContent = rawEntry(entry);
+        panel.appendChild(raw);
 
         [["before", entry.before], ["after", entry.after], ["detail", entry.detail]]
             .forEach(([name, value]) => {
@@ -1425,7 +1442,7 @@ function trailRow(entry) {
 
         peek.addEventListener("click", () => {
             panel.hidden = !panel.hidden;
-            peek.textContent = panel.hidden ? "show" : "hide";
+            peek.textContent = panel.hidden ? "details" : "hide";
             row.classList.toggle("open", !panel.hidden);
         });
 
