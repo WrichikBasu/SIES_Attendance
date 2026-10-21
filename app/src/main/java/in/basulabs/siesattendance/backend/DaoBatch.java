@@ -50,6 +50,21 @@ public abstract class DaoBatch {
 	public abstract List<EntityBatchDesc> getAllSync();
 
 	/**
+	 * One session's batches that are linked to any of these courses, as {@link #getAllForYear}
+	 * orders them. What a class representative's batch tab lists: see
+	 * {@code Permissions.visibleBatches}.
+	 */
+	@Query("SELECT * FROM batch_desc WHERE academicYear = :academicYear AND batchID IN "
+			+ "(SELECT batchID FROM course_batch_map WHERE courseID IN (:courseIDs)) "
+			+ "ORDER BY batchName")
+	public abstract LiveData<List<EntityBatchDesc>> getForYearLinkedTo(int academicYear,
+	                                                                     List<Long> courseIDs);
+
+	/** The batches linked to any of these courses, by ID. */
+	@Query("SELECT DISTINCT batchID FROM course_batch_map WHERE courseID IN (:courseIDs)")
+	public abstract List<Long> getIdsLinkedToSync(List<Long> courseIDs);
+
+	/**
 	 * Every batch in one session. This backs the batch picker when attendance is being taken,
 	 * which lists them all rather than only those linked to the selected course; the reasoning
 	 * is at the foot of {@code DaoCourse}.

@@ -209,6 +209,7 @@
     <string name="section_batch_courses">Courses</string>
     <string name="section_course_instructors">Taught by</string>
     <string name="label_no_linked_batches">No batch linked yet</string>
+    <string name="helper_no_linked_batches_cr">No batch is linked to the courses you represent yet. Attendance is always taken for a batch, so ask a professor to link one to this course.</string>
     <string name="hint_course_batches">Batches</string>
     <string name="action_assign_batches">Assign batches</string>
     <string name="dialog_course_batches_title">Batches for this course</string>

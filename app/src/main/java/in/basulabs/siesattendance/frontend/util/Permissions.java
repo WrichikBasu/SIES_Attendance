@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Set;
 
 import in.basulabs.siesattendance.backend.AccountKind;
+import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
 
 /**
@@ -39,6 +40,12 @@ import in.basulabs.siesattendance.backend.EntityCourse;
  * open a register for any, mark it, and learn only at the next sync that the server refused every
  * mark. {@link #visibleCourses} narrows every course list a screen is given to the appointments
  * {@code /me} reported, which the app asks for at sign-in and again on every sync.
+ *
+ * <h3>Which batches a student sees</h3>
+ * Only the ones linked to a course they represent, by {@link #visibleBatches}: a batch is a list
+ * of students, and a class representative has no business with the list for a course they do
+ * not mark. The server narrows what it sends the same way (V24), with one addition the screens
+ * do not need, which V24 explains.
  *
  * <h3>When nothing is known</h3>
  * Permitted, for the same reason {@code SignInGuard} lets a build with no server through: an
@@ -111,6 +118,39 @@ public final class Permissions {
 			// Unknown is permitted for the reason in the class notes.
 			case BATCHES -> who == null || who == AccountKind.PROFESSOR;
 		};
+	}
+
+	/**
+	 * The batches out of that list this account is shown.
+	 * <p>
+	 * Every batch for anybody but a student. For a student, the ones linked to a course they
+	 * represent, in the order given; none when no appointment has been recorded, for the same
+	 * reason as {@link #visibleCourses}.
+	 *
+	 * @param linked the batches linked to the courses this account represents, or null when its
+	 *               appointments have never been recorded
+	 */
+	@NonNull
+	public static List<EntityBatchDesc> visibleBatches(@Nullable AccountKind who,
+	                                                  @Nullable Set<Long> linked,
+	                                                  @NonNull List<EntityBatchDesc> batches) {
+
+		if (who != AccountKind.STUDENT) {
+			return batches;
+		}
+
+		List<EntityBatchDesc> visible = new ArrayList<>();
+
+		if (linked == null) {
+			return visible;
+		}
+
+		for (EntityBatchDesc batch : batches) {
+			if (linked.contains(batch.batchID)) {
+				visible.add(batch);
+			}
+		}
+		return visible;
 	}
 
 	/**

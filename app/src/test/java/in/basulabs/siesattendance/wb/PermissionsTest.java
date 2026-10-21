@@ -22,6 +22,7 @@ import java.util.stream.Stream;
 import in.basulabs.siesattendance.backend.AccountKind;
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.frontend.util.Permissions;
@@ -89,6 +90,32 @@ public class PermissionsTest {
 
 		assertEquals("nor is an install that never recorded who signed in",
 				3, Permissions.visibleCourses(null, null, all).size());
+	}
+
+	@Test
+	public void aStudentSeesOnlyTheBatchesOfTheirCourses() {
+
+		List<EntityBatchDesc> all = List.of(batch(5001, "B1"), batch(5002, "B2"),
+				batch(5003, "Club"));
+
+		assertEquals(List.of("B1", "B2"), names(Permissions.visibleBatches(
+				AccountKind.STUDENT, Set.of(5001L, 5002L), all)));
+
+		assertEquals("no appointment recorded is no batch, not every batch",
+				List.of(), names(Permissions.visibleBatches(AccountKind.STUDENT, null, all)));
+
+		assertEquals("a professor sees every batch",
+				3, Permissions.visibleBatches(AccountKind.PROFESSOR, Set.of(), all).size());
+	}
+
+	private static EntityBatchDesc batch(long id, String name) {
+		EntityBatchDesc batch = new EntityBatchDesc(name, 2026, null);
+		batch.batchID = id;
+		return batch;
+	}
+
+	private static List<String> names(List<EntityBatchDesc> batches) {
+		return batches.stream().map(batch -> batch.batchName).toList();
 	}
 
 	@Test

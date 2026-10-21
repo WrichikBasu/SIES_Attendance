@@ -413,7 +413,7 @@ public class FragmentTakeAttendance extends Fragment {
 				});
 
 				tilBatch.setHelperText(list.isEmpty()
-						? getString(R.string.helper_no_batches_for_session)
+						? getString(viewModel.noBatchesHelper())
 						: null);
 
 				// Restores the group after a rotation. Deliberately not onGroupChosen(),

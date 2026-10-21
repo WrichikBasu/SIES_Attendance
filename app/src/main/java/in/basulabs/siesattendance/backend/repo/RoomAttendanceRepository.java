@@ -540,6 +540,19 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 	@Override
 	@NonNull
+	public LiveData<List<EntityBatchDesc>> observeBatchesForYearLinkedTo(
+			int academicYear, @NonNull List<Long> courseIDs) {
+		return db.daoBatch().getForYearLinkedTo(academicYear, courseIDs);
+	}
+
+	@Override
+	@NonNull
+	public List<Long> batchIdsLinkedToSync(@NonNull List<Long> courseIDs) {
+		return db.daoBatch().getIdsLinkedToSync(courseIDs);
+	}
+
+	@Override
+	@NonNull
 	public LiveData<List<ClassKey>> observeClassesForYear(int academicYear) {
 		return db.daoStudent().getClassesForYear(academicYear);
 	}

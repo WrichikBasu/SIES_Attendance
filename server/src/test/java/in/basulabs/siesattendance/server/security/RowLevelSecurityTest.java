@@ -764,6 +764,15 @@ class RowLevelSecurityTest {
 				{"attendance", "student_id", "students", "student_id"},
 		};
 
+		// A batch the CR may not read, which every row pointing at it has to respect.
+		postgres.asSuperuser("""
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year)
+				    VALUES (5009, 'Hidden from the CR', 2025);
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year)
+				    VALUES (5009, 2001, 2025);
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3002, 5009);
+				""");
+
 		Object[][] actors = {
 				{"the CS professor", accountProfCs, PROF_CS, null},
 				{"the Chemistry professor", accountProfChem, PROF_CHEM, null},
@@ -831,6 +840,92 @@ class RowLevelSecurityTest {
 
 		assertRefused(accountCr, null, STUDENT_CR, "INSERT INTO course_batch_map (course_id, "
 				+ "batch_id) VALUES (" + COURSE_CS + ", 5001)", "nor links one");
+	}
+
+	/*
+	 * V23: where a course has a batch linked for the session, its roll is the batch. The
+	 * fixture's CS-101 is a first-year major course, so by the rules its roll is R RAO, the one
+	 * Computer Science major; S SHAH is a Chemistry major and on nobody's CS roll.
+	 */
+
+	@Test
+	void aCourseWithABatchTakesItsRollFromTheBatch() throws Exception {
+
+		String roll = "SELECT string_agg(student_id::text, ',' ORDER BY student_id) "
+				+ "FROM roll_for_course(" + COURSE_CS + ", " + SESSION + ")";
+
+		assertEquals("2001", text(roll), "by the rules, before any batch");
+
+		// The batch holds the Chemistry major alone -- somebody from another department and
+		// another stream, which is exactly what no rule could have put on this roll.
+		postgres.asSuperuser("""
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year)
+				    VALUES (5001, 'Chosen it', 2025);
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year)
+				    VALUES (5001, 2002, 2025);
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3001, 5001);
+				""");
+
+		assertEquals("2002", text(roll), "the batch is the roll now, and only the batch");
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals(1, count(as, "SELECT count(*) FROM student_year "
+							+ "WHERE student_id = 2002"),
+					"the professor teaching it reaches the student the batch put on it");
+		}
+
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+			assertEquals(1, count(as, "SELECT count(*) FROM students WHERE student_id = 2002"),
+					"and so does the course's representative");
+		}
+
+		// A batch from another session says nothing about this one's roll: next session has
+		// no batch for the course, so the rules decide it -- and by them a first-year course
+		// has nobody, because R RAO is enrolled in second year by then. Had the 2025 batch
+		// leaked across, S SHAH would be here.
+		assertEquals("none", text("SELECT coalesce(string_agg(student_id::text, ','), 'none') "
+						+ "FROM roll_for_course(" + COURSE_CS + ", " + NEXT_SESSION + ")"),
+				"next session has no batch for the course, so the rules decide it");
+	}
+
+	@Test
+	void aCrSeesTheBatchesOfTheirCoursesAndNoOthers() throws Exception {
+
+		// 5001 is linked to CS-101, which the CR represents. 5002 is linked to nothing, and the
+		// CR is in it. 5003 is linked to nothing either, but a CS-101 lecture is held for it.
+		postgres.asSuperuser("""
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year) VALUES
+				    (5001, 'CS-101 practicals', 2025),
+				    (5002, 'Some club',         2025),
+				    (5003, 'Held for, unlinked', 2025);
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3001, 5001);
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year) VALUES
+				    (5001, 2001, 2025),
+				    (5002, 2001, 2025);
+				UPDATE lectures SET batch_id = 5003 WHERE lecture_id = 4001;
+				""");
+
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+
+			assertEquals(1, count(as, "SELECT count(*) FROM batch_desc WHERE batch_id = 5001"),
+					"the batch linked to the course they represent");
+			assertEquals(0, count(as, "SELECT count(*) FROM batch_desc WHERE batch_id = 5002"),
+					"not one linked to nothing, even with the CR in it");
+			assertEquals(1, count(as, "SELECT count(*) FROM batch_desc WHERE batch_id = 5003"),
+					"the batch a lecture they read was held for, or the lecture arrives on "
+							+ "the phone pointing at nothing");
+
+			assertEquals(0, count(as, "SELECT count(*) FROM batch_student_map "
+							+ "WHERE batch_id = 5002"),
+					"and not even their own membership of a batch they cannot see");
+			assertEquals(1, count(as, "SELECT count(*) FROM batch_student_map "
+					+ "WHERE batch_id = 5001"));
+		}
+
+		try (Connection as = postgres.actingAs(accountProfChem, PROF_CHEM, null)) {
+			assertEquals(3, count(as, "SELECT count(*) FROM batch_desc"),
+					"a professor still reads every batch");
+		}
 	}
 
 	// ── Fixture helpers ──────────────────────────────────────────────────
@@ -906,6 +1001,18 @@ class RowLevelSecurityTest {
 
 			assertTrue(results.next(), () -> "no row from: " + sql);
 			return results.getLong(1);
+		}
+	}
+
+	/** One text value, read as the superuser. */
+	private String text(String sql) throws SQLException {
+
+		try (Connection connection = postgres.connection();
+		     Statement statement = connection.createStatement();
+		     ResultSet results = statement.executeQuery(sql)) {
+
+			assertTrue(results.next(), () -> "no row from: " + sql);
+			return results.getString(1);
 		}
 	}
 

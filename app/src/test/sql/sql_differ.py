@@ -194,6 +194,9 @@ class Fixture:
     enrolments: list[Enrolment] = field(default_factory=list)
     courses: list[Course] = field(default_factory=list)
     batches: list[Batch] = field(default_factory=list)
+    # (course_id, batch_id): a course with a batch linked for the session takes its roll
+    # from the batch (V23), and one without falls back to the course-type rules.
+    course_batches: list[tuple[int, int]] = field(default_factory=list)
     lectures: list[Lecture] = field(default_factory=list)
     marks: list[Mark] = field(default_factory=list)
 
@@ -256,6 +259,14 @@ FIXTURE = Fixture(
         Batch(2, "Batch B", None, 2025, (2,)),
         # A batch inside a batch, with no lecture of its own. Its student sits Batch A's.
         Batch(3, "Batch A1", None, 2025, (1,)),
+        # The students who chose the Ecology elective: one the rules would also have put
+        # there, and a Physics BSc student no rule could have, being in another stream.
+        Batch(4, "Ecology takers", None, 2025, (1, 4)),
+    ],
+    course_batches=[
+        # EV201 takes its roll from the batch, so Sneha (OE ENVIRONMENTAL_SCIENCE, not in
+        # the batch) leaves its roll and Meera (Physics, BSc) joins it.
+        (4, 4),
     ],
     lectures=[
         Lecture(1, 1, None, (2025, 7, 10, 10, 0), (2025, 7, 10, 11, 0)),
@@ -380,6 +391,9 @@ def build_sqlite() -> sqlite3.Connection:
             c.execute("INSERT INTO batch_student_map VALUES (?,?,?)",
                       (batch.batch_id, student_id, batch.academic_year))
 
+    for course_id, batch_id in FIXTURE.course_batches:
+        c.execute("INSERT INTO course_batch_map VALUES (?,?)", (course_id, batch_id))
+
     for lecture in FIXTURE.lectures:
         c.execute("INSERT INTO lectures VALUES (?,?,?,?,?,?)", (
             lecture.lecture_id, lecture.course_id, lecture.batch_id,
@@ -471,6 +485,12 @@ def postgres_inserts() -> list[tuple[str, list[str | None]]]:
                 "VALUES (?, ?, ?)",
                 [str(batch.batch_id), str(student_id), str(batch.academic_year)],
             ))
+
+    for course_id, batch_id in FIXTURE.course_batches:
+        out.append((
+            "INSERT INTO course_batch_map (course_id, batch_id) VALUES (?, ?)",
+            [str(course_id), str(batch_id)],
+        ))
 
     for lecture in FIXTURE.lectures:
         out.append((

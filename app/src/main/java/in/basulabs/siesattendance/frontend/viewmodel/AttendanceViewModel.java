@@ -30,6 +30,7 @@ import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityAttendance;
+import in.basulabs.siesattendance.backend.AccountKind;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.EntityLecture;
@@ -1120,7 +1121,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			@NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
 		final int acadYear = studentFilter().academicYear;
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(repository.batchesForYearSync(acadYear)));
+				cb.accept(visibleBatches(repository.batchesForYearSync(acadYear))));
 	}
 
 	public void addStudent(@NonNull EntityStudent student, @NonNull String rollNo,
@@ -1379,11 +1380,58 @@ public class AttendanceViewModel extends AndroidViewModel {
 	// ── Batches ──────────────────────────────────────────────────────────
 
 	public LiveData<List<EntityBatchDesc>> getBatches() {
-		return Transformations.switchMap(academicYear, repository::observeBatchesForYear);
+		return Transformations.switchMap(academicYear, year -> {
+
+			// A student's list is a query of its own rather than a filter over everybody's:
+			// it has to stay live, and working out which batches are linked reads the
+			// database, which a map on the main thread may not.
+			if (DeviceIdentity.accountKind(getApplication()) == AccountKind.STUDENT) {
+				Set<Long> courses = DeviceIdentity.represents(getApplication());
+				return repository.observeBatchesForYearLinkedTo(year,
+						courses == null ? new ArrayList<>() : new ArrayList<>(courses));
+			}
+			return repository.observeBatchesForYear(year);
+		});
+	}
+
+	/**
+	 * What the register says when there is no batch to take it for.
+	 * <p>
+	 * Different for a student, who cannot make one: a class representative sees only the
+	 * batches linked to the courses they represent, so an empty list means a professor has not
+	 * linked one yet, and telling them to create one would send them to a screen they are not
+	 * offered.
+	 */
+	@androidx.annotation.StringRes
+	public int noBatchesHelper() {
+		return DeviceIdentity.accountKind(getApplication()) == AccountKind.STUDENT
+				? R.string.helper_no_linked_batches_cr
+				: R.string.helper_no_batches_for_session;
+	}
+
+	/**
+	 * That list as this account is shown it; see {@link Permissions#visibleBatches}. Reads the
+	 * database, so off the main thread only.
+	 */
+	@NonNull
+	private List<EntityBatchDesc> visibleBatches(@NonNull List<EntityBatchDesc> batches) {
+
+		AccountKind who = DeviceIdentity.accountKind(getApplication());
+
+		if (who != AccountKind.STUDENT) {
+			return batches;
+		}
+
+		Set<Long> courses = DeviceIdentity.represents(getApplication());
+		Set<Long> linked = courses == null ? null
+				: new HashSet<>(repository.batchIdsLinkedToSync(new ArrayList<>(courses)));
+
+		return Permissions.visibleBatches(who, linked, batches);
 	}
 
 	public void loadBatchesSync(@NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.batchesSync()));
+		MainDatabase.DB_EXECUTOR.execute(() ->
+				cb.accept(visibleBatches(repository.batchesSync())));
 	}
 
 	/**
@@ -2448,7 +2496,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			@NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
 		final int acadYear = academicYearValue();
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(repository.batchesForYearSync(acadYear)));
+				cb.accept(visibleBatches(repository.batchesForYearSync(acadYear))));
 	}
 
 	/**
@@ -2470,8 +2518,11 @@ public class AttendanceViewModel extends AndroidViewModel {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 
 			List<EntityBatchDesc> batches =
-					new ArrayList<>(repository.batchesForYearSync(acadYear));
+					new ArrayList<>(visibleBatches(repository.batchesForYearSync(acadYear)));
 
+			// The lecture's own batch stays in the list whoever is looking, linked or not: it
+			// is what the record says, and dropping it would show the lecture as something
+			// it is not -- the reason this method exists at all.
 			if (mustInclude != null) {
 
 				boolean present = false;
@@ -2670,7 +2721,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void loadStatsFilterOptions(@NonNull StatsOptionsCallback cb) {
 		MainDatabase.DB_EXECUTOR.execute(() -> cb.onLoaded(
 				visible(repository.coursesSync()),
-				repository.batchesSync(),
+				visibleBatches(repository.batchesSync()),
 				repository.professorsSync()));
 	}
 

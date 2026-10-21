@@ -360,6 +360,14 @@ public abstract class DaoStudent {
 	/**
 	 * Every student who takes this course in the given academic year.
 	 * <p>
+	 * <b>A course with batches linked for the session</b> takes its roll from them: the members
+	 * of those batches, from whatever department, year or stream. A batch is somebody's actual
+	 * list of who sits the course, and it is the only way to say an open elective is taken
+	 * across streams, or that a practical course is two halves. Only a course with no batch
+	 * linked for the session falls back to the rules below. The server's {@code course_admits()}
+	 * (V23) is the same decision, and the two export builders repeat it; all three have to
+	 * change together.
+	 * <p>
 	 * A course states the year, stream and offering department it belongs to. Which of a
 	 * student's three departments has to match depends on how they are taking it: a major
 	 * course matches their major department, an open elective their OE choice. A discipline
@@ -395,19 +403,29 @@ public abstract class DaoStudent {
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
 			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
 			"FROM courses c " +
-			"INNER JOIN student_year y ON y.year = c.year AND y.stream = c.stream " +
-			"   AND y.academicYear = :academicYear " +
+			"INNER JOIN student_year y ON y.academicYear = :academicYear " +
 			"INNER JOIN students s ON s.studentID = y.studentID " +
-			"WHERE c.courseID = :courseID AND (" +
-			"   (c.courseType IN ('MAJOR', 'MAJOR_PRACTICALS', " +
-			"                     'DSE', 'DSE_PRACTICALS') " +
-			"      AND y.majorDept = c.offeringDepartment) " +
-			"   OR (c.courseType IN ('MINOR', 'MINOR_PRACTICALS') " +
-			"      AND (y.minorDept = c.offeringDepartment " +
-			"           OR y.majorDept = c.offeringDepartment)) " +
-			"   OR (c.courseType = 'OE' AND y.oeDept = c.offeringDepartment) " +
-			"   OR c.courseType IN ('AEC', 'IKS', 'VSC', 'VSC_PRACTICALS', " +
-			"                        'SEC', 'SEC_PRACTICALS')) " +
+			"WHERE c.courseID = :courseID AND CASE " +
+			"   WHEN EXISTS (SELECT 1 FROM course_batch_map cb " +
+			"                INNER JOIN batch_desc b ON b.batchID = cb.batchID " +
+			"                WHERE cb.courseID = c.courseID " +
+			"                  AND b.academicYear = :academicYear) " +
+			"   THEN EXISTS (SELECT 1 FROM course_batch_map cb " +
+			"                INNER JOIN batch_student_map m ON m.batchID = cb.batchID " +
+			"                WHERE cb.courseID = c.courseID " +
+			"                  AND m.studentID = y.studentID " +
+			"                  AND m.academicYear = :academicYear) " +
+			"   ELSE (y.year = c.year AND y.stream = c.stream AND (" +
+			"      (c.courseType IN ('MAJOR', 'MAJOR_PRACTICALS', " +
+			"                        'DSE', 'DSE_PRACTICALS') " +
+			"         AND y.majorDept = c.offeringDepartment) " +
+			"      OR (c.courseType IN ('MINOR', 'MINOR_PRACTICALS') " +
+			"         AND (y.minorDept = c.offeringDepartment " +
+			"              OR y.majorDept = c.offeringDepartment)) " +
+			"      OR (c.courseType = 'OE' AND y.oeDept = c.offeringDepartment) " +
+			"      OR c.courseType IN ('AEC', 'IKS', 'VSC', 'VSC_PRACTICALS', " +
+			"                           'SEC', 'SEC_PRACTICALS'))) " +
+			"END " +
 			"ORDER BY y.rollNo ASC")
 	public abstract List<StudentWithYear> getRollForCourseSync(long courseID, int academicYear);
 

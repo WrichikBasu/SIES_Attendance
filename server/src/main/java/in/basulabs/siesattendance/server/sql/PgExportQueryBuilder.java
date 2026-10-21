@@ -89,16 +89,35 @@ public final class PgExportQueryBuilder {
 				.append("INNER JOIN student_year y ON y.student_id = s.student_id ")
 				.append("   AND y.academic_year = ? ")
 				.append("INNER JOIN academic_years ay ON ay.academic_year = ? ")
-				.append("INNER JOIN courses c ON c.year = y.year AND c.stream = y.stream AND (")
-				.append("   (c.course_type IN ('MAJOR', 'MAJOR_PRACTICALS', ")
-				.append("                      'DSE', 'DSE_PRACTICALS') ")
-				.append("      AND y.major_dept = c.offering_department) ")
-				.append("   OR (c.course_type IN ('MINOR', 'MINOR_PRACTICALS') ")
-				.append("      AND (y.minor_dept = c.offering_department ")
-				.append("           OR y.major_dept = c.offering_department)) ")
-				.append("   OR (c.course_type = 'OE' AND y.oe_dept = c.offering_department) ")
-				.append("   OR c.course_type IN ('AEC', 'IKS', 'VSC', 'VSC_PRACTICALS', ")
-				.append("                        'SEC', 'SEC_PRACTICALS')) ");
+				// The roll: the course's linked batches for the session when it has any, the
+				// course-type rules when it has none. course_admits() in V23 is the same
+				// decision, written inline because the differ runs on V1 and V2 alone.
+				.append("INNER JOIN courses c ON CASE ")
+				.append("   WHEN EXISTS (SELECT 1 FROM course_batch_map cb ")
+				.append("                INNER JOIN batch_desc b ON b.batch_id = cb.batch_id ")
+				.append("                WHERE cb.course_id = c.course_id ")
+				.append("                  AND b.academic_year = ?) ")
+				.append("   THEN EXISTS (SELECT 1 FROM course_batch_map cb ")
+				.append("                INNER JOIN batch_student_map m ")
+				.append("                        ON m.batch_id = cb.batch_id ")
+				.append("                WHERE cb.course_id = c.course_id ")
+				.append("                  AND m.student_id = y.student_id ")
+				.append("                  AND m.academic_year = ?) ")
+				.append("   ELSE (c.year = y.year AND c.stream = y.stream AND (")
+				.append("      (c.course_type IN ('MAJOR', 'MAJOR_PRACTICALS', ")
+				.append("                         'DSE', 'DSE_PRACTICALS') ")
+				.append("         AND y.major_dept = c.offering_department) ")
+				.append("      OR (c.course_type IN ('MINOR', 'MINOR_PRACTICALS') ")
+				.append("         AND (y.minor_dept = c.offering_department ")
+				.append("              OR y.major_dept = c.offering_department)) ")
+				.append("      OR (c.course_type = 'OE' AND y.oe_dept = c.offering_department) ")
+				.append("      OR c.course_type IN ('AEC', 'IKS', 'VSC', 'VSC_PRACTICALS', ")
+				.append("                           'SEC', 'SEC_PRACTICALS'))) ")
+				.append("END ");
+		// The two in student_year and academic_years, then the two in the roll condition,
+		// in the order the placeholders appear.
+		args.add(academicYear);
+		args.add(academicYear);
 		args.add(academicYear);
 		args.add(academicYear);
 

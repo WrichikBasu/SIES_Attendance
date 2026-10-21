@@ -105,7 +105,9 @@ public class SqlBuilderTest {
 
 		assertEquals("argument count must match placeholder count",
 				placeholders(query.getSql()), argsOf(query).size());
-		assertEquals(12, argsOf(query).size());
+		// Five each for held and attended, two for the session joins, and two for the roll: a
+		// course's batches for the session, and the student's membership of them.
+		assertEquals(14, argsOf(query).size());
 	}
 
 	@Test

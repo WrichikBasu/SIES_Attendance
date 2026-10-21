@@ -164,6 +164,13 @@ public interface AttendanceRepository {
 	LiveData<List<EntityBatchDesc>> observeBatchesForYear(int academicYear);
 
 	@NonNull
+	LiveData<List<EntityBatchDesc>> observeBatchesForYearLinkedTo(int academicYear,
+	                                                              @NonNull List<Long> courseIDs);
+
+	@NonNull
+	List<Long> batchIdsLinkedToSync(@NonNull List<Long> courseIDs);
+
+	@NonNull
 	List<EntityBatchDesc> batchesSync();
 
 	long createBatchFromStudents(@NonNull EntityBatchDesc batch, @NonNull List<Long> studentIDs);

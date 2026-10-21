@@ -197,34 +197,43 @@ public class PostgresSchemaDriftTest {
 		}
 	}
 
-	// ── The roster, translated into SQL in V5 ────────────────────────────
+	// ── The roll, defined once in V23 ────────────────────────────────────
 
 	/*
-	 * roll_for_course() is a translation of DaoStudent.getRollForCourseSync, and the thing that
-	 * can go wrong is a course type that neither branch mentions: it matches nobody, so the
-	 * course has an empty roll, no CR can be designated for it, and nothing fails loudly. These
-	 * two tests make it fail here instead.
+	 * course_admits() is the one definition of a course's roll on the server: the members of
+	 * the batches linked to the course for the session when it has any, and the course-type
+	 * rules -- a translation of DaoStudent.getRollForCourseSync -- when it has none. Until V23
+	 * the rules were written twice, in roll_for_course() and actor_reaches_enrolment(), and
+	 * held together by these tests. Now both of those call course_admits(), and the tests check
+	 * that they do as well as what it says.
+	 *
+	 * The thing that can still go wrong is a course type the rules never mention: it matches
+	 * nobody, so a course of that type with no batch has an empty roll, no CR can be designated
+	 * for it, and nothing fails loudly.
 	 */
 
-	@Test
-	public void theRosterFunctionAccountsForEveryCourseType() throws IOException {
+	private static String courseAdmits() throws IOException {
+		return normalise(statementContaining(read("V23__a_batch_is_the_roll.sql"),
+				"CREATE FUNCTION course_admits"));
+	}
 
-		String body = normalise(statementContaining(read("V5__identity.sql"),
-				"CREATE FUNCTION roll_for_course"));
+	@Test
+	public void theRollAccountsForEveryCourseType() throws IOException {
+
+		String body = courseAdmits();
 
 		for (CourseType type : CourseType.values()) {
-			assertTrue("roll_for_course in V5__identity.sql never mentions "
-							+ type.name() + ", so a course of that type would have an empty "
-							+ "roll and no CR could be designated for it",
+			assertTrue("course_admits in V23__a_batch_is_the_roll.sql never mentions "
+							+ type.name() + ", so a course of that type with no batch would "
+							+ "have an empty roll and no CR could be designated for it",
 					body.contains("'" + type.name() + "'"));
 		}
 	}
 
 	@Test
-	public void theRosterFunctionMatchesTheDepartmentTheAppDoes() throws IOException {
+	public void theRollMatchesTheDepartmentTheAppDoes() throws IOException {
 
-		String body = normalise(statementContaining(read("V5__identity.sql"),
-				"CREATE FUNCTION roll_for_course"));
+		String body = courseAdmits();
 
 		// The types that follow the offering department are matched on the student's major,
 		// and V4's exemption list is the same list. If these ever disagree, one of the two is
@@ -234,70 +243,49 @@ public class PostgresSchemaDriftTest {
 			quoted.add("'" + type.name() + "'");
 		}
 
-		assertTrue("the major-department branch of roll_for_course should match "
+		assertTrue("the major-department branch of course_admits should match "
 						+ "CourseType.followingOfferingDepartment(), which reads "
 						+ String.join(", ", quoted) + "\nThe function reads: " + body,
 				body.contains("c.course_type IN (" + String.join(", ", quoted) + ")"));
 
-		// The two cross-department branches match the other two department columns, and the
-		// minor branch deliberately admits the major as well — see the roster query's javadoc.
+		// The minor branch deliberately admits the major as well -- see the roster query's
+		// javadoc.
 		assertTrue("the minor branch must admit the student's major department too, because "
 						+ "the minor field on the student form is optional and often blank",
-				body.contains("y.minor_dept = c.offering_department")
-						&& body.contains("y.major_dept = c.offering_department"));
-		assertTrue("the open-elective branch must match oe_dept",
-				body.contains("y.oe_dept = c.offering_department"));
-	}
-
-	// ── The roster, asked the other way round in V11 ─────────────────────
-
-	/*
-	 * V11's actor_reaches_enrolment() is roll_for_course() inverted: the same four-way match on
-	 * course_type, asked of one enrolment rather than listed for one course. It has to be a
-	 * second copy -- a set-returning function cannot be a row predicate without a lateral join
-	 * per row -- and these two tests are what stop the copy drifting. A type missing from one
-	 * of them is a student the policies cannot reach, which reads as a student who does not
-	 * exist.
-	 */
-
-	@Test
-	public void theReachabilityPredicateAccountsForEveryCourseType() throws IOException {
-
-		String body = normalise(statementContaining(read("V11__roster_reachability.sql"),
-				"CREATE FUNCTION actor_reaches_enrolment"));
-
-		for (CourseType type : CourseType.values()) {
-			assertTrue("actor_reaches_enrolment in V11__roster_reachability.sql never mentions "
-							+ type.name() + ", so a student on a course of that type would be "
-							+ "reachable by nobody and their rows would read as absent",
-					body.contains("'" + type.name() + "'"));
-		}
-	}
-
-	@Test
-	public void theReachabilityPredicateMatchesTheRosterFunction() throws IOException {
-
-		String predicate = normalise(statementContaining(
-				read("V11__roster_reachability.sql"),
-				"CREATE FUNCTION actor_reaches_enrolment"));
-
-		List<String> quoted = new ArrayList<>();
-		for (CourseType type : CourseType.followingOfferingDepartment()) {
-			quoted.add("'" + type.name() + "'");
-		}
-
-		assertTrue("the major-department branch of actor_reaches_enrolment should match "
-						+ "CourseType.followingOfferingDepartment(), as roll_for_course's does"
-						+ "\nThe function reads: " + predicate,
-				predicate.contains("c.course_type IN (" + String.join(", ", quoted) + ")"));
-
-		// The same three department columns, under the names the predicate takes them by.
-		assertTrue("the minor branch must admit the student's major department too, exactly as "
-						+ "roll_for_course does",
-				predicate.contains("e_minor = c.offering_department")
-						&& predicate.contains("e_major = c.offering_department"));
+				body.contains("e_minor = c.offering_department")
+						&& body.contains("e_major = c.offering_department"));
 		assertTrue("the open-elective branch must match the enrolment's oe department",
-				predicate.contains("e_oe = c.offering_department"));
+				body.contains("e_oe = c.offering_department"));
+	}
+
+	@Test
+	public void aCourseWithBatchesTakesItsRollFromThem() throws IOException {
+
+		String body = courseAdmits();
+
+		assertTrue("course_admits must ask whether the course has batches for the session "
+						+ "before falling back to the rules",
+				body.contains("WHEN course_has_batches(for_course, session_year)"));
+		assertTrue("and, when it does, admit exactly their members in that session",
+				body.contains("m.student_id = e_student")
+						&& body.contains("m.academic_year = session_year"));
+	}
+
+	@Test
+	public void bothAskersOfTheRollCallTheOneDefinition() throws IOException {
+
+		String migration = read("V23__a_batch_is_the_roll.sql");
+
+		String roll = normalise(statementContaining(migration,
+				"CREATE OR REPLACE FUNCTION roll_for_course"));
+		String reach = normalise(statementContaining(migration,
+				"CREATE FUNCTION actor_reaches_enrolment"));
+
+		assertTrue("roll_for_course must list course_admits(), not a copy of it: " + roll,
+				roll.contains("course_admits("));
+		assertTrue("actor_reaches_enrolment must ask course_admits(), not a copy of it: "
+						+ reach, reach.contains("course_admits(")
+						&& !reach.contains("c.course_type"));
 	}
 
 	@Test
