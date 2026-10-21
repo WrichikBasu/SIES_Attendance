@@ -74,6 +74,46 @@ public abstract class DaoStudent {
 	@Query("SELECT studentID FROM students WHERE email = :email LIMIT 1")
 	public abstract Long findStudentIdByEmail(String email);
 
+	/** The person with this APAAR ID, in any session, or null. */
+	@Query("SELECT studentID FROM students WHERE apaarId = :apaarId LIMIT 1")
+	public abstract Long findStudentIdByApaarId(long apaarId);
+
+	@Query("SELECT * FROM students WHERE studentID = :studentID")
+	public abstract EntityStudent getStudentSync(long studentID);
+
+	@Query("SELECT * FROM student_year WHERE studentID = :studentID "
+			+ "AND academicYear = :academicYear")
+	public abstract EntityStudentYear getEnrolmentSync(long studentID, int academicYear);
+
+	/** Every session this person is enrolled in, newest first: the same student across years. */
+	@Query("SELECT * FROM student_year WHERE studentID = :studentID "
+			+ "ORDER BY academicYear DESC")
+	public abstract List<EntityStudentYear> getEnrolmentsSync(long studentID);
+
+	@Query("UPDATE student_year SET joinDate = :joinDate, leaveDate = :leaveDate "
+			+ "WHERE studentID = :studentID AND academicYear = :academicYear")
+	public abstract void setEnrolmentDates(long studentID, int academicYear,
+	                                       java.time.LocalDate joinDate,
+	                                       java.time.LocalDate leaveDate);
+
+	/**
+	 * Refuses an APAAR ID that already belongs to somebody else, in words, before the unique
+	 * index refuses it as a constraint name.
+	 */
+	void checkApaarIdIsFree(@androidx.annotation.Nullable Long apaarId, long studentID) {
+
+		if (apaarId == null) {
+			return;
+		}
+
+		Long holder = findStudentIdByApaarId(apaarId);
+
+		if (holder != null && holder != studentID) {
+			throw new IllegalStateException("APAAR ID " + apaarId
+					+ " already belongs to another student.");
+		}
+	}
+
 	@Query("SELECT studentID FROM student_year WHERE rollNo = :rollNo AND academicYear = " +
 			":academicYear LIMIT 1")
 	public abstract Long findStudentIdByRollNo(String rollNo, int academicYear);
@@ -94,9 +134,18 @@ public abstract class DaoStudent {
 	public long upsertStudentWithYear(EntityStudent student, int academicYear, String rollNo,
 	                                  Year year, Stream stream, Department majorDept,
 	                                  Department minorDept, Department oeDept,
-	                                  Integer semester, Division division) {
+	                                  Integer semester, Division division,
+	                                  java.time.LocalDate joinDate,
+	                                  java.time.LocalDate leaveDate) {
 
+		// The same person, by what identifies them: this session's roll number, then their
+		// APAAR ID -- the one thing that is theirs for life, and so what recognises them in a
+		// new session under a new roll number -- then their email.
 		Long existing = findStudentIdByRollNo(rollNo, academicYear);
+
+		if (existing == null && student.apaarId != null) {
+			existing = findStudentIdByApaarId(student.apaarId);
+		}
 
 		if (existing == null && student.email != null && !student.email.isEmpty()) {
 			existing = findStudentIdByEmail(student.email);
@@ -107,19 +156,40 @@ public abstract class DaoStudent {
 		if (existing != null) {
 			studentID = existing;
 			student.studentID = studentID;
+
+			// A blank cell is "not given", not "erase it": a roster without an APAAR column
+			// must not wipe the IDs somebody entered by hand.
+			EntityStudent stored = getStudentSync(studentID);
+			if (student.apaarId == null && stored != null) {
+				student.apaarId = stored.apaarId;
+			}
+
+			checkApaarIdIsFree(student.apaarId, studentID);
 			updateStudent(student);
 		} else {
+			checkApaarIdIsFree(student.apaarId, 0L);
 			studentID = insertStudent(student);
 		}
 
-		insertStudentYear(new EntityStudentYear(studentID, academicYear, rollNo, year, stream,
-				majorDept, minorDept, oeDept, semester, division));
+		// The same for the dates. The enrolment is written with REPLACE, which would otherwise
+		// clear a leave date every time the roster was imported again.
+		EntityStudentYear before = getEnrolmentSync(studentID, academicYear);
+
+		EntityStudentYear enrolment = new EntityStudentYear(studentID, academicYear, rollNo,
+				year, stream, majorDept, minorDept, oeDept, semester, division);
+		enrolment.joinDate = joinDate != null ? joinDate
+				: before == null ? null : before.joinDate;
+		enrolment.leaveDate = leaveDate != null ? leaveDate
+				: before == null ? null : before.leaveDate;
+
+		insertStudentYear(enrolment);
 
 		return studentID;
 	}
 
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE y.academicYear = :academicYear " +
 			"ORDER BY y.rollNo ASC")
@@ -130,7 +200,8 @@ public abstract class DaoStudent {
 	 * dimension unfiltered, so the same query backs both "SY BSc CS" and broader searches.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE y.academicYear = :academicYear " +
 			"AND (:year IS NULL OR y.year = :year) " +
@@ -148,12 +219,14 @@ public abstract class DaoStudent {
 	 * from a class in one shot.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE y.academicYear = :academicYear " +
 			"AND (:year IS NULL OR y.year = :year) " +
 			"AND (:stream IS NULL OR y.stream = :stream) " +
 			"AND (:dept IS NULL OR y.majorDept = :dept) " +
+			"AND y.leaveDate IS NULL " +
 			"ORDER BY y.rollNo ASC")
 	public abstract List<StudentWithYear> getClassSync(int academicYear, Year year,
 	                                                   Stream stream, Department dept);
@@ -170,7 +243,8 @@ public abstract class DaoStudent {
 	 * when unused.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE y.academicYear = :academicYear " +
 			"AND (:year IS NULL OR y.year = :year) " +
@@ -184,12 +258,14 @@ public abstract class DaoStudent {
 			"   AND m.batchID = :batchID AND m.academicYear = :academicYear)) " +
 			"AND (:query = '' OR s.name LIKE '%' || :query || '%' " +
 			"     OR y.rollNo LIKE '%' || :query || '%') " +
+			"AND (:includeLeft OR y.leaveDate IS NULL) " +
 			"ORDER BY y.rollNo ASC")
 	public abstract List<StudentWithYear> filterStudentsSync(int academicYear, Year year,
 	                                                         Stream stream, Department majorDept,
 	                                                         Department minorDept,
 	                                                         Department oeDept, Division division,
-	                                                         Long batchID, String query);
+	                                                         Long batchID, String query,
+	                                                         boolean includeLeft);
 
 	/**
 	 * Every distinct class present in the database for the given academic year, with a head
@@ -198,11 +274,13 @@ public abstract class DaoStudent {
 	@Query("SELECT y.year AS year, y.stream AS stream, y.majorDept AS majorDept, " +
 			"y.division AS division, COUNT(*) AS studentCount " +
 			"FROM student_year y WHERE y.academicYear = :academicYear " +
+			"AND y.leaveDate IS NULL " +
 			"GROUP BY y.year, y.stream, y.majorDept, y.division " +
 			"ORDER BY y.year, y.stream, y.majorDept, y.division")
 	public abstract LiveData<List<ClassKey>> getClassesForYear(int academicYear);
 
-	@Query("SELECT COUNT(*) FROM student_year WHERE academicYear = :academicYear")
+	@Query("SELECT COUNT(*) FROM student_year WHERE academicYear = :academicYear " +
+			"AND leaveDate IS NULL")
 	public abstract LiveData<Integer> countStudents(int academicYear);
 
 	/**
@@ -216,13 +294,15 @@ public abstract class DaoStudent {
 	// ── Single student, edit and delete ──────────────────────────────────
 
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE s.studentID = :studentID AND y.academicYear = :academicYear")
 	public abstract LiveData<StudentWithYear> getOne(long studentID, int academicYear);
 
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
 			"FROM students s INNER JOIN student_year y ON s.studentID = y.studentID " +
 			"WHERE s.studentID = :studentID AND y.academicYear = :academicYear")
 	public abstract StudentWithYear getOneSync(long studentID, int academicYear);
@@ -249,10 +329,15 @@ public abstract class DaoStudent {
 	public void updateStudentWithYear(EntityStudent student, int academicYear, String rollNo,
 	                                  Year year, Stream stream, Department majorDept,
 	                                  Department minorDept, Department oeDept,
-	                                  Integer semester, Division division) {
+	                                  Integer semester, Division division,
+	                                  java.time.LocalDate joinDate,
+	                                  java.time.LocalDate leaveDate) {
+		checkApaarIdIsFree(student.apaarId, student.studentID);
 		updateStudent(student);
 		updateStudentYear(student.studentID, academicYear, rollNo, year, stream, majorDept,
 				minorDept, oeDept, semester, division);
+		// The form shows both dates, so what it sends is the whole answer, blanks included.
+		setEnrolmentDates(student.studentID, academicYear, joinDate, leaveDate);
 	}
 
 	/*
@@ -401,11 +486,12 @@ public abstract class DaoStudent {
 	 * against string literals here.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
 			"FROM courses c " +
 			"INNER JOIN student_year y ON y.academicYear = :academicYear " +
 			"INNER JOIN students s ON s.studentID = y.studentID " +
-			"WHERE c.courseID = :courseID AND CASE " +
+			"WHERE c.courseID = :courseID AND y.leaveDate IS NULL AND CASE " +
 			"   WHEN EXISTS (SELECT 1 FROM course_batch_map cb " +
 			"                INNER JOIN batch_desc b ON b.batchID = cb.batchID " +
 			"                WHERE cb.courseID = c.courseID " +
@@ -433,12 +519,14 @@ public abstract class DaoStudent {
 	 * The roll narrowed to one batch of the course, for practicals and other split sessions.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
 			"FROM students s " +
 			"INNER JOIN batch_student_map m ON m.studentID = s.studentID " +
 			"INNER JOIN student_year y ON y.studentID = s.studentID " +
 			"   AND y.academicYear = m.academicYear " +
 			"WHERE m.batchID = :batchID AND m.academicYear = :academicYear " +
+			"AND y.leaveDate IS NULL " +
 			"ORDER BY y.rollNo ASC")
 	public abstract List<StudentWithYear> getRollForBatchSync(long batchID, int academicYear);
 

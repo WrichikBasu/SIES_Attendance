@@ -94,15 +94,29 @@ The same file is read by the app's **Students → Import CSV** and by the server
 using the same parser:
 
 ```
-rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept,semester,division
+rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept,semester,division,
+apaarId,joinDate,leaveDate
 ```
 
 - Columns can be in any order.
-- `pronouns`, `email`, `minorDept`, `oeDept`, `semester` and `division` may be blank or left out.
+- `pronouns`, `email`, `minorDept`, `oeDept`, `semester`, `division`, `apaarId`, `joinDate` and
+  `leaveDate` may be blank or left out.
+- Dates can be written as `2026-06-15`, `15/06/2026` or `15-06-2026`.
 - Departments, streams and years accept either the stored name or the display label, so
   `Computer Science` and `COMPUTER_SCIENCE` both work.
 - A bad row is reported and skipped; the rest of the file is still imported.
-- Importing again updates the students whose roll numbers already exist.
+- Importing again updates the students whose roll numbers already exist. A blank APAAR ID or
+  date keeps the one already stored.
+- A student is matched by roll number in that session, then by APAAR ID, then by email. The
+  APAAR ID is what recognises the same person in a new session under a new roll number.
+
+### Joining late and leaving
+
+- **Join date:** empty means the start of the session. A late joiner's attendance, in the
+  statistics and the register export, counts only lectures from their join date.
+- **Leave date:** once set, the student is off that session's rolls, batch lists and exports,
+  and hidden on the Students tab unless "Show students who have left" is on. Their attendance
+  before leaving is kept.
 
 ## Tests
 

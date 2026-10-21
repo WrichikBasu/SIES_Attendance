@@ -7,6 +7,8 @@ import androidx.room.ForeignKey;
 import androidx.room.Ignore;
 import androidx.room.Index;
 
+import java.time.LocalDate;
+
 /**
  * Represents a student in a particular academic year.
  * <p>
@@ -90,6 +92,22 @@ public class EntityStudentYear {
 	 */
 	@Nullable
 	public Integer semester;
+
+	/**
+	 * The day the student joined this session's class, or null for the start of the session,
+	 * which is what it means for nearly everybody. A late joiner's attendance is counted only
+	 * from here: lectures held before it are not held for them.
+	 */
+	@Nullable
+	public LocalDate joinDate;
+
+	/**
+	 * The day the student left, or null while they are enrolled. Once set, they come off this
+	 * session's rolls, its batch lists, the exports and, unless asked for, the students list.
+	 * Their attendance before it is kept.
+	 */
+	@Nullable
+	public LocalDate leaveDate;
 
 	/**
 	 * The division of the class the student sits in, or null when their class is not divided

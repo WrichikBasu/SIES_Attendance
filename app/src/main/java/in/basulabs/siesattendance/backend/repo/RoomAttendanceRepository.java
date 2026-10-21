@@ -19,6 +19,7 @@ import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.EntityLecture;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.backend.EntityStudent;
+import in.basulabs.siesattendance.backend.EntityStudentYear;
 import androidx.sqlite.db.SupportSQLiteDatabase;
 import in.basulabs.siesattendance.backend.EntitySyncState;
 import in.basulabs.siesattendance.backend.sync.DeviceSql;
@@ -319,9 +320,10 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	public List<StudentWithYear> filterStudentsSync(int academicYear, Year year, Stream stream,
 	                                                Department majorDept, Department minorDept,
 	                                                Department oeDept, Division division,
-	                                                Long batchID, String query) {
+	                                                Long batchID, String query,
+	                                                boolean includeLeft) {
 		return db.daoStudent().filterStudentsSync(academicYear, year, stream, majorDept, minorDept,
-		                     oeDept, division, batchID, query);
+		                     oeDept, division, batchID, query, includeLeft);
 	}
 
 	@Override
@@ -375,18 +377,27 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	public void updateStudentWithYear(@NonNull EntityStudent student, int academicYear,
 	                                  String rollNo, Year year, Stream stream, Department majorDept,
 	                                  Department minorDept, Department oeDept, Integer semester,
-	                                  Division division) {
+	                                  Division division, @Nullable java.time.LocalDate joinDate,
+	                                  @Nullable java.time.LocalDate leaveDate) {
 		db.daoStudent().updateStudentWithYear(student, academicYear, rollNo, year, stream,
-		              majorDept, minorDept, oeDept, semester, division);
+		              majorDept, minorDept, oeDept, semester, division, joinDate, leaveDate);
 	}
 
 	@Override
 	public long upsertStudentWithYear(@NonNull EntityStudent student, int academicYear,
 	                                  String rollNo, Year year, Stream stream, Department majorDept,
 	                                  Department minorDept, Department oeDept, Integer semester,
-	                                  Division division) {
+	                                  Division division, @Nullable java.time.LocalDate joinDate,
+	                                  @Nullable java.time.LocalDate leaveDate) {
 		return db.daoStudent().upsertStudentWithYear(student, academicYear, rollNo, year, stream,
-		                     majorDept, minorDept, oeDept, semester, division);
+		                     majorDept, minorDept, oeDept, semester, division, joinDate,
+		                     leaveDate);
+	}
+
+	@Override
+	@NonNull
+	public List<EntityStudentYear> enrolmentsSync(long studentID) {
+		return db.daoStudent().getEnrolmentsSync(studentID);
 	}
 
 	@Override

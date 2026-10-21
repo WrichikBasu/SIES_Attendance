@@ -738,6 +738,54 @@ class WireTest {
 	// ── The roster ───────────────────────────────────────────────────────
 
 	@Test
+	void theApaarIdFindsTheSamePersonInTheNextSession() throws Exception {
+
+		String office = tokenFor("office@sies.edu.in", "STAFF");
+
+		assertEquals(200, postCsv("/roster?year=" + SESSION, """
+				rollNo,name,pronouns,email,year,stream,majorDept,semester,apaarId
+				CS-FY-020,Meera Iyer,she/her,,FY,BSc_unaided,COMPUTER_SCIENCE,1,555000111222
+				""", office).status());
+
+		// A new session and a new roll number: only the APAAR ID says who this is.
+		Reply next = postCsv("/roster?year=" + (SESSION + 1), """
+				rollNo,name,pronouns,email,year,stream,majorDept,semester,apaarId
+				CS-SY-020,Meera Iyer,she/her,,SY,BSc_unaided,COMPUTER_SCIENCE,3,555000111222
+				""", office);
+
+		assertEquals(200, next.status(), next::toString);
+		assertEquals(1, next.body().get("updated").intValue(),
+				"the same person, not a second record of them");
+
+		assertEquals(1, count("SELECT count(*) FROM students WHERE apaar_id = 555000111222"));
+		assertEquals(2, count("SELECT count(*) FROM student_year y JOIN students s "
+				+ "USING (student_id) WHERE s.apaar_id = 555000111222"));
+
+		// And a later roster with the cell blank keeps the ID rather than erasing it.
+		postCsv("/roster?year=" + (SESSION + 1), """
+				rollNo,name,pronouns,email,year,stream,majorDept,semester
+				CS-SY-020,Meera Iyer,she/her,,SY,BSc_unaided,COMPUTER_SCIENCE,3
+				""", office);
+
+		assertEquals(1, count("SELECT count(*) FROM students WHERE apaar_id = 555000111222"));
+	}
+
+	@Test
+	void aStudentWhoHasLeftIsOffTheRoll() throws Exception {
+
+		String roll = "SELECT count(*) FROM roll_for_course(" + COURSE_CS + ", " + SESSION + ")";
+		long before = count(roll);
+
+		postCsv("/roster?year=" + SESSION, """
+				rollNo,name,pronouns,email,year,stream,majorDept,semester,leaveDate
+				CS-FY-001,R RAO,she/her,r.rao@sies.edu.in,FY,BSc_unaided,COMPUTER_SCIENCE,1,2025-10-01
+				""", tokenFor("office@sies.edu.in", "STAFF"));
+
+		assertEquals(before - 1, count(roll),
+				"a student with a leave date comes off the roll a CR is appointed from");
+	}
+
+	@Test
 	void theOfficeLoadsARoster() throws Exception {
 
 		Reply reply = postCsv("/roster?year=" + SESSION, """

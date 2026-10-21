@@ -195,6 +195,10 @@ public final class DeviceTables {
 		return new Column(room, postgres, Kind.EPOCH_DAY, null, null, false);
 	}
 
+	private static Column epochDayOrNull(String room, String postgres) {
+		return new Column(room, postgres, Kind.EPOCH_DAY, null, null, true);
+	}
+
 	private static Column timestamp(String room, String postgres, String zoneColumn,
 	                                boolean nullable) {
 		return new Column(room, postgres, Kind.ZONED_DATE_TIME, null, zoneColumn, nullable);
@@ -234,7 +238,8 @@ public final class DeviceTables {
 				List.of(integer("studentID", "student_id", false),
 						text("name", "name", false),
 						text("pronouns", "pronouns", false),
-						text("email", "email", true)),
+						text("email", "email", true),
+						integer("apaarId", "apaar_id", true)),
 				List.of("studentID"), List.of(), "studentID", fks()));
 
 		tables.add(new Table("professors",
@@ -266,7 +271,9 @@ public final class DeviceTables {
 						enumeration("minorDept", "minor_dept", Department.class, true),
 						enumeration("oeDept", "oe_dept", Department.class, true),
 						integer("semester", "semester", true),
-						enumeration("division", "division", Division.class, true)),
+						enumeration("division", "division", Division.class, true),
+						epochDayOrNull("joinDate", "join_date"),
+						epochDayOrNull("leaveDate", "leave_date")),
 				List.of("studentID", "academicYear"), List.of("rollNo", "academicYear"), null,
 				fks("studentID", "students")));
 

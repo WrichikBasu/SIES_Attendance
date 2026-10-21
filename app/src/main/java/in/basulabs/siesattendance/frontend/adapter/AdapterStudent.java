@@ -84,7 +84,11 @@ public class AdapterStudent
 			initials.setText(student.initials());
 			rollNo.setText(student.rollNo);
 			name.setText(student.displayName());
-			info.setText(student.classLabel());
+			info.setText(student.leaveDate == null ? student.classLabel()
+					: student.classLabel() + " · " + itemView.getContext().getString(
+							R.string.label_leave_date, student.leaveDate.format(
+									java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy",
+											java.util.Locale.ENGLISH))));
 
 			itemView.setOnClickListener(v -> {
 				if (listener != null) {

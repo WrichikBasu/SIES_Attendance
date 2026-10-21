@@ -134,6 +134,12 @@ public final class RosterImporter {
 
 		Long existing = findByRollNo(connection, row.rollNo(), academicYear);
 
+		// The APAAR ID next: it is the person's for life, so it finds them in a new session
+		// under a new roll number. The device's DaoStudent asks in the same order.
+		if (existing == null && row.apaarId() != null) {
+			existing = findByApaarId(connection, row.apaarId());
+		}
+
 		if (existing == null && row.email() != null) {
 			existing = findByEmail(connection, row.email());
 		}
@@ -184,6 +190,33 @@ public final class RosterImporter {
 		}
 	}
 
+	@Nullable
+	private static Long findByApaarId(@NonNull Connection connection, long apaarId)
+			throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT student_id FROM students WHERE apaar_id = ? LIMIT 1")) {
+
+			statement.setLong(1, apaarId);
+			return firstId(statement);
+		}
+	}
+
+	private static void setNullableLong(@NonNull PreparedStatement statement, int at,
+	                                    @Nullable Long value) throws SQLException {
+		if (value == null) {
+			statement.setNull(at, Types.BIGINT);
+		} else {
+			statement.setLong(at, value);
+		}
+	}
+
+	private static void setNullableDate(@NonNull PreparedStatement statement, int at,
+	                                    @Nullable java.time.LocalDate value)
+			throws SQLException {
+		statement.setObject(at, value, Types.DATE);
+	}
+
 	private static void insertStudent(@NonNull Connection connection, long studentId,
 	                                  @NonNull RosterCsv.Row row) throws SQLException {
 
@@ -192,13 +225,14 @@ public final class RosterImporter {
 		// with an account id now would give a column with no stated meaning a second one. Who
 		// did this is in the audit log, which is the answer that is actually enforced.
 		try (PreparedStatement statement = connection.prepareStatement(
-				"INSERT INTO students (student_id, name, pronouns, email, created_at) "
-						+ "VALUES (?, ?, ?, ?, now())")) {
+				"INSERT INTO students (student_id, name, pronouns, email, apaar_id, created_at) "
+						+ "VALUES (?, ?, ?, ?, ?, now())")) {
 
 			statement.setLong(1, studentId);
 			statement.setString(2, row.name());
 			statement.setString(3, row.pronouns());
 			statement.setString(4, row.email());
+			setNullableLong(statement, 5, row.apaarId());
 			statement.executeUpdate();
 		}
 	}
@@ -207,13 +241,15 @@ public final class RosterImporter {
 	                                  @NonNull RosterCsv.Row row) throws SQLException {
 
 		try (PreparedStatement statement = connection.prepareStatement(
-				"UPDATE students SET name = ?, pronouns = ?, email = ?, updated_at = now(), "
+				"UPDATE students SET name = ?, pronouns = ?, email = ?, "
+						+ "apaar_id = COALESCE(?, apaar_id), updated_at = now(), "
 						+ "row_version = row_version + 1 WHERE student_id = ?")) {
 
 			statement.setString(1, row.name());
 			statement.setString(2, row.pronouns());
 			statement.setString(3, row.email());
-			statement.setLong(4, studentId);
+			setNullableLong(statement, 4, row.apaarId());
+			statement.setLong(5, studentId);
 			statement.executeUpdate();
 		}
 	}
@@ -237,9 +273,10 @@ public final class RosterImporter {
 
 		try (PreparedStatement statement = connection.prepareStatement(
 				"INSERT INTO student_year (student_id, academic_year, roll_no, year, stream, "
-						+ "major_dept, minor_dept, oe_dept, semester, division, created_at) "
+						+ "major_dept, minor_dept, oe_dept, semester, division, join_date, "
+						+ "leave_date, created_at) "
 						+ "VALUES (?, ?, ?, " + year + ", " + stream + ", " + department + ", "
-						+ department + ", " + department + ", ?, " + division + ", now()) "
+						+ department + ", " + department + ", ?, " + division + ", ?, ?, now()) "
 						+ "ON CONFLICT (student_id, academic_year) DO UPDATE SET "
 						+ "  roll_no    = EXCLUDED.roll_no,"
 						+ "  year       = EXCLUDED.year,"
@@ -249,6 +286,8 @@ public final class RosterImporter {
 						+ "  oe_dept    = EXCLUDED.oe_dept,"
 						+ "  semester   = EXCLUDED.semester,"
 						+ "  division   = EXCLUDED.division,"
+						+ "  join_date  = COALESCE(EXCLUDED.join_date, student_year.join_date),"
+						+ "  leave_date = COALESCE(EXCLUDED.leave_date, student_year.leave_date),"
 						+ "  updated_at = now(),"
 						+ "  row_version = student_year.row_version + 1")) {
 
@@ -268,6 +307,8 @@ public final class RosterImporter {
 			}
 
 			statement.setString(10, row.division() == null ? null : row.division().name());
+			setNullableDate(statement, 11, row.joinDate());
+			setNullableDate(statement, 12, row.leaveDate());
 			statement.executeUpdate();
 		}
 	}

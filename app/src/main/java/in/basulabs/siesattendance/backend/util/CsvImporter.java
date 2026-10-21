@@ -151,6 +151,7 @@ public final class CsvImporter {
 	                             int academicYear) {
 
 		EntityStudent student = new EntityStudent(row.name(), row.pronouns(), row.email());
+		student.apaarId = row.apaarId();
 
 		// Checked before the upsert so the summary can distinguish new entries from edits,
 		// which is what tells the user whether a re-import did what they expected.
@@ -159,7 +160,7 @@ public final class CsvImporter {
 
 		db.daoStudent().upsertStudentWithYear(student, academicYear, row.rollNo(), row.year(),
 				row.stream(), row.majorDept(), row.minorDept(), row.oeDept(), row.semester(),
-				row.division());
+				row.division(), row.joinDate(), row.leaveDate());
 
 		return existed;
 	}

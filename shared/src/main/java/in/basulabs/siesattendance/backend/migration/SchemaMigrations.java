@@ -43,7 +43,7 @@ public final class SchemaMigrations {
 	 * against. The app asserts this equals its own {@code DATABASE_VERSION}: if a migration is
 	 * added and this is not raised, that test is what says so.
 	 */
-	public static final int CURRENT_VERSION = 11;
+	public static final int CURRENT_VERSION = 12;
 
 	private SchemaMigrations() {
 	}
@@ -109,6 +109,7 @@ public final class SchemaMigrations {
 		steps.add(step(8, 9, SchemaMigrations::v8ToV9));
 		steps.add(step(9, 10, SchemaMigrations::v9ToV10));
 		steps.add(step(10, 11, SchemaMigrations::v10ToV11));
+		steps.add(step(11, 12, SchemaMigrations::v11ToV12));
 
 		return steps;
 	}
@@ -566,6 +567,23 @@ public final class SchemaMigrations {
 		// re-run on a staged backup.
 		db.exec("INSERT OR IGNORE INTO `sync_state` "
 				+ "(`id`, `applying`, `lastPullAt`, `lastPushAt`) VALUES (1, 0, 0, 0)");
+	}
+
+	/**
+	 * A student's APAAR ID, and the day they joined and left a session's class.
+	 * <p>
+	 * Three nullable columns, which SQLite adds in place: no table rebuild, and every existing
+	 * row reads as "not recorded", which for the dates means joined at the start of the session
+	 * and not left. The index is Room's own name for it, so the next open validates.
+	 */
+	private static void v11ToV12(@NonNull SqliteDb db, @NonNull MigrationContext context) {
+
+		db.exec("ALTER TABLE `students` ADD COLUMN `apaarId` INTEGER");
+		db.exec("CREATE UNIQUE INDEX IF NOT EXISTS `index_students_apaarId` "
+				+ "ON `students` (`apaarId`)");
+
+		db.exec("ALTER TABLE `student_year` ADD COLUMN `joinDate` INTEGER");
+		db.exec("ALTER TABLE `student_year` ADD COLUMN `leaveDate` INTEGER");
 	}
 
 	// ── Helpers ──────────────────────────────────────────────────────────

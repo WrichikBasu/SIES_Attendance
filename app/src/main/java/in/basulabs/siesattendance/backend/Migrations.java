@@ -75,4 +75,7 @@ public final class Migrations {
 	public static final Migration MIGRATION_9_10 = adapt(9);
 
 	public static final Migration MIGRATION_10_11 = adapt(10);
+
+	/** A student's APAAR ID, and the day they joined and left a session's class. */
+	public static final Migration MIGRATION_11_12 = adapt(11);
 }

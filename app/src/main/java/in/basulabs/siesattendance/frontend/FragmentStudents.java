@@ -193,6 +193,14 @@ public class FragmentStudents extends Fragment {
 		emptyState = header.findViewById(R.id.layoutEmptyState);
 		emptySubtitle = header.findViewById(R.id.tvEmptySubtitle);
 		classChips = header.findViewById(R.id.chipGroupClasses);
+
+		// Students who have left are off the list unless asked for.
+		com.google.android.material.chip.Chip showLeft = header.findViewById(R.id.chipShowLeft);
+		showLeft.setChecked(viewModel.studentFilter().includeLeft);
+		showLeft.setOnCheckedChangeListener((chip, checked) -> {
+			viewModel.studentFilter().includeLeft = checked;
+			viewModel.refreshStudents();
+		});
 		resultCount = header.findViewById(R.id.tvResultCount);
 		pastSessionNotice = header.findViewById(R.id.tvPastSessionNotice);
 

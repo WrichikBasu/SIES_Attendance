@@ -61,6 +61,7 @@ public final class ExportQueryBuilder {
 				.append("        (SELECT m.batchID FROM batch_student_map m ")
 				.append("         WHERE m.studentID = s.studentID AND m.academicYear = ?)) ")
 				.append("   AND ").append(lectureWindow())
+				.append("   AND ").append(SqlBits.COUNTS_FOR_ENROLMENT)
 				.append(") AS held, ");
 		args.add(academicYear);
 		addWindowArgs(filter, args);
@@ -74,6 +75,7 @@ public final class ExportQueryBuilder {
 				.append("        (SELECT m2.batchID FROM batch_student_map m2 ")
 				.append("         WHERE m2.studentID = s.studentID AND m2.academicYear = ?)) ")
 				.append("   AND ").append(lectureWindow())
+				.append("   AND ").append(SqlBits.COUNTS_FOR_ENROLMENT)
 				.append(") AS attended ");
 		args.add(academicYear);
 		addWindowArgs(filter, args);
@@ -110,7 +112,8 @@ public final class ExportQueryBuilder {
 		args.add(academicYear);
 		args.add(academicYear);
 
-		sql.append("WHERE 1 = 1 ");
+		// A student who has left is not on the register any more.
+		sql.append("WHERE y.leaveDate IS NULL ");
 
 		appendIn(sql, args, "c.courseID", filter.courseIDs);
 		appendEnumIn(sql, args, "y.majorDept", filter.departments);

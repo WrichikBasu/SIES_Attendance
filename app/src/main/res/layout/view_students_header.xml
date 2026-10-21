@@ -79,6 +79,14 @@
 
         </HorizontalScrollView>
 
+        <com.google.android.material.chip.Chip
+            android:id="@+id/chipShowLeft"
+            style="@style/Widget.Material3.Chip.Filter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:text="@string/filter_show_left" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

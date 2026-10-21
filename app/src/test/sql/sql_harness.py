@@ -131,7 +131,7 @@ def build_fixture():
         (3, "RAHUL DESAI", "he/him", None),
         (4, "MEERA IYER", "she/her", "meera@sies.edu.in"),
     ]
-    c.executemany("INSERT INTO students VALUES (?,?,?,?)", students)
+    c.executemany("INSERT INTO students (studentID, name, pronouns, email) VALUES (?,?,?,?)", students)
 
     enrolments = [
         (1, 2025, "2025CS01", "SY", "BSc_unaided", "COMPUTER_SCIENCE", "MATHEMATICS",
@@ -142,7 +142,7 @@ def build_fixture():
         (4, 2025, "2025PH01", "SY", "BSc", "PHYSICS", "COMPUTER_SCIENCE", "HINDI", 3, "B"),
         (4, 2024, "2024PH07", "FY", "BSc", "PHYSICS", None, None, 1, "A"),
     ]
-    c.executemany("INSERT INTO student_year VALUES (?,?,?,?,?,?,?,?,?,?)", enrolments)
+    c.executemany("INSERT INTO student_year (studentID, academicYear, rollNo, year, stream, majorDept, minorDept, oeDept, semester, division) VALUES (?,?,?,?,?,?,?,?,?,?)", enrolments)
 
     courses = [
         (1, 1, "CS201", "Data Structures", "BSc_unaided", "COMPUTER_SCIENCE", "SY", 3,
@@ -447,8 +447,8 @@ def fixture_with_two_divisions():
     c = conn.cursor()
 
     # A second Physics student, in another division of the same class.
-    c.execute("INSERT INTO students VALUES (5,'PRIYA NAIR','she/her','priya@sies.edu.in')")
-    c.execute("INSERT INTO student_year VALUES "
+    c.execute("INSERT INTO students (studentID, name, pronouns, email) VALUES (5,'PRIYA NAIR','she/her','priya@sies.edu.in')")
+    c.execute("INSERT INTO student_year (studentID, academicYear, rollNo, year, stream, majorDept, minorDept, oeDept, semester, division) VALUES "
               "(5,2025,'2025PH02','SY','BSc','PHYSICS',NULL,NULL,3,'C')")
 
     c.execute("INSERT INTO courses VALUES "
@@ -1157,7 +1157,7 @@ def test_overlapping_sessions_double_count(conn):
     # it: exactly what merging a backup from a second device would fold in.
     probe.execute("INSERT INTO academic_years VALUES (?,?,?,?,?)",
                   (2026, 0, 0, start_of_day(2025, 7, 1), end_of_day(2025, 7, 31)))
-    probe.execute("INSERT INTO student_year VALUES (?,?,?,?,?,?,?,?,?,?)",
+    probe.execute("INSERT INTO student_year (studentID, academicYear, rollNo, year, stream, majorDept, minorDept, oeDept, semester, division) VALUES (?,?,?,?,?,?,?,?,?,?)",
                   (1, 2026, "2026CS01", "TY", "BSc_unaided", "COMPUTER_SCIENCE",
                    None, None, 5, None))
     probe.commit()

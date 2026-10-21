@@ -132,7 +132,9 @@ public final class StatsQueryBuilder {
 	@NonNull
 	private static String whereClause(@NonNull StatsFilter filter, @NonNull List<Object> args) {
 
-		StringBuilder where = new StringBuilder(" WHERE 1 = 1");
+		// Marks on lectures before a late joiner joined do not count against them.
+		StringBuilder where = new StringBuilder(" WHERE ")
+				.append(SqlBits.COUNTS_FOR_ENROLMENT);
 
 		// A null academic year means every session, which is what lets one report compare
 		// this year against last.

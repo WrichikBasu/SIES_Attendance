@@ -36,6 +36,7 @@ import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.EntityLecture;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.backend.EntityStudent;
+import in.basulabs.siesattendance.backend.EntityStudentYear;
 import in.basulabs.siesattendance.backend.MainDatabase;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
@@ -890,6 +891,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 		 */
 		public int academicYear;
 
+		/**
+		 * Whether to list students who have left the session as well. Off by default: once a
+		 * student has left they come off the list, and this is how to find them again.
+		 */
+		public boolean includeLeft;
+
 		@Nullable
 		public Year year;
 
@@ -1054,10 +1061,11 @@ public class AttendanceViewModel extends AndroidViewModel {
 		final Division div = f.division;
 		final Long batch = f.batchID;
 		final String q = f.query;
+		final boolean left = f.includeLeft;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> filteredStudents.postValue(
 				repository.filterStudentsSync(acadYear, y, st, major, minor, oe, div,
-						batch, q)));
+						batch, q, left)));
 	}
 
 	/**
@@ -1074,7 +1082,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                       @NonNull Year year, @NonNull Stream stream,
 	                       @NonNull Department majorDept, @Nullable Department minorDept,
 	                       @Nullable Department oeDept, @Nullable Integer semester,
-	                       @Nullable Division division, @NonNull Runnable onDone) {
+	                       @Nullable Division division, @Nullable LocalDate joinDate,
+	                       @Nullable LocalDate leaveDate, @NonNull Runnable onDone) {
 
 		// New students land in the session the screen is showing, which is what someone
 		// entering last year's late admission expects.
@@ -1083,7 +1092,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				repository.upsertStudentWithYear(student, acadYear, rollNo, year, stream,
-						majorDept, minorDept, oeDept, semester, division);
+						majorDept, minorDept, oeDept, semester, division, joinDate, leaveDate);
 				toastMessage.postValue("Student saved");
 				refreshStudents();
 				onDone.run();
@@ -1794,6 +1803,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return repository.observeLectureMarks(studentID, courseID, fromEpoch, toEpoch);
 	}
 
+	/** Every session a student is enrolled in, newest first, for comparing them across years. */
+	public void loadEnrolments(long studentID,
+	                           @NonNull java.util.function.Consumer<List<EntityStudentYear>> cb) {
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(repository.enrolmentsSync(studentID)));
+	}
+
 	public void loadStudentSync(long studentID, int academicYear,
 	                            @NonNull java.util.function.Consumer<StudentWithYear> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() ->
@@ -1854,12 +1869,14 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                          @NonNull Year year, @NonNull Stream stream,
 	                          @NonNull Department majorDept, @Nullable Department minorDept,
 	                          @Nullable Department oeDept, @Nullable Integer semester,
-	                          @Nullable Division division, @NonNull Runnable onDone) {
+	                          @Nullable Division division, @Nullable LocalDate joinDate,
+	                          @Nullable LocalDate leaveDate, @NonNull Runnable onDone) {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				repository.updateStudentWithYear(student, academicYear, rollNo, year,
-						stream, majorDept, minorDept, oeDept, semester, division);
+						stream, majorDept, minorDept, oeDept, semester, division, joinDate,
+						leaveDate);
 				toastMessage.postValue("Student updated");
 				refreshStudents();
 				onDone.run();
@@ -2293,7 +2310,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			List<Long> ids = new ArrayList<>();
 			for (StudentWithYear student : repository.filterStudentsSync(
 					f.academicYear, f.year, f.stream, f.majorDept, f.minorDept, f.oeDept,
-					f.division, f.batchID, f.query)) {
+					f.division, f.batchID, f.query, false)) {
 				ids.add(student.studentID);
 			}
 			cb.accept(ids);

@@ -219,6 +219,10 @@ it:
 The app uses the same rule in `DaoStudent.getRollForCourseSync` and both export builders. Change
 all of them together; `PostgresSchemaDriftTest` and the SQL differ check that they agree.
 
+Students with a leave date are not on any roll (`roll_for_course()`), so they can't be appointed
+CR. A late joiner's lectures count from their `join_date`, in the export and the statistics, on
+both sides (`PgSqlBits.COUNTS_FOR_ENROLMENT` and `SqlBits.COUNTS_FOR_ENROLMENT`).
+
 A CR can read the rolls of the courses they represent, anyone marked on those courses' lectures,
 and themselves.
 

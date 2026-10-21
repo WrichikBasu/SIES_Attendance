@@ -18,6 +18,7 @@ import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.EntityLecture;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.backend.EntityStudent;
+import in.basulabs.siesattendance.backend.EntityStudentYear;
 import in.basulabs.siesattendance.backend.EntitySyncState;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
@@ -219,7 +220,7 @@ public interface AttendanceRepository {
 	List<StudentWithYear> filterStudentsSync(int academicYear, Year year, Stream stream,
 	                                         Department majorDept, Department minorDept,
 	                                         Department oeDept, Division division, Long batchID,
-	                                         String query);
+	                                         String query, boolean includeLeft);
 
 	@NonNull
 	LiveData<List<StudentCourseStat>> observeCourseBreakdown(
@@ -248,13 +249,20 @@ public interface AttendanceRepository {
 
 	void updateStudentWithYear(@NonNull EntityStudent student, int academicYear, String rollNo,
 	                           Year year, Stream stream, Department majorDept, Department minorDept,
-	                           Department oeDept, Integer semester, Division division);
+	                           Department oeDept, Integer semester, Division division,
+	                           @Nullable java.time.LocalDate joinDate,
+	                           @Nullable java.time.LocalDate leaveDate);
 
 	long upsertStudentWithYear(@NonNull EntityStudent student, int academicYear, String rollNo,
 	                           Year year, Stream stream, Department majorDept, Department minorDept,
-	                           Department oeDept, Integer semester, Division division);
+	                           Department oeDept, Integer semester, Division division,
+	                           @Nullable java.time.LocalDate joinDate,
+	                           @Nullable java.time.LocalDate leaveDate);
 
 	void withdrawFromSession(long studentID, int academicYear);
+
+	@NonNull
+	List<EntityStudentYear> enrolmentsSync(long studentID);
 
 
 	// ── Lectures ─────────────────────────────────────────────────────────

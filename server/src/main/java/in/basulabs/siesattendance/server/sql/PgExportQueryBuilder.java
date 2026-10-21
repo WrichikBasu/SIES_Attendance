@@ -67,6 +67,7 @@ public final class PgExportQueryBuilder {
 				.append("         WHERE m.student_id = s.student_id ")
 				.append("           AND m.academic_year = ?)) ")
 				.append("   AND ").append(lectureWindow())
+				.append("   AND ").append(PgSqlBits.COUNTS_FOR_ENROLMENT)
 				.append(") AS held, ");
 		args.add(academicYear);
 		addWindowArgs(filter, args);
@@ -81,6 +82,7 @@ public final class PgExportQueryBuilder {
 				.append("         WHERE m2.student_id = s.student_id ")
 				.append("           AND m2.academic_year = ?)) ")
 				.append("   AND ").append(lectureWindow())
+				.append("   AND ").append(PgSqlBits.COUNTS_FOR_ENROLMENT)
 				.append(") AS attended ");
 		args.add(academicYear);
 		addWindowArgs(filter, args);
@@ -121,7 +123,8 @@ public final class PgExportQueryBuilder {
 		args.add(academicYear);
 		args.add(academicYear);
 
-		sql.append("WHERE 1 = 1 ");
+		// A student who has left is not on the register any more.
+		sql.append("WHERE y.leave_date IS NULL ");
 
 		appendIn(sql, args, "c.course_id", filter.courseIDs);
 		appendEnumIn(sql, args, "y.major_dept", filter.departments, Department.class);

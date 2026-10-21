@@ -246,6 +246,48 @@ public class RosterCsvTest {
 		assertEquals(3, reading.rows().size());
 	}
 
+	// ── APAAR ID and the enrolment dates ─────────────────────────────────
+
+	@Test
+	public void theApaarIdAndTheDatesAreOptionalColumns() throws IOException {
+
+		RosterCsv.Reading reading = read(HEADER + ",apaarId,joinDate,leaveDate\n"
+				+ "2024CS032,Aarav Patil,he/him,,SY,BSc,COMPUTER_SCIENCE,,,3,,"
+				+ "123456789012,2024-07-15,15/03/2025\n"
+				+ "2024CS033,Sneha Mehta,she/her,,SY,BSc,COMPUTER_SCIENCE,,,3,,,,\n");
+
+		assertFalse(reading.toString(), reading.hasErrors());
+
+		RosterCsv.Row late = reading.rows().get(0);
+		assertEquals(Long.valueOf(123456789012L), late.apaarId());
+		assertEquals(java.time.LocalDate.of(2024, 7, 15), late.joinDate());
+		assertEquals("a day-first date, the way a spreadsheet here writes it",
+				java.time.LocalDate.of(2025, 3, 15), late.leaveDate());
+
+		RosterCsv.Row plain = reading.rows().get(1);
+		assertNull(plain.apaarId());
+		assertNull("blank is the start of the session", plain.joinDate());
+		assertNull("and still enrolled", plain.leaveDate());
+
+		// A file with none of the three columns at all reads exactly as before.
+		assertNull(read(HEADER + "\n2024CS034,Rahul,he/him,,SY,BSc,COMPUTER_SCIENCE,,,3,\n")
+				.rows().get(0).apaarId());
+	}
+
+	@Test
+	public void aBadApaarIdOrBackwardsDatesCostOnlyThatRow() throws IOException {
+
+		RosterCsv.Reading reading = read(HEADER + ",apaarId,joinDate,leaveDate\n"
+				+ "2024CS032,Aarav,he/him,,SY,BSc,COMPUTER_SCIENCE,,,3,,12AB,,\n"
+				+ "2024CS033,Sneha,she/her,,SY,BSc,COMPUTER_SCIENCE,,,3,,,2025-03-01,2025-01-01\n"
+				+ "2024CS034,Rahul,he/him,,SY,BSc,COMPUTER_SCIENCE,,,3,,987654321,,\n");
+
+		assertEquals(1, reading.rows().size());
+		assertEquals(2, reading.errors().size());
+		assertTrue(reading.errors().get(0), reading.errors().get(0).contains("APAAR"));
+		assertTrue(reading.errors().get(1), reading.errors().get(1).contains("before the join"));
+	}
+
 	private static RosterCsv.Reading read(String csv) throws IOException {
 		return RosterCsv.read(new StringReader(csv));
 	}

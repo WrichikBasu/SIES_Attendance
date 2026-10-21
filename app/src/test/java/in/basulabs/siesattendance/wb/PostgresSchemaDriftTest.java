@@ -604,6 +604,7 @@ public class PostgresSchemaDriftTest {
 	public void everyCarriedColumnExistsInTheBaseline() throws IOException {
 
 		String sql = read("V1__baseline.sql");
+		String later = everyMigrationAfterTheBaseline();
 
 		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
 
@@ -616,9 +617,13 @@ public class PostgresSchemaDriftTest {
 					continue;
 				}
 
-				assertTrue("V1__baseline.sql declares no column " + table.name() + "."
+				// In the baseline, or added since by a migration of its own: a migration that
+				// has been applied anywhere is never edited, so a new column arrives as an
+				// ALTER TABLE ... ADD COLUMN in a later file.
+				assertTrue("no migration declares the column " + table.name() + "."
 								+ column.postgres() + ", which DeviceTables says is carried",
-						declaresColumn(body, column.postgres()));
+						declaresColumn(body, column.postgres())
+								|| addsColumn(later, table.name(), column.postgres()));
 
 				if (column.zoneColumn() != null) {
 					assertTrue("V1__baseline.sql declares no zone column " + table.name()
@@ -669,6 +674,52 @@ public class PostgresSchemaDriftTest {
 						described.contains(declared));
 			}
 		}
+	}
+
+	/** Every migration after V1, one after another, for the columns added since. */
+	private static String everyMigrationAfterTheBaseline() throws IOException {
+
+		StringBuilder all = new StringBuilder();
+
+		for (int version = 2; ; version++) {
+
+			String found = null;
+
+			for (String name : migrationNames()) {
+				if (name.startsWith("V" + version + "__")) {
+					found = name;
+				}
+			}
+
+			if (found == null) {
+				return all.toString();
+			}
+			all.append(read(found)).append('\n');
+		}
+	}
+
+	/** The file names in the migration directory, found the way {@link #read} finds it. */
+	private static List<String> migrationNames() throws IOException {
+
+		File directory = new File("").getAbsoluteFile();
+
+		for (int depth = 0; depth < 5 && directory != null; depth++) {
+
+			File candidate = new File(directory, "server/src/main/resources/db/migration");
+			String[] names = candidate.list();
+
+			if (names != null) {
+				return Arrays.asList(names);
+			}
+			directory = directory.getParentFile();
+		}
+		throw new IOException("no migration directory above " + new File("").getAbsolutePath());
+	}
+
+	/** Whether these migrations add this column to this table with ALTER TABLE. */
+	private static boolean addsColumn(String sql, String table, String column) {
+		return Pattern.compile("ALTER TABLE\\s+" + table + "\\b[^;]*?ADD COLUMN\\s+" + column
+				+ "\\b", Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(sql).find();
 	}
 
 	/** Whether a normalised CREATE TABLE body declares a column of this name. */

@@ -6,6 +6,9 @@ import androidx.annotation.Nullable;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.Reader;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -31,10 +34,12 @@ import in.basulabs.siesattendance.backend.Year;
  *
  * <h3>The file</h3>
  * The expected header row is:
- * <pre>rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept,semester,division</pre>
+ * <pre>rollNo,name,pronouns,email,year,stream,majorDept,minorDept,oeDept,semester,division,
+ * apaarId,joinDate,leaveDate</pre>
  * Column order does not matter, because the header is read into a name-to-index map. The
  * {@code pronouns}, {@code email}, {@code minorDept}, {@code oeDept}, {@code semester} and
- * {@code division} columns may be blank or left out of the file altogether; the rest are in
+ * {@code division} columns may be blank or left out of the file altogether, as may
+ * {@code apaarId}, {@code joinDate} and {@code leaveDate}; the rest are in
  * {@link #REQUIRED_COLUMNS} and a row missing any of them is reported rather than skipped
  * quietly.
  * <p>
@@ -63,7 +68,9 @@ public final class RosterCsv {
 	                  @NonNull String pronouns, @Nullable String email, @NonNull Year year,
 	                  @NonNull Stream stream, @NonNull Department majorDept,
 	                  @Nullable Department minorDept, @Nullable Department oeDept,
-	                  @Nullable Integer semester, @Nullable Division division) {
+	                  @Nullable Integer semester, @Nullable Division division,
+	                  @Nullable Long apaarId, @Nullable LocalDate joinDate,
+	                  @Nullable LocalDate leaveDate) {
 	}
 
 	/**
@@ -211,9 +218,62 @@ public final class RosterCsv {
 					+ (oeDept == majorDept ? "major" : "minor") + " department (" + oeDept + ")");
 		}
 
+		Long apaarId = parseApaarId(optional(cells, columns, "apaarid"));
+		LocalDate joinDate = parseDate(optional(cells, columns, "joindate"), "join date");
+		LocalDate leaveDate = parseDate(optional(cells, columns, "leavedate"), "leave date");
+
+		if (joinDate != null && leaveDate != null && leaveDate.isBefore(joinDate)) {
+			throw new IllegalArgumentException("the leave date is before the join date");
+		}
+
 		return new Row(line, rollNo, name, pronouns, email, year, stream, majorDept, minorDept,
-				oeDept, semester, division);
+				oeDept, semester, division, apaarId, joinDate, leaveDate);
 	}
+
+	/** An APAAR ID: digits only, as a spreadsheet keeps it. Null for a blank cell. */
+	@Nullable
+	public static Long parseApaarId(@Nullable String raw) {
+
+		if (raw == null || raw.isBlank()) {
+			return null;
+		}
+
+		String digits = raw.trim();
+
+		if (!digits.matches("[0-9]{1,18}") || Long.parseLong(digits) == 0) {
+			throw new IllegalArgumentException("APAAR ID \"" + raw.trim() + "\" is not a number");
+		}
+		return Long.parseLong(digits);
+	}
+
+	/**
+	 * A date as a spreadsheet writes it: 2026-06-15, 15/06/2026 or 15-06-2026. Null for a blank
+	 * cell.
+	 */
+	@Nullable
+	public static LocalDate parseDate(@Nullable String raw, @NonNull String what) {
+
+		if (raw == null || raw.isBlank()) {
+			return null;
+		}
+
+		String value = raw.trim();
+
+		for (DateTimeFormatter format : DATE_FORMATS) {
+			try {
+				return LocalDate.parse(value, format);
+			} catch (DateTimeParseException tryTheNext) {
+				// Next.
+			}
+		}
+		throw new IllegalArgumentException("the " + what + " \"" + value + "\" is not a date; "
+				+ "write it as 2026-06-15 or 15/06/2026");
+	}
+
+	private static final List<DateTimeFormatter> DATE_FORMATS = List.of(
+			DateTimeFormatter.ISO_LOCAL_DATE,
+			DateTimeFormatter.ofPattern("d/M/uuuu"),
+			DateTimeFormatter.ofPattern("d-M-uuuu"));
 
 	/**
 	 * Maps normalised column names to their position. Names are lowercased with underscores,

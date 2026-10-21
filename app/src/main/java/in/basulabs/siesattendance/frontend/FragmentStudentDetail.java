@@ -36,6 +36,7 @@ import java.util.Map;
 import java.util.Set;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.EntityStudentYear;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
@@ -187,6 +188,10 @@ public class FragmentStudentDetail extends Fragment {
 	 * Everything on the screen — the header, the deletion counts, the withdrawal and the edit
 	 * form — uses this one value, so they cannot disagree about which year is on show.
 	 */
+	private TextView apaarId, enrolmentDates;
+
+	private com.google.android.material.chip.ChipGroup sessions;
+
 	private int academicYear;
 
 	@Nullable
@@ -214,6 +219,9 @@ public class FragmentStudentDetail extends Fragment {
 		classLabel = view.findViewById(R.id.tvClassLabel);
 		pronouns = view.findViewById(R.id.tvPronouns);
 		email = view.findViewById(R.id.tvEmail);
+		apaarId = view.findViewById(R.id.tvApaarId);
+		enrolmentDates = view.findViewById(R.id.tvEnrolmentDates);
+		sessions = view.findViewById(R.id.cgSessions);
 		overallPercentage = view.findViewById(R.id.tvOverallPercentage);
 		overallDetail = view.findViewById(R.id.tvOverallDetail);
 		overallBar = view.findViewById(R.id.progressOverall);
@@ -938,6 +946,9 @@ public class FragmentStudentDetail extends Fragment {
 		viewModel.getStudent(studentID, academicYear)
 				.observe(getViewLifecycleOwner(), this::bindStudent);
 
+		viewModel.loadEnrolments(studentID, enrolments ->
+				Ui.onMain(this, () -> bindSessions(enrolments)));
+
 		refreshBreakdown();
 	}
 
@@ -959,6 +970,50 @@ public class FragmentStudentDetail extends Fragment {
 		email.setText(student.email == null || student.email.isEmpty()
 				? getString(R.string.label_no_email)
 				: student.email);
+
+		apaarId.setText(student.apaarId == null
+				? getString(R.string.label_not_recorded) : String.valueOf(student.apaarId));
+
+		String joined = student.joinDate == null ? getString(R.string.label_join_default)
+				: getString(R.string.label_join_date, student.joinDate.format(DATE_LABEL));
+		enrolmentDates.setText(student.leaveDate == null ? joined
+				: joined + " · " + getString(R.string.label_leave_date,
+				student.leaveDate.format(DATE_LABEL)));
+	}
+
+	/**
+	 * One chip per session this person is enrolled in, with that year's roll number. The APAAR
+	 * ID and the roster import are what keep one person one record across years; this is where
+	 * that shows. Tapping a session opens the same student in it.
+	 */
+	private void bindSessions(@NonNull List<EntityStudentYear> enrolments) {
+
+		sessions.removeAllViews();
+
+		for (EntityStudentYear enrolment : enrolments) {
+
+			Chip chip = new Chip(requireContext());
+			chip.setCheckable(true);
+			chip.setChecked(enrolment.academicYear == academicYear);
+			chip.setText(enrolment.academicYear + "–"
+					+ String.format(Locale.ENGLISH, "%02d", (enrolment.academicYear + 1) % 100)
+					+ " · " + enrolment.rollNo
+					+ (enrolment.leaveDate == null ? "" : " · left"));
+
+			chip.setOnClickListener(v -> {
+				if (enrolment.academicYear == academicYear) {
+					chip.setChecked(true);
+					return;
+				}
+				Bundle args = new Bundle();
+				args.putLong("studentID", studentID);
+				args.putInt("academicYear", enrolment.academicYear);
+				Navigation.findNavController(requireView())
+						.navigate(R.id.fragmentStudentDetail, args);
+			});
+
+			sessions.addView(chip);
+		}
 	}
 
 	/**

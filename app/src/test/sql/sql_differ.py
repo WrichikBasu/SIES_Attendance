@@ -127,6 +127,7 @@ class Student:
     name: str
     pronouns: str
     email: str | None
+    apaar_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,9 @@ class Enrolment:
     oe_dept: str | None
     semester: int | None
     division: str | None
+    # Null means the start of the session, and not left.
+    join_date: tuple[int, int, int] | None = None
+    leave_date: tuple[int, int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -212,7 +216,7 @@ FIXTURE = Fixture(
         Professor(2, "DR RAO", "rao@sies.edu.in", "PHYSICS", "Associate Professor"),
     ],
     students=[
-        Student(1, "AARAV PATIL", "he/him", "aarav@sies.edu.in"),
+        Student(1, "AARAV PATIL", "he/him", "aarav@sies.edu.in", apaar_id=123456789012),
         Student(2, "SNEHA MEHTA", "she/her", "sneha@sies.edu.in"),
         # No email: the column is nullable and a projection that drops the row would be a
         # defect worth catching on both engines.
@@ -223,10 +227,12 @@ FIXTURE = Fixture(
     enrolments=[
         Enrolment(1, 2025, "2025CS01", "SY", "BSc_unaided", "COMPUTER_SCIENCE",
                   "INFORMATION_TECHNOLOGY", "ENVIRONMENTAL_SCIENCE", 3, None),
+        # Joined late, after the first two lectures she was marked on: they must not count.
         Enrolment(2, 2025, "2025CS02", "SY", "BSc_unaided", "COMPUTER_SCIENCE",
-                  None, "ENVIRONMENTAL_SCIENCE", 3, None),
+                  None, "ENVIRONMENTAL_SCIENCE", 3, None, join_date=(2025, 7, 12)),
+        # Left: off the register export, though the marks before stay in the statistics.
         Enrolment(3, 2025, "2025CS03", "SY", "BSc_unaided", "COMPUTER_SCIENCE",
-                  None, None, 3, None),
+                  None, None, 3, None, leave_date=(2025, 12, 1)),
         # The only students on a stream that has divisions at all, and in two different
         # divisions of it, so the CLASS grouping has something to split.
         Enrolment(4, 2025, "2025PH01", "SY", "BSc", "PHYSICS",
@@ -317,6 +323,21 @@ FIXTURE = Fixture(
 )
 
 
+def epoch_day(day: tuple[int, int, int] | None) -> int | None:
+    """A date as the device stores it: days since 1970-01-01."""
+    if day is None:
+        return None
+    from datetime import date
+    return (date(*day) - date(1970, 1, 1)).days
+
+
+def iso_date(day: tuple[int, int, int] | None) -> str | None:
+    """The same date as text PostgreSQL parses."""
+    if day is None:
+        return None
+    return "%04d-%02d-%02d" % day
+
+
 def ts(stamp: tuple[int, int, int, int, int]) -> str:
     """A timestamp as the app stores it: "epochSecond|nano|zone"."""
     year, month, day, hour, minute = stamp
@@ -362,16 +383,23 @@ def build_sqlite() -> sqlite3.Connection:
         ))
 
     for student in FIXTURE.students:
-        c.execute("INSERT INTO students VALUES (?,?,?,?)", (
+        # Named rather than positional: Room orders columns by the entity's fields, and a
+        # field added in the middle would otherwise shift every value after it.
+        c.execute("INSERT INTO students (studentID, name, pronouns, email, apaarId) "
+                  "VALUES (?,?,?,?,?)", (
             student.student_id, student.name, student.pronouns, student.email,
+            student.apaar_id,
         ))
 
     for enrolment in FIXTURE.enrolments:
-        c.execute("INSERT INTO student_year VALUES (?,?,?,?,?,?,?,?,?,?)", (
+        c.execute("INSERT INTO student_year (studentID, academicYear, rollNo, year, stream, "
+                  "majorDept, minorDept, oeDept, semester, division, joinDate, leaveDate) "
+                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (
             enrolment.student_id, enrolment.academic_year, enrolment.roll_no,
             enrolment.year, enrolment.stream, enrolment.major_dept,
             enrolment.minor_dept, enrolment.oe_dept, enrolment.semester,
-            enrolment.division,
+            enrolment.division, epoch_day(enrolment.join_date),
+            epoch_day(enrolment.leave_date),
         ))
 
     for course in FIXTURE.courses:
@@ -437,22 +465,24 @@ def postgres_inserts() -> list[tuple[str, list[str | None]]]:
 
     for student in FIXTURE.students:
         out.append((
-            "INSERT INTO students (student_id, name, pronouns, email) "
-            "VALUES (?, ?, ?, ?)",
-            [str(student.student_id), student.name, student.pronouns, student.email],
+            "INSERT INTO students (student_id, name, pronouns, email, apaar_id) "
+            "VALUES (?, ?, ?, ?, ?::bigint)",
+            [str(student.student_id), student.name, student.pronouns, student.email,
+             None if student.apaar_id is None else str(student.apaar_id)],
         ))
 
     for enrolment in FIXTURE.enrolments:
         out.append((
             "INSERT INTO student_year (student_id, academic_year, roll_no, year, stream, "
-            "major_dept, minor_dept, oe_dept, semester, division) "
+            "major_dept, minor_dept, oe_dept, semester, division, join_date, leave_date) "
             "VALUES (?, ?, ?, ?::study_year, ?::degree_stream, ?::department, "
-            "?::department, ?::department, ?, ?::class_division)",
+            "?::department, ?::department, ?, ?::class_division, ?::date, ?::date)",
             [str(enrolment.student_id), str(enrolment.academic_year), enrolment.roll_no,
              enrolment.year, enrolment.stream, enrolment.major_dept,
              enrolment.minor_dept, enrolment.oe_dept,
              None if enrolment.semester is None else str(enrolment.semester),
-             enrolment.division],
+             enrolment.division, iso_date(enrolment.join_date),
+             iso_date(enrolment.leave_date)],
         ))
 
     for course in FIXTURE.courses:

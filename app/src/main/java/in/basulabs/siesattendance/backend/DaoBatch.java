@@ -91,22 +91,24 @@ public abstract class DaoBatch {
 	 * on the one screen that omitted the column.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.division " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
 			"FROM students s " +
 			"INNER JOIN batch_student_map m ON s.studentID = m.studentID " +
 			"INNER JOIN student_year y ON y.studentID = s.studentID " +
 			"   AND y.academicYear = m.academicYear " +
-			"WHERE m.batchID = :batchID ORDER BY y.rollNo ASC")
+			"WHERE m.batchID = :batchID AND y.leaveDate IS NULL ORDER BY y.rollNo ASC")
 	public abstract LiveData<List<StudentWithYear>> getStudentsInBatch(long batchID);
 
 	/** Blocking form of {@link #getStudentsInBatch}, with the same missing semester column. */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
-			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.division " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
 			"FROM students s " +
 			"INNER JOIN batch_student_map m ON s.studentID = m.studentID " +
 			"INNER JOIN student_year y ON y.studentID = s.studentID " +
 			"   AND y.academicYear = m.academicYear " +
-			"WHERE m.batchID = :batchID ORDER BY y.rollNo ASC")
+			"WHERE m.batchID = :batchID AND y.leaveDate IS NULL ORDER BY y.rollNo ASC")
 	public abstract List<StudentWithYear> getStudentsInBatchSync(long batchID);
 
 	/**

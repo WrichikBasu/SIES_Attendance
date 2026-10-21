@@ -669,8 +669,10 @@ public final class AttendanceRecordImporter {
 			if (index == null) {
 				index = new HashMap<>();
 
+				// Everybody enrolled, including those who have since left: an old sheet
+				// carries their marks from before they went.
 				for (StudentWithYear student : db.daoStudent().filterStudentsSync(
-						academicYear, null, null, null, null, null, null, null, "")) {
+						academicYear, null, null, null, null, null, null, null, "", true)) {
 					index.put(normalise(student.rollNo), student.studentID);
 				}
 				students.put(academicYear, index);
