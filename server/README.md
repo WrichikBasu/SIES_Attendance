@@ -186,6 +186,8 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 | add or remove students and enrolments | — | — | the department's | ✓ | — | ✓ |
 | add or correct a professor | — | — | — | ✓ | — | ✓ |
 | add or withdraw a course | — | — | the department's | ✓ | — | ✓ |
+| open a new academic session | — | — | — | — | — | ✓ |
+| correct or remove a session | — | — | — | ✓ | — | ✓ |
 | create, edit, delete batches; link them to courses | — | any course | any course | — | — | — |
 | read batches | those linked to their courses | all | all | all | all | all |
 | load a roster CSV | — | — | — | ✓ | — | ✓ |

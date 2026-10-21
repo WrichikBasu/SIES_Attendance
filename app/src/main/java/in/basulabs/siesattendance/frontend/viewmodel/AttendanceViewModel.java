@@ -186,7 +186,17 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 			if (session == null) {
 				session = EntityAcademicYear.defaultFor(provisionalYear());
-				repository.upsertAcademicYear(session);
+
+				// Saved only on a phone with no server, which has nobody else to set up its
+				// calendar. With a server, sessions are an administrator's to add and arrive by
+				// the pull; a phone that invented one here -- an empty database after signing
+				// out, or before the first pull -- would push it under whoever signs in next.
+				// So the default is used, and kept in memory, until the real ones arrive.
+				if (!new SyncClient(getApplication()).isConfigured()) {
+					repository.upsertAcademicYear(session);
+				} else {
+					awaitRealSessions();
+				}
 			}
 
 			currentSession = session;
@@ -287,6 +297,13 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 */
 	public void saveAcademicYear(int year, @NonNull LocalDate start, @NonNull LocalDate end,
 	                             boolean creating, @NonNull Runnable onDone) {
+
+		// Asked here as well as on the screen, so that no other way in can add a session.
+		if (!may(creating ? Permissions.Capability.NEW_SESSION
+				: Permissions.Capability.SESSIONS)) {
+			sayNotPermitted();
+			return;
+		}
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
@@ -510,6 +527,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				// The previous account's appointments go first, whatever happens next: a
 				// phone passed from one CR to another must not show the first one's courses.
 				DeviceIdentity.recordRepresents(getApplication(), null);
+				DeviceIdentity.recordRoles(getApplication(), null);
 
 				// What the server will let this account change, and which courses a class
 				// representative may mark. Asked here rather than guessed from the account
@@ -601,7 +619,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 */
 	public boolean may(@NonNull Permissions.Capability what) {
 		return Permissions.may(DeviceIdentity.accountKind(getApplication()),
-				DeviceIdentity.mayKeepARoll(getApplication()), what);
+				DeviceIdentity.mayKeepARoll(getApplication()),
+				DeviceIdentity.roles(getApplication()), what);
 	}
 
 	/** Why a control is missing, for a screen that has to say something. */
@@ -2597,7 +2616,51 @@ public class AttendanceViewModel extends AndroidViewModel {
 	@Override
 	protected void onCleared() {
 		statsHandler.removeCallbacks(statsRunnable);
+		stopAwaitingSessions();
 		super.onCleared();
+	}
+
+	/** The sessions table, watched while the current session is only a default; see below. */
+	@Nullable
+	private LiveData<List<EntityAcademicYear>> awaitedSessions;
+
+	@Nullable
+	private androidx.lifecycle.Observer<List<EntityAcademicYear>> sessionsArrived;
+
+	/**
+	 * Works the current session out again as soon as real sessions arrive.
+	 * <p>
+	 * For a phone with a server and an empty sessions table, which uses a default it does not
+	 * save. The pull brings the real sessions moments later, and nothing else would notice: the
+	 * current session is otherwise worked out only when this ViewModel is made or a session is
+	 * saved. Once, then it stops watching.
+	 */
+	private void awaitRealSessions() {
+
+		new Handler(Looper.getMainLooper()).post(() -> {
+
+			if (sessionsArrived != null) {
+				return;
+			}
+
+			awaitedSessions = repository.observeAcademicYears();
+			sessionsArrived = sessions -> {
+				if (sessions != null && !sessions.isEmpty()) {
+					stopAwaitingSessions();
+					resolveCurrentSession();
+				}
+			};
+			awaitedSessions.observeForever(sessionsArrived);
+		});
+	}
+
+	private void stopAwaitingSessions() {
+
+		if (awaitedSessions != null && sessionsArrived != null) {
+			awaitedSessions.removeObserver(sessionsArrived);
+		}
+		awaitedSessions = null;
+		sessionsArrived = null;
 	}
 
 	/**

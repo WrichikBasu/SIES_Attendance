@@ -199,8 +199,11 @@ public final class SyncClient {
 	 *                     remove one
 	 * @param represents   the courses this account is a class representative of right now,
 	 *                     or null when the server did not say
+	 * @param roles        the roles this account holds right now ({@code ADMIN},
+	 *                     {@code OFFICE}, ...), or null when the server did not say
 	 */
-	public record Me(boolean mayKeepARoll, @Nullable List<Long> represents) {
+	public record Me(boolean mayKeepARoll, @Nullable List<Long> represents,
+	                 @Nullable List<String> roles) {
 	}
 
 	/**
@@ -221,7 +224,8 @@ public final class SyncClient {
 		String body = call("GET", "/me", null);
 
 		return new Me(SyncJson.flagIn(body, "mayKeepARoll", fallback),
-				SyncJson.courseIdsIn(body, "represents"));
+				SyncJson.courseIdsIn(body, "represents"),
+				SyncJson.textsIn(body, "roles", "role"));
 	}
 
 	/** One password as a JSON string, escaped the little that a password can need. */

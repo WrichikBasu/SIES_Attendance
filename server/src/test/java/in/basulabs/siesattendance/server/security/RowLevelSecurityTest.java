@@ -928,6 +928,29 @@ class RowLevelSecurityTest {
 		}
 	}
 
+	@Test
+	void onlyAnAdministratorOpensASession() throws Exception {
+
+		String open = "INSERT INTO academic_years (academic_year, start_date, end_date) VALUES ";
+
+		try (Connection as = postgres.actingAs(accountAdmin, null, null)) {
+			execute(as, open + "(2027, '2027-06-01', '2028-05-31')");
+			as.commit();
+		}
+
+		assertRefused(accountOffice, null, null, open + "(2028, '2028-06-01', '2029-05-31')",
+				"the office keeps the roll, not the calendar");
+
+		assertRefused(accountProfCs, PROF_CS, null, open + "(2028, '2028-06-01', '2029-05-31')",
+				"nor does a professor");
+
+		try (Connection as = postgres.actingAs(accountOffice, null, null)) {
+			assertEquals(1, update(as, "UPDATE academic_years SET end_date = '2028-05-30' "
+							+ "WHERE academic_year = 2027"),
+					"correcting a session's dates is still the office's");
+		}
+	}
+
 	// ── Fixture helpers ──────────────────────────────────────────────────
 
 	/** Creates an account as the superuser and returns the id the sequence gave it. */

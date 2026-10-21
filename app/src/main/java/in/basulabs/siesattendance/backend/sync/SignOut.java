@@ -113,6 +113,7 @@ public final class SignOut {
 		DeviceIdentity.recordDisplayName(context, null);
 		DeviceIdentity.recordAccountKind(context, null);
 		DeviceIdentity.recordRepresents(context, null);
+		DeviceIdentity.recordRoles(context, null);
 		DeviceIdentity.recordLastAccountId(context, 0L);
 		DeviceIdentity.recordLastRun(context, 0, 0);
 		DeviceIdentity.clearRefusals(context);

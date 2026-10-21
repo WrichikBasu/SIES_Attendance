@@ -177,6 +177,28 @@ public class PermissionsTest {
 	}
 
 	@Test
+	public void onlyAnAdministratorAddsASession() {
+
+		Permissions.Capability add = Permissions.Capability.NEW_SESSION;
+		Permissions.Capability edit = Permissions.Capability.SESSIONS;
+
+		assertTrue(Permissions.may(AccountKind.STAFF, true, Set.of("ADMIN"), add));
+		assertFalse("the office corrects a session and does not open one",
+				Permissions.may(AccountKind.STAFF, true, Set.of("OFFICE"), add));
+		assertTrue(Permissions.may(AccountKind.STAFF, true, Set.of("OFFICE"), edit));
+
+		assertFalse("a head of department keeps the roll, not the calendar",
+				Permissions.may(AccountKind.PROFESSOR, true, Set.of("HOD"), add));
+		assertFalse(Permissions.may(AccountKind.PROFESSOR, true, Set.of("HOD"), edit));
+
+		assertFalse("roles never recorded is no role, for an account that is known",
+				Permissions.may(AccountKind.STAFF, true, null, add));
+
+		assertTrue("a build with no server has nobody else to set up its calendar",
+				Permissions.may(null, true, null, add));
+	}
+
+	@Test
 	public void whoKeepsTheRollIsTheServersAnswer() {
 
 		for (Permissions.Capability what : ROSTER) {

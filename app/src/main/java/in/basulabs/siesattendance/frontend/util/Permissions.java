@@ -75,7 +75,17 @@ public final class Permissions {
 		 * Making a batch, changing who is in it and which courses it is for, or removing it.
 		 * A professor's, whichever course it is for: see V22.
 		 */
-		BATCHES
+		BATCHES,
+
+		/**
+		 * Adding an academic session. An administrator's alone: a session is the calendar
+		 * every register in the college is filed against, and the server refuses anybody
+		 * else's (V25).
+		 */
+		NEW_SESSION,
+
+		/** Correcting a session's dates, or removing one: the office's and an administrator's. */
+		SESSIONS
 	}
 
 	private Permissions() {
@@ -103,6 +113,28 @@ public final class Permissions {
 	 */
 	public static boolean may(@Nullable AccountKind who, boolean mayKeepARoll,
 	                          @NonNull Capability what) {
+		return may(who, mayKeepARoll, null, what);
+	}
+
+	/**
+	 * The same question, for the capabilities that belong to a role rather than to an account's
+	 * kind.
+	 *
+	 * @param roles the roles {@code /me} last reported ({@code ADMIN}, {@code OFFICE}, ...), or
+	 *              null when they were never recorded -- which, for an account that is known,
+	 *              refuses the role's capabilities until the next sync records them
+	 */
+	public static boolean may(@Nullable AccountKind who, boolean mayKeepARoll,
+	                          @Nullable Set<String> roles, @NonNull Capability what) {
+
+		// Unknown is permitted, for the reason in the class notes: a build with no server has
+		// nobody to be an administrator, and must still be able to set up its own calendar.
+		if (who == null && (what == Capability.NEW_SESSION || what == Capability.SESSIONS)) {
+			return true;
+		}
+
+		boolean admin = roles != null && roles.contains("ADMIN");
+		boolean office = roles != null && roles.contains("OFFICE");
 
 		// A student holds no role that keeps a roll, so this is belt and braces -- and it is
 		// the half that does not depend on having reached the server.
@@ -117,6 +149,9 @@ public final class Permissions {
 			// Any professor, and only a professor: not the office, not an administrator.
 			// Unknown is permitted for the reason in the class notes.
 			case BATCHES -> who == null || who == AccountKind.PROFESSOR;
+
+			case NEW_SESSION -> admin;
+			case SESSIONS -> admin || office;
 		};
 	}
 

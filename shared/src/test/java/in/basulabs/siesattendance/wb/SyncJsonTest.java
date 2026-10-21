@@ -256,4 +256,15 @@ public class SyncJsonTest {
 		assertNull("and saying nothing is a different one",
 				SyncJson.courseIdsIn("{\"mayKeepARoll\":true}", "represents"));
 	}
+
+	@Test
+	public void theRolesAreReadOutOfMe() {
+
+		String me = "{\"roles\":[{\"userRoleId\":1,\"role\":\"ADMIN\",\"department\":null},"
+				+ "{\"userRoleId\":7,\"role\":\"HOD\",\"department\":\"COMPUTER_SCIENCE\"}]}";
+
+		assertEquals(List.of("ADMIN", "HOD"), SyncJson.textsIn(me, "roles", "role"));
+		assertEquals(List.of(), SyncJson.textsIn("{\"roles\":[]}", "roles", "role"));
+		assertNull(SyncJson.textsIn("{}", "roles", "role"));
+	}
 }

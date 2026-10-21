@@ -157,9 +157,7 @@
     <!-- Signing in. One door: the staff one. See the note. -->
     <section id="signInCard">
         <h2>Sign in</h2>
-        <p class="note">A professor's, an office or an administrator's account. <b>Students
-            cannot sign in here</b> — a class representative's account is for marking
-            registers on the phone, and this page is the office's.</p>
+        <p class="note">Staff accounts only. Class representatives use the app.</p>
         <div class="row">
             <div><label for="email">Email</label><input id="email" type="email"
                  autocomplete="username"></div>
@@ -169,17 +167,12 @@
                  Keep me signed in</label></div>
         </div>
         <button id="signIn">Sign in</button>
-        <p class="note after">Left unticked, the session lives in this tab and closing it signs
-            you out. Ticked, it is kept in this browser until you sign out or it expires in a
-            fortnight — convenient on your own machine, and the wrong choice on a shared
-            one.</p>
+        <p class="note after">Keeps you signed in on this browser for two weeks. Not for shared computers.</p>
     </section>
 
     <section id="rotateCard" hidden>
         <h2>Change your password first</h2>
-        <p class="note">This account was created with a password somebody else typed, so it
-            cannot do anything else until that is changed. Every other session of this account
-            is signed out by the change; this one is not.</p>
+        <p class="note">Choose a new password to continue. Your other sessions will be signed out.</p>
         <div class="row">
             <div><label for="currentPassword">Current password</label>
                  <input id="currentPassword" type="password"></div>
@@ -194,11 +187,7 @@
 
         <section id="createCard">
             <h2>New account</h2>
-            <p class="note">The password is an opening one: the account has to change it before
-                it can do anything, so you are not the person who ends up knowing it. A
-                professor's account can mark that professor's registers from the moment it
-                exists, with no role at all — the role is for what they may do <em>beyond</em>
-                their own teaching.</p>
+            <p class="note">The account must change this password when it first signs in.</p>
             <div class="row">
                 <div><label for="kind">Kind</label><select id="kind"></select></div>
                 <div id="personWrap"><label for="person">Who it is for</label>
@@ -232,10 +221,6 @@
 
         <section id="listCard">
             <h2>Accounts</h2>
-            <p class="note">Roles and appointments in force. One that has been revoked is not
-                shown here at all — what happened to it, who did it and when is in the audit
-                trail, which says more than a crossed-out tag could. An account left holding
-                nothing is not shown either; it can still be given a role below.</p>
             <div class="scroll"><table>
                 <thead><tr>
                     <th>#</th><th>Name</th><th>Email</th><th>Kind</th>
@@ -247,11 +232,7 @@
 
         <section id="grantCard">
             <h2>Grant a role</h2>
-            <p class="note">A head of department is appointed for a department, and the
-                session is optional: left at <em>until it is revoked</em> the appointment runs
-                until somebody ends it, which is what an appointment normally does. Name a
-                session for somebody standing in for one year. The other three roles are
-                college-wide and hold until they are revoked.</p>
+            <p class="note">Leave the session empty for a head appointed until revoked.</p>
             <div class="row">
                 <div><label for="grantAccount">Account</label>
                      <select id="grantAccount"></select></div>
@@ -276,11 +257,7 @@
         <section>
             <h2>Tables</h2>
             <div class="tables" id="tables"></div>
-            <p class="note after">Counts are what <em>you</em> may see, and that is the
-                database's answer rather than this page's: a professor sees their own courses
-                and the students on their rolls, a head of department sees that department, an
-                auditor sees everybody. A zero means none you are allowed to read, which is
-                not the same as none on the server.</p>
+            <p class="note after">Counts include only what you may see.</p>
         </section>
 
         <section id="rowsCard" hidden>
@@ -299,12 +276,7 @@
 
         <section>
             <h2>Class representatives</h2>
-            <p class="note">Yours to appoint: a representative of a course you teach, or of one
-                your department offers if you head it. Pick the course and the session, and the
-                roll is the list — it is the same roll the register is called from, so somebody
-                not on it cannot be appointed to it. An appointment is recorded in the capacity
-                you hold, and it lets that student mark this course's registers on their phone
-                from their next sync.</p>
+            <p class="note">Pick a course and session, then appoint a student from its roll.</p>
             <div class="row">
                 <div><label for="repCourse">Course</label><select id="repCourse"></select></div>
                 <div><label for="repSession">Session</label><select id="repSession"></select></div>
@@ -324,13 +296,7 @@
 
         <section>
             <h2>Audit trail</h2>
-            <p class="note">Every change you may read, newest first, said in words, with who
-                made it and from where. <em>Details</em> shows the database's own record of
-                it, before and after. An auditor or an
-                administrator reads the whole trail; a professor reads what happened to their
-                own lectures, marks and courses, whoever did it, and what they themselves did;
-                a head of department reads their department's. The service's own database role
-                cannot read this table at all, which is what makes it worth having.</p>
+            <p class="note">Newest first. <em>Details</em> shows the raw record.</p>
             <div class="scroll"><table class="trail">
                 <thead><tr>
                     <th>When</th><th>Who</th><th>What</th><th>Where from</th><th></th>
@@ -514,7 +480,7 @@ $("rotate").addEventListener("click", async () => {
         $("newPassword").value = "";
         $("rotateCard").hidden = true;
 
-        say("Password changed. Every other session of this account has been signed out.",
+        say("Password changed. Your other sessions were signed out.",
             true);
 
         await opened();
@@ -975,9 +941,7 @@ async function loadAccounts() {
 
 async function revokeRole(account, grant) {
 
-    if (!confirm("Revoke " + grant.role + " from " + account.displayName
-            + "?\n\nThe grant is kept and marked revoked, so the audit trail can still "
-            + "explain what was done under it. It leaves this list.")) {
+    if (!confirm("Revoke " + grant.role + " from " + account.displayName + "?")) {
         return;
     }
 
@@ -998,9 +962,7 @@ async function revokeRole(account, grant) {
 async function endDelegation(account, grant) {
 
     if (!confirm("End " + account.displayName + "'s appointment for " + grant.courseCode
-            + " in " + grant.academicYear + "?\n\nThe grant is kept and marked ended, so the "
-            + "registers they marked under it stay explainable. They stop being able to mark "
-            + "that course at their next sync.")) {
+            + " in " + grant.academicYear + "?")) {
         return;
     }
 
@@ -1209,9 +1171,7 @@ async function appoint(student) {
 
 async function endRepresentative(student) {
 
-    if (!confirm("End " + student.name + "'s appointment for this course?\n\nThe grant is "
-            + "kept and marked ended, so the registers they marked under it stay "
-            + "explainable. They stop being able to mark it at their next sync.")) {
+    if (!confirm("End " + student.name + "'s appointment for this course?")) {
         return;
     }
 

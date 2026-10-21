@@ -86,6 +86,8 @@ public final class DeviceIdentity {
 
 	private static final String LAST_ACCOUNT = "lastAccountId";
 
+	private static final String ROLES = "roles";
+
 	/** How many refusals are kept. Enough to read; not a log. */
 	private static final int REFUSALS_KEPT = 20;
 
@@ -318,6 +320,43 @@ public final class DeviceIdentity {
 		prefs(context).edit().putLong(LAST_ACCOUNT, accountId).apply();
 	}
 
+	/**
+	 * The roles this account holds, as {@code /me} last said, or null when it has never said.
+	 * <p>
+	 * What decides the few things in the app that belong to a role rather than to an account's
+	 * kind: adding an academic session is an administrator's, for instance. See
+	 * {@code Permissions}.
+	 */
+	@Nullable
+	public static Set<String> roles(@NonNull Context context) {
+
+		String stored = prefs(context).getString(ROLES, null);
+
+		if (stored == null) {
+			return null;
+		}
+
+		Set<String> roles = new HashSet<>();
+
+		for (String role : stored.split(",")) {
+			if (!role.isEmpty()) {
+				roles.add(role);
+			}
+		}
+		return roles;
+	}
+
+	/** Remembers the roles this account holds. Null forgets them, as signing out does. */
+	public static void recordRoles(@NonNull Context context, @Nullable Collection<String> roles) {
+
+		if (roles == null) {
+			prefs(context).edit().remove(ROLES).apply();
+			return;
+		}
+
+		prefs(context).edit().putString(ROLES, String.join(",", roles)).apply();
+	}
+
 	/** Records what {@code /me} said, keeping the earlier answer for anything it did not say. */
 	public static void recordMe(@NonNull Context context, @NonNull SyncClient.Me me) {
 
@@ -325,6 +364,10 @@ public final class DeviceIdentity {
 
 		if (me.represents() != null) {
 			recordRepresents(context, me.represents());
+		}
+
+		if (me.roles() != null) {
+			recordRoles(context, me.roles());
 		}
 	}
 

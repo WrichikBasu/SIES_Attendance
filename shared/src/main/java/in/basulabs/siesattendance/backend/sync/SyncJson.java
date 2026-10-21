@@ -269,6 +269,37 @@ public final class SyncJson {
 	}
 
 	/**
+	 * One text field of every object in a list field, or null when the answer has no such list.
+	 * <p>
+	 * For {@code /me}'s {@code roles}: the {@code role} of each grant in force. Null and empty
+	 * mean different things, as for {@link #courseIdsIn}.
+	 */
+	@Nullable
+	public static List<String> textsIn(@NonNull String body, @NonNull String field,
+	                                   @NonNull String itemField) {
+
+		try {
+			Object value = asObject(new Reader(body).readValue(), "the response").get(field);
+
+			if (!(value instanceof List<?> items)) {
+				return null;
+			}
+
+			List<String> texts = new ArrayList<>();
+
+			for (Object item : items) {
+				if (asObject(item, field).get(itemField) instanceof String text) {
+					texts.add(text);
+				}
+			}
+			return texts;
+
+		} catch (RuntimeException notJson) {
+			return null;
+		}
+	}
+
+	/**
 	 * The {@code courseId} of every object in a list field, or null when the answer has no
 	 * such list.
 	 * <p>

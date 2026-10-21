@@ -30,6 +30,7 @@ import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.pojo.SessionImpact;
 import in.basulabs.siesattendance.frontend.adapter.AdapterAcademicYear;
+import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -79,11 +80,21 @@ public class FragmentAcademicYears extends Fragment {
 
 			@Override
 			public void onEdit(EntityAcademicYear year) {
+
+				if (!viewModel.may(Permissions.Capability.SESSIONS)) {
+					viewModel.sayNotPermitted();
+					return;
+				}
 				showEditor(year);
 			}
 
 			@Override
 			public void onLongPress(EntityAcademicYear year) {
+
+				if (!viewModel.may(Permissions.Capability.SESSIONS)) {
+					viewModel.sayNotPermitted();
+					return;
+				}
 				confirmDelete(year);
 			}
 		});
@@ -91,8 +102,14 @@ public class FragmentAcademicYears extends Fragment {
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
 		recyclerView.setAdapter(adapter);
 
+		// Adding a session is an administrator's alone; everybody else reads the list.
 		FloatingActionButton fab = view.findViewById(R.id.fabAddYear);
-		fab.setOnClickListener(v -> showEditor(null));
+
+		if (viewModel.may(Permissions.Capability.NEW_SESSION)) {
+			fab.setOnClickListener(v -> showEditor(null));
+		} else {
+			fab.setVisibility(View.GONE);
+		}
 
 		viewModel.getAcademicYears().observe(getViewLifecycleOwner(), years -> {
 			sessions = years == null ? new ArrayList<>() : years;
