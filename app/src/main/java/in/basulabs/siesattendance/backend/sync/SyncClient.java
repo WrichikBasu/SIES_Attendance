@@ -104,6 +104,11 @@ public final class SyncClient {
 		return !baseUrl.isEmpty();
 	}
 
+	/** Whether anybody is signed in, which is to say whether there is a token to send. */
+	public boolean isSignedIn() {
+		return DeviceIdentity.hasToken(context);
+	}
+
 	/**
 	 * Sends a batch and returns what the server made of it.
 	 * <p>

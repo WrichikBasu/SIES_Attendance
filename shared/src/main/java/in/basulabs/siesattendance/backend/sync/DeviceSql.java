@@ -55,6 +55,29 @@ public final class DeviceSql {
 	}
 
 	/**
+	 * Deletes every synced row and the outbox, children first, for signing out.
+	 * <p>
+	 * Children first because every foreign key on the device is RESTRICT. The caller runs these
+	 * with {@code sync_state.applying} set, or the outbox triggers would queue each deletion
+	 * for the server -- and the next account to sign in would push the deletion of everything.
+	 */
+	@NonNull
+	public static List<String> clearEverything() {
+
+		List<DeviceTables.Table> tables = new ArrayList<>(DeviceTables.inDependencyOrder());
+		java.util.Collections.reverse(tables);
+
+		List<String> statements = new ArrayList<>();
+
+		for (DeviceTables.Table table : tables) {
+			statements.add("DELETE FROM `" + table.name() + "`");
+		}
+		statements.add("DELETE FROM `" + OutboxTriggers.OUTBOX + "`");
+
+		return statements;
+	}
+
+	/**
 	 * Whether a row is here, by its primary key: one result row if it is, none if it is not.
 	 * <p>
 	 * What a pulled row's parents are checked with before the row is written. A row whose

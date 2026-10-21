@@ -62,6 +62,25 @@ public class FragmentSync extends Fragment {
 		return inflater.inflate(R.layout.fragment_sync, container, false);
 	}
 
+	/**
+	 * Signs out, asking first when that would throw away changes the server does not have.
+	 *
+	 * @param discardUnsent whether somebody has already said yes to losing them
+	 */
+	private void signOut(boolean discardUnsent) {
+		viewModel.signOut(discardUnsent,
+				unsent -> Ui.onMain(this, () -> new MaterialAlertDialogBuilder(requireContext())
+						.setTitle(R.string.dialog_sign_out_unsent_title)
+						.setMessage(getResources().getQuantityString(
+								R.plurals.dialog_sign_out_unsent_message, unsent, unsent))
+						.setPositiveButton(R.string.action_sign_out_anyway,
+								(d, w) -> signOut(true))
+						.setNegativeButton(R.string.action_cancel, null)
+						.show()),
+				() -> Ui.onMain(this, () -> Navigation.findNavController(requireView())
+						.navigate(R.id.action_global_signIn)));
+	}
+
 	@Override
 	public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
 
@@ -90,13 +109,10 @@ public class FragmentSync extends Fragment {
 
 		view.<MaterialButton>findViewById(R.id.btnChangePassword)
 				.setOnClickListener(v -> askForNewPassword());
-		// Out means out: the whole graph is popped and the door is what is left. Nothing of
-		// what was on the stack can be resumed by whoever is handed the phone next, and the
-		// rows stay on the device for the next person who signs in -- see signOut.
+		// Out means out: the whole graph is popped and the door is what is left, and the
+		// phone is emptied of what this account downloaded -- see SignOut.
 		view.<MaterialButton>findViewById(R.id.btnSignOut).setOnClickListener(v ->
-				viewModel.signOut(() -> Ui.onMain(this, () ->
-						Navigation.findNavController(requireView())
-								.navigate(R.id.action_global_signIn))));
+				signOut(false));
 
 		// Both directions, both live. The queue count is a Room query and the state row is
 		// another, so the two lines keep themselves current while a sync is running rather

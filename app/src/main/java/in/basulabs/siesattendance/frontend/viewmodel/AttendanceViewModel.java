@@ -63,6 +63,7 @@ import in.basulabs.siesattendance.backend.repo.AttendanceRepository;
 import in.basulabs.siesattendance.backend.repo.RoomAttendanceRepository;
 import in.basulabs.siesattendance.backend.EntitySyncState;
 import in.basulabs.siesattendance.backend.sync.DeviceIdentity;
+import in.basulabs.siesattendance.backend.sync.SignOut;
 import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.backend.sync.SyncClient;
 import in.basulabs.siesattendance.backend.sync.SyncScheduler;
@@ -557,24 +558,29 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
-	 * Ends the session, on the server as well as here.
+	 * Ends the session, on the server as well as here, and empties the phone.
 	 * <p>
-	 * The queue is left alone. A phone signed out with marks still waiting keeps them, and they
-	 * go up when somebody signs in again — losing them would be the one outcome worse than a
-	 * stuck queue.
+	 * What is waiting to be sent goes first. If any of it cannot be sent -- no connection, or
+	 * the server refusing it -- nothing is cleared and {@code onUnsent} is told how many
+	 * changes would be lost; the screen asks, and calls again with {@code discardUnsent} set
+	 * once somebody has said yes. See {@code SignOut}.
 	 */
-	public void signOut(@NonNull Runnable onDone) {
+	public void signOut(boolean discardUnsent,
+	                    @NonNull java.util.function.IntConsumer onUnsent,
+	                    @NonNull Runnable onDone) {
 
 		NETWORK_TASK_EXECUTOR.execute(() -> {
-			try {
-				new SyncClient(getApplication()).logout();
-			} catch (java.io.IOException e) {
-				// Best effort: see SyncClient.logout. The token is forgotten either way.
+
+			if (!discardUnsent) {
+				int unsent = SignOut.sendWhatIsWaiting(getApplication());
+
+				if (unsent > 0) {
+					onUnsent.accept(unsent);
+					return;
+				}
 			}
 
-			DeviceIdentity.forgetToken(getApplication());
-			DeviceIdentity.recordSyncError(getApplication(), null);
-			DeviceIdentity.recordDisplayName(getApplication(), null);
+			SignOut.forgetEverything(getApplication());
 			toastMessage.postValue("Signed out");
 			onDone.run();
 		});

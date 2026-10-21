@@ -29,6 +29,7 @@ import in.basulabs.siesattendance.backend.StructuredId;
 import in.basulabs.siesattendance.backend.sync.DeviceDerived;
 import in.basulabs.siesattendance.backend.sync.DeviceSql;
 import in.basulabs.siesattendance.backend.sync.DeviceTables;
+import in.basulabs.siesattendance.backend.sync.OutboxTriggers;
 
 /**
  * Every table the server can send, written into a real device database.
@@ -287,6 +288,71 @@ class PullApplyTest {
 								+ ", which is keyed on something else");
 			}
 		}
+	}
+
+	@Test
+	void signingOutEmptiesThePhoneAndQueuesNothing() throws Exception {
+
+		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
+			applyRow(table, DeviceDerived.fill(table, serverShapedRow(table), ZONE));
+		}
+
+		// The phone's own triggers, live, as they are on a handset: the migration creates the
+		// outbox and Room's callback installs these.
+		for (String trigger : OutboxTriggers.statements()) {
+			execute(trigger);
+		}
+		assertEquals(0, count("SELECT count(*) FROM outbox"), "an empty queue to begin with");
+
+		// Exactly what SignOut.forgetEverything runs, under the flag it runs it under.
+		execute("UPDATE sync_state SET applying = 1 WHERE id = 1");
+
+		for (String statement : DeviceSql.clearEverything()) {
+			execute(statement);
+		}
+
+		execute("UPDATE sync_state SET applying = 0 WHERE id = 1");
+
+		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
+			assertEquals(0, count("SELECT count(*) FROM `" + table.name() + "`"),
+					table.name() + " was not emptied");
+		}
+
+		assertEquals(0, count("SELECT count(*) FROM outbox"),
+				"nothing queued: without the flag, every deletion would go to the server as "
+						+ "the user removing the row, and the next account to sign in would "
+						+ "push the deletion of everything");
+	}
+
+	@Test
+	void withoutTheFlagTheClearWouldBeSentToTheServer() throws Exception {
+
+		// The other half, so the test above cannot pass for the wrong reason: the triggers are
+		// live here, and without the flag each table's deletion is queued for the server. The
+		// clear's last statement empties the outbox, which would discard those too -- a second
+		// line of defence, and the reason the outbox statement is left out here, where the
+		// point is to see the first.
+		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
+			applyRow(table, DeviceDerived.fill(table, serverShapedRow(table), ZONE));
+		}
+
+		// The phone's own triggers, live, as they are on a handset: the migration creates the
+		// outbox and Room's callback installs these.
+		for (String trigger : OutboxTriggers.statements()) {
+			execute(trigger);
+		}
+		assertEquals(0, count("SELECT count(*) FROM outbox"), "an empty queue to begin with");
+
+		List<String> clear = DeviceSql.clearEverything();
+
+		assertTrue(clear.get(clear.size() - 1).contains("outbox"),
+				"the outbox is emptied last, after every table");
+
+		for (String statement : clear.subList(0, clear.size() - 1)) {
+			execute(statement);
+		}
+
+		assertTrue(count("SELECT count(*) FROM outbox WHERE op = 'DELETE'") > 0);
 	}
 
 	@Test

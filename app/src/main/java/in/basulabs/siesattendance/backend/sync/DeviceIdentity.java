@@ -84,6 +84,8 @@ public final class DeviceIdentity {
 
 	private static final String REPRESENTS = "represents";
 
+	private static final String LAST_ACCOUNT = "lastAccountId";
+
 	/** How many refusals are kept. Enough to read; not a log. */
 	private static final int REFUSALS_KEPT = 20;
 
@@ -300,6 +302,20 @@ public final class DeviceIdentity {
 			stored.append(stored.length() == 0 ? "" : ",").append(id);
 		}
 		prefs(context).edit().putString(REPRESENTS, stored.toString()).apply();
+	}
+
+	/**
+	 * The account that last signed in on this phone, or 0 when none has been recorded.
+	 * <p>
+	 * Kept past sign-out on purpose: what it answers is whose view of the server this
+	 * database was filled from, and signing out does not empty the database.
+	 */
+	public static long lastAccountId(@NonNull Context context) {
+		return prefs(context).getLong(LAST_ACCOUNT, 0L);
+	}
+
+	public static void recordLastAccountId(@NonNull Context context, long accountId) {
+		prefs(context).edit().putLong(LAST_ACCOUNT, accountId).apply();
 	}
 
 	/** Records what {@code /me} said, keeping the earlier answer for anything it did not say. */

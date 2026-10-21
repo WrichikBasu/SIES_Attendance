@@ -99,6 +99,31 @@ public final class SyncSignIn {
 	 * @throws Refused     if the server refused the details or the registration
 	 * @throws IOException if it could not be reached
 	 */
+	/**
+	 * Makes the next pull a snapshot when the account signing in is not the one this database
+	 * was filled for.
+	 * <p>
+	 * What a pull brings is what the server lets the signed-in account read, and after the
+	 * first snapshot it brings only what has <em>changed</em> since. So a phone that synced as
+	 * a class representative and is then signed in to by a professor held the CR's handful of
+	 * courses and batches, and went on holding only those: everything else the professor may
+	 * read had not changed, so no pull ever sent it. Starting over from a snapshot sends all
+	 * of it. Safe over a database that already has the rows, because a pulled row is changed
+	 * where it is and only inserted when it is not.
+	 * <p>
+	 * An install that never recorded an account counts as somebody else: it costs one
+	 * snapshot, and guessing that the same person is signing in again is how this went wrong.
+	 */
+	private static void startOverIfSomebodyElse(@NonNull Context context, long accountId) {
+
+		if (DeviceIdentity.lastAccountId(context) == accountId && accountId != 0L) {
+			return;
+		}
+
+		MainDatabase.getInstance(context).daoOutbox().forgetWatermarkSync();
+		DeviceIdentity.recordLastAccountId(context, accountId);
+	}
+
 	@NonNull
 	public static Session signIn(@NonNull Context context, @NonNull String email,
 	                             @NonNull Door door, @NonNull char[] password)
@@ -135,6 +160,8 @@ public final class SyncSignIn {
 
 			Long accountId = longValue(answer, "accountId");
 			String name = string(answer, "displayName");
+
+			startOverIfSomebodyElse(context, accountId == null ? 0L : accountId);
 
 			// "kind" is nested inside the response's account object, which this reader
 			// reaches because no field name repeats in that answer. See valueOf.

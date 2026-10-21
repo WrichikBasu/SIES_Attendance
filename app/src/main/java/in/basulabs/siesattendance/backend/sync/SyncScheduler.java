@@ -112,6 +112,17 @@ public final class SyncScheduler {
 	 * doing the same thing, and a screen that said "not syncing" during the second would be
 	 * lying for an hour at a time.
 	 */
+	/**
+	 * Cancels a sync that has been asked for and not finished, for signing out.
+	 * <p>
+	 * Only the one-off run. The hourly one stays scheduled, because nothing reschedules it
+	 * until the app is next started; when it fires with nobody signed in it finds no token and
+	 * does nothing, which is all signing out needs of it.
+	 */
+	public static void cancelPending(@NonNull Context context) {
+		WorkManager.getInstance(context).cancelUniqueWork(ONE_OFF);
+	}
+
 	@NonNull
 	public static LiveData<Boolean> observeRunning(@NonNull Context context) {
 

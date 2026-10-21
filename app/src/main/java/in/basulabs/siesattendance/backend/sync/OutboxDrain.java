@@ -267,6 +267,14 @@ public final class OutboxDrain {
 
 		db.runInTransaction(() -> {
 
+			// Signed out while this page was on its way down. SignOut empties the database
+			// after forgetting the token, so a page written now would put the last account's
+			// rows back for the next one to read. Inside the transaction, so it is decided
+			// in the same order as the clear.
+			if (!client.isSignedIn()) {
+				return;
+			}
+
 			SupportSQLiteDatabase sqlite = db.getOpenHelper().getWritableDatabase();
 
 			// The guard, inside the transaction: a crash rolls it back with the writes.
