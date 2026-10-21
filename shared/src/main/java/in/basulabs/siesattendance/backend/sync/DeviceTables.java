@@ -22,8 +22,7 @@ import in.basulabs.siesattendance.backend.Year;
  * This is the one description the whole sync rests on, and it is here rather than in either
  * program because three things read it and they must not disagree.
  * <ul>
- *     <li>The app's {@code DatabaseMerger}, folding one phone's backup into another's
- *     database.</li>
+ *     <li>The app's sync, writing what it pulls and queueing what it pushes.</li>
  *     <li>The server's importer, folding a phone's backup into PostgreSQL.</li>
  *     <li>The drift test, checking the committed migrations declare exactly these columns.</li>
  * </ul>

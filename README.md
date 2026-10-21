@@ -12,7 +12,7 @@ local attendance register.
 | Module | What it is | Toolchain |
 |---|---|---|
 | `:app` | The Android app: Room database, Material 3 UI, WorkManager sync | Android, Java 17, min SDK 26 |
-| `:shared` | Code both programs must agree on: the domain enums and rules, the roster CSV parser, the backup format, the app's schema migrations, and the description of every synced table | Java 21 |
+| `:shared` | Code both programs must agree on: the domain enums and rules, the roster CSV parser, the app's schema migrations, the format of the older phone backups the server can import, and the description of every synced table | Java 21 |
 | `:server` | Spring Boot service on PostgreSQL. Permissions are enforced by row-level security. See [`server/README.md`](server/README.md) | Java 25 |
 
 ## What the app does
@@ -39,10 +39,8 @@ local attendance register.
 - **Imports:**
   - a student roster CSV (see below)
   - past attendance sheets, shown as a preview before anything is written
-- **Backup and restore.** A whole-database backup encrypted with a password (`.siesbak`, AES-256-GCM
-  with a PBKDF2 key). It can replace the phone's data or be merged into it, for example to
-  combine two phones.
-- **Sync with the server,** after signing in.
+- **Account and sync:** signing in and out, changing your password, and the state of the sync.
+  The server holds the college's copy, so the app has no backup of its own.
 
 ### Who sees what
 
@@ -127,7 +125,7 @@ copies in step:
 
 ```
 app/src/main/java/in/basulabs/siesattendance/
-  backend/          Room entities and DAOs, migrations, repository, import/export, backup
+  backend/          Room entities and DAOs, migrations, repository, import and export
   backend/sync/     sign-in, the outbox drain, the sync worker, sign-out
   frontend/         fragments, adapters, the view model, permission rules
 shared/src/main/java/in/basulabs/siesattendance/backend/

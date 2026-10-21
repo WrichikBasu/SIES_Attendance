@@ -69,8 +69,6 @@ import in.basulabs.siesattendance.backend.sync.SyncClient;
 import in.basulabs.siesattendance.backend.sync.SyncScheduler;
 import in.basulabs.siesattendance.backend.sync.SyncSignIn;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
-import in.basulabs.siesattendance.backend.util.BackupContainer;
-import in.basulabs.siesattendance.backend.util.DatabaseBackup;
 import in.basulabs.siesattendance.backend.util.LectureFilter;
 import in.basulabs.siesattendance.backend.util.MarkSheetExporter;
 
@@ -102,7 +100,7 @@ import in.basulabs.siesattendance.backend.util.MarkSheetExporter;
  * this morning's attendance goes.
  *
  * <h3>One-shot results</h3>
- * Import, export, backup and restore report through {@code MutableLiveData} used as event
+ * Import and export report through {@code MutableLiveData} used as event
  * channels, each with a matching {@code clear...} method. The clear is not optional: without it
  * the value is redelivered on every configuration change and a rotation replays a dialog the user
  * has already dismissed.
@@ -137,15 +135,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 	private final MutableLiveData<String> toastMessage = new MutableLiveData<>();
 	private final MutableLiveData<Boolean> busy = new MutableLiveData<>(false);
 
-	private final MutableLiveData<DatabaseBackup.Result> backupResult = new MutableLiveData<>();
-	private final MutableLiveData<DatabaseBackup.Result> restoreResult = new MutableLiveData<>();
-
 	/**
-	 * Whole-file work runs here rather than on the shared database pool: backups, restores and
-	 * the data export. Any one of them can occupy a thread for seconds (key stretching, then
-	 * compressing the whole file; or walking every student and course), and the query pool is
-	 * what keeps the rest of the UI responsive. Single-threaded because two concurrent restores
-	 * would race for the same database file.
+	 * Whole-file work runs here rather than on the shared database pool: the data export can
+	 * occupy a thread for seconds walking every student and course, and the query pool is what
+	 * keeps the rest of the UI responsive.
 	 */
 	private static final ExecutorService FILE_TASK_EXECUTOR =
 			Executors.newSingleThreadExecutor();
@@ -860,78 +853,6 @@ public class AttendanceViewModel extends AndroidViewModel {
 			}
 
 			cb.accept(new LectureExportCheck(lecture, unsaved));
-		});
-	}
-
-	// ── Backup and restore ───────────────────────────────────────────────
-
-	public LiveData<DatabaseBackup.Result> getBackupResult() {
-		return backupResult;
-	}
-
-	public void clearBackupResult() {
-		backupResult.setValue(null);
-	}
-
-	public LiveData<DatabaseBackup.Result> getRestoreResult() {
-		return restoreResult;
-	}
-
-	public void clearRestoreResult() {
-		restoreResult.setValue(null);
-	}
-
-	/**
-	 * Writes the whole database to the chosen file.
-	 *
-	 * @param password {@code null} for a plain backup; otherwise the file is encrypted and
-	 *                 this password is needed to restore it. Wiped by the backup code.
-	 */
-	public void exportBackup(@NonNull Uri destination, @Nullable char[] password) {
-
-		busy.setValue(true);
-
-		// Not on DB_EXECUTOR: a large backup holds its thread for a while, and that pool is
-		// what every screen's queries go through. Key derivation alone is several hundred
-		// milliseconds by design.
-		FILE_TASK_EXECUTOR.execute(() -> {
-			DatabaseBackup.Result result = DatabaseBackup.export(getApplication(), destination,
-					password);
-			busy.postValue(false);
-			backupResult.postValue(result);
-		});
-	}
-
-	/**
-	 * Reads the header of a candidate file so the caller knows whether to ask for a password.
-	 * Cheap: it touches only the first few dozen bytes.
-	 */
-	public void inspectBackup(@NonNull Uri source,
-	                          @NonNull java.util.function.Consumer<BackupContainer.Info> cb) {
-
-		FILE_TASK_EXECUTOR.execute(() -> {
-			BackupContainer.Info info = DatabaseBackup.inspect(getApplication(), source);
-			new Handler(Looper.getMainLooper()).post(() -> cb.accept(info));
-		});
-	}
-
-	/**
-	 * Replaces the database with the contents of the chosen file.
-	 * <p>
-	 * A successful restore leaves this ViewModel holding a closed database, so the observer is
-	 * expected to restart the app rather than continue. Nothing here refreshes its own state
-	 * on success for that reason.
-	 */
-	public void importBackup(@NonNull Uri source, @Nullable char[] password,
-	                         @NonNull DatabaseBackup.Mode mode) {
-
-		busy.setValue(true);
-
-		FILE_TASK_EXECUTOR.execute(() -> {
-			DatabaseBackup.Result result = DatabaseBackup.restore(getApplication(), source,
-					password, mode);
-			busy.postValue(false);
-			restoreResult.postValue(result);
 		});
 	}
 

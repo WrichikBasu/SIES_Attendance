@@ -142,7 +142,7 @@ SIES_ADMIN_PASSWORD=... ./gradlew :server:bootRun \
 **Change the password first.** Every new account must change its password before it can do
 anything. Until then, a session can only change the password or sign out: a phone signs in and
 syncs nothing, and the console shows only the password form. Change it in the console, on the
-phone's Server screen, or over HTTP:
+phone's Account and sync screen, or over HTTP:
 
 ```sh
 BASE=http://localhost:8080/api/v1

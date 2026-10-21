@@ -56,9 +56,6 @@
             android:id="@+id/action_dashboard_to_sessions"
             app:destination="@id/fragmentAcademicYears" />
         <action
-            android:id="@+id/action_dashboard_to_backup"
-            app:destination="@id/fragmentBackup" />
-        <action
             android:id="@+id/action_dashboard_to_sync"
             app:destination="@id/fragmentSync" />
     </fragment>
@@ -322,11 +319,5 @@
         android:name="in.basulabs.siesattendance.frontend.FragmentSync"
         android:label="@string/title_sync"
         tools:layout="@layout/fragment_sync" />
-
-    <fragment
-        android:id="@+id/fragmentBackup"
-        android:name="in.basulabs.siesattendance.frontend.FragmentBackup"
-        android:label="@string/title_backup"
-        tools:layout="@layout/fragment_backup" />
 
 </navigation>
