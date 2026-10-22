@@ -141,16 +141,24 @@ public final class SyncSignIn {
 	 * An install that never recorded an account is not emptied: it is either empty already, or
 	 * it predates signing in and everything on it is waiting to be sent. It only starts its
 	 * pull from a snapshot.
+	 * <p>
+	 * The same account counts as somebody else when its kind has changed, as when an
+	 * administrator makes a professor's account a staff one. It may read less than before, and
+	 * a pull only brings what has changed, so what it could read as a professor would otherwise
+	 * stay on the phone.
 	 *
 	 * @return whether another account's data was deleted
 	 */
 	private static boolean startOverIfSomebodyElse(@NonNull Context context, long accountId,
+	                                               @Nullable AccountKind kind,
 	                                               boolean discardUnsent)
 			throws UnsentFromSomebodyElse {
 
 		long previous = DeviceIdentity.lastAccountId(context);
+		AccountKind previousKind = DeviceIdentity.accountKind(context);
+		boolean kindChanged = previousKind != null && kind != null && previousKind != kind;
 
-		if (previous == accountId && accountId != 0L) {
+		if (previous == accountId && accountId != 0L && !kindChanged) {
 			return false;
 		}
 
@@ -270,14 +278,15 @@ public final class SyncSignIn {
 		Long accountId = longValue(answer, "accountId");
 		String name = string(answer, "displayName");
 
-		boolean somebodyElse = startOverIfSomebodyElse(context,
-				accountId == null ? 0L : accountId, discardUnsent);
-
 		// "kind" is nested inside the response's account object, which this reader
 		// reaches because no field name repeats in that answer. See valueOf.
+		AccountKind kind = AccountKind.fromAny(string(answer, "kind"));
+
+		boolean somebodyElse = startOverIfSomebodyElse(context,
+				accountId == null ? 0L : accountId, kind, discardUnsent);
+
 		return new Session(accountId == null ? 0L : accountId,
-				name == null ? email : name, mustRotate, node,
-				AccountKind.fromAny(string(answer, "kind")), somebodyElse);
+				name == null ? email : name, mustRotate, node, kind, somebodyElse);
 	}
 
 	/**

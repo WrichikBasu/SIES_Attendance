@@ -1454,6 +1454,160 @@ class WireTest {
 	}
 
 	@Test
+	void anAdministratorMakesAProfessorStaff() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+		String phone = tokenFor("b.chem@sies.edu.in", "STAFF");
+
+		assertEquals("PROFESSOR", get("/me", phone, null).body().get("kind").stringValue());
+
+		assertEquals(403, post("/accounts/" + accountProfChem + "/demote", "{}",
+						tokenFor("a.cs@sies.edu.in", "STAFF"), null).status(),
+				"changing an account is an administrator's");
+
+		Reply demoted = post("/accounts/" + accountProfChem + "/demote", "{}", admin, null);
+
+		assertEquals(200, demoted.status(), demoted::toString);
+		assertEquals(1, demoted.body().get("ended").intValue());
+		assertEquals(401, get("/me", phone, null).status(), "its sessions end with it");
+
+		Reply me = get("/me", tokenFor("b.chem@sies.edu.in", "STAFF"), null);
+
+		assertEquals(200, me.status(), "the same password still signs in");
+		assertEquals("STAFF", me.body().get("kind").stringValue());
+		assertFalse(me.body().get("imports").get("attendance").booleanValue(),
+				"no longer a professor, so no attendance to file");
+
+		assertEquals(1, count("SELECT count(*) FROM professors WHERE prof_id = " + PROF_CHEM),
+				"the professor stays, with the lectures and courses that point at them");
+		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'UPDATE' "
+				+ "AND table_name = 'app_account' AND before_image->>'kind' = 'PROFESSOR' "
+				+ "AND after_image->>'kind' = 'STAFF'"));
+
+		assertEquals(409, post("/accounts/" + accountProfChem + "/demote", "{}", admin, null)
+				.status(), "a staff account is not a professor's to begin with");
+		assertEquals(409, post("/accounts/" + accountAdmin + "/demote", "{}", admin, null)
+				.status(), "not one's own account");
+		assertEquals(404, post("/accounts/999999/demote", "{}", admin, null).status());
+	}
+
+	@Test
+	void anAdministratorMakesAStaffAccountAProfessorsAgain() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+		String promote = "/accounts/" + accountProfChem + "/promote";
+
+		assertEquals(200, post("/accounts/" + accountProfChem + "/demote", "{}", admin, null)
+				.status());
+
+		assertEquals(400, post(promote, "{}", admin, null).status(), "which professor?");
+		assertEquals(409, post(promote, "{\"profId\": \"" + PROF_CS + "\"}", admin, null)
+				.status(), "a professor with an account of their own already");
+		assertEquals(403, post(promote, "{\"profId\": \"" + PROF_CHEM + "\"}",
+						tokenFor("a.cs@sies.edu.in", "STAFF"), null).status(),
+				"changing an account is an administrator's");
+
+		String phone = tokenFor("b.chem@sies.edu.in", "STAFF");
+		Reply promoted = post(promote, "{\"profId\": \"" + PROF_CHEM + "\"}", admin, null);
+
+		assertEquals(200, promoted.status(), promoted::toString);
+		assertEquals(1, promoted.body().get("ended").intValue());
+		assertEquals(401, get("/me", phone, null).status(), "its sessions end with it");
+
+		Reply me = get("/me", tokenFor("b.chem@sies.edu.in", "STAFF"), null);
+		assertEquals("PROFESSOR", me.body().get("kind").stringValue());
+		assertTrue(me.body().get("imports").get("attendance").booleanValue(), me::toString);
+
+		assertEquals(409, post(promote, "{\"profId\": \"" + PROF_CHEM + "\"}", admin, null)
+				.status(), "a professor's account is not a staff one to begin with");
+
+		// A staff account whose professor is not on the server yet: created with it.
+		Reply office = post("/accounts/" + accountOffice + "/promote", "{\"person\": {"
+				+ "\"name\": \"D NEW\", \"email\": \"d.new@sies.edu.in\", "
+				+ "\"department\": \"CHEMISTRY\", \"designation\": \"Professor\"}}",
+				admin, null);
+
+		assertEquals(200, office.status(), office::toString);
+		assertEquals(1, count("SELECT count(*) FROM app_account a JOIN professors p "
+				+ "USING (prof_id) WHERE a.account_id = " + accountOffice
+				+ " AND a.kind = 'PROFESSOR' AND p.name = 'D NEW'"));
+
+		assertEquals(409, post("/accounts/" + accountAdmin + "/promote",
+				"{\"profId\": \"" + PROF_CHEM + "\"}", admin, null).status(),
+				"not one's own account");
+	}
+
+	@Test
+	void aDisabledAccountCannotSignInUntilItIsEnabled() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+		String phone = tokenFor("b.chem@sies.edu.in", "STAFF");
+		String disable = "/accounts/" + accountProfChem + "/disable";
+
+		assertEquals(403, post(disable, "{}", tokenFor("a.cs@sies.edu.in", "STAFF"), null)
+				.status(), "disabling an account is an administrator's");
+
+		Reply disabled = post(disable, "{}", admin, null);
+
+		assertEquals(200, disabled.status(), disabled::toString);
+		assertEquals(1, disabled.body().get("ended").intValue());
+		assertEquals(401, get("/me", phone, null).status(), "at once");
+		assertEquals(401, login("b.chem@sies.edu.in", "STAFF", PASSWORD, null).status(),
+				"and it cannot sign in again");
+
+		assertEquals(200, post(disable, "{}", admin, null).status(), "twice is harmless");
+		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'UPDATE' "
+				+ "AND table_name = 'app_account' AND before_image->>'disabled_at' IS NULL "
+				+ "AND after_image->>'disabled_at' IS NOT NULL"), "and recorded once");
+
+		assertEquals(200, post("/accounts/" + accountProfChem + "/enable", "{}", admin, null)
+				.status());
+		assertEquals(200, get("/me", tokenFor("b.chem@sies.edu.in", "STAFF"), null).status(),
+				"the same password works again");
+
+		assertEquals(409, post("/accounts/" + accountAdmin + "/disable", "{}", admin, null)
+				.status(), "not one's own account");
+		assertEquals(404, post("/accounts/999999/disable", "{}", admin, null).status());
+	}
+
+	@Test
+	void onlyAnAccountNothingPointsAtIsDeleted() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		assertEquals(403, delete("/accounts/" + accountFresh,
+						tokenFor("a.cs@sies.edu.in", "STAFF")).status(),
+				"deleting an account is an administrator's");
+
+		Reply deleted = delete("/accounts/" + accountFresh, admin);
+
+		assertEquals(200, deleted.status(), deleted::toString);
+		assertEquals(0, count("SELECT count(*) FROM app_account WHERE account_id = "
+				+ accountFresh));
+		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'DELETE' "
+				+ "AND table_name = 'app_account'"), "and the trail says so");
+
+		// One that has signed in: its sessions point at it.
+		tokenFor("b.chem@sies.edu.in", "STAFF");
+		Reply used = delete("/accounts/" + accountProfChem, admin);
+
+		assertEquals(409, used.status(), used::toString);
+		assertEquals("has_history", used.body().get("code").stringValue(), used::toString);
+		assertEquals(1, count("SELECT count(*) FROM app_account WHERE account_id = "
+				+ accountProfChem));
+
+		assertEquals(409, delete("/accounts/" + accountAdmin, admin).status(),
+				"not one's own account");
+		assertEquals(404, delete("/accounts/999999", admin).status());
+	}
+
+	private Reply delete(String path, String token) throws Exception {
+		return send(HttpRequest
+				.newBuilder(URI.create("http://localhost:" + port + Api.V1 + path))
+				.DELETE(), token, null);
+	}
+
+	@Test
 	void theListSaysWhoHoldsWhatAndNeverAHash() throws Exception {
 
 		String token = tokenFor("admin@sies.edu.in", "STAFF");

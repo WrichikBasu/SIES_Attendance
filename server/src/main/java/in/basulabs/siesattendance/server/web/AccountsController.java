@@ -3,6 +3,7 @@ package in.basulabs.siesattendance.server.web;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -56,9 +57,10 @@ import jakarta.servlet.http.HttpServletRequest;
  *     who ends up knowing it. There is no endpoint for changing another account's password:
  *     {@code /auth/password} requires the current one, and an administrator who could skip that
  *     could sign in as a professor and mark a register in their name.</li>
- *     <li><b>Delete anything.</b> A role is revoked and never deleted — see {@link Roles} — and
- *     an account is not removable at all. Both are pointed at by the audit log, which is the
- *     record of what they did.</li>
+ *     <li><b>Delete anything with a history.</b> A role is revoked and never deleted — see
+ *     {@link Roles} — and an account that has signed in or held a role is disabled rather
+ *     than deleted, because its sessions, grants and the audit log are the record of what it
+ *     did. Only an account nothing points at yet, one created by mistake, can be deleted.</li>
  *     <li><b>Create the first administrator.</b> That still needs
  *     {@code BootstrapCommand} and a shell on the machine, because granting {@code ADMIN} needs
  *     {@code ADMIN}. This endpoint is how the second one comes into being.</li>
@@ -145,6 +147,13 @@ public final class AccountsController {
 	 */
 	public record NewDelegation(@Nullable String courseId, @Nullable Integer academicYear,
 	                            @Nullable String reason) {
+	}
+
+	/**
+	 * Which professor a staff account becomes: one on file, or one created with it, exactly as
+	 * when an account is created.
+	 */
+	public record Promotion(@Nullable String profId, @Nullable NewPerson person) {
 	}
 
 	public record Revocation(@Nullable String reason) {
@@ -592,6 +601,241 @@ public final class AccountsController {
 
 			return new SessionsEnded(ended);
 		});
+	}
+
+	/**
+	 * Makes a professor's account a staff one: it signs in as before and keeps its roles, but it
+	 * no longer acts as the professor.
+	 * <p>
+	 * The {@code professors} row stays, because lectures, courses and the audit trail point at
+	 * it; only the account lets go of it. Who an account is is read from the account on every
+	 * request, so this takes effect at once, and its sessions are ended anyway so each phone
+	 * signs in again and starts over with what a staff account may read. Not one's own account:
+	 * the session this page is using would keep its professor until it ended.
+	 */
+	@PostMapping("/{accountId}/demote")
+	@NonNull
+	public SessionsEnded demote(@PathVariable long accountId,
+	                            @NonNull HttpServletRequest http) throws SQLException {
+
+		RequestActor actor = RequestActor.of(http);
+
+		refuseOwnAccount(actor, accountId);
+
+		return database.inTransaction(actor, connection -> {
+
+			refuseUnlessAdmin(connection);
+
+			if (!accountExists(connection, accountId)) {
+				throw new ApiException(404, "no_account", "There is no account " + accountId);
+			}
+
+			try (PreparedStatement statement = connection.prepareStatement(
+					"UPDATE app_account SET kind = 'STAFF', prof_id = NULL, "
+							+ "updated_at = now(), updated_by = ? "
+							+ "WHERE account_id = ? AND kind = 'PROFESSOR'")) {
+
+				statement.setLong(1, actor.accountId());
+				statement.setLong(2, accountId);
+
+				if (statement.executeUpdate() == 0) {
+					throw new ApiException(409, "not_a_professor",
+							"That account is not a professor's.");
+				}
+			}
+
+			return new SessionsEnded(Sessions.revokeAllFor(connection, accountId, null,
+					"made a staff account by an administrator"));
+		});
+	}
+
+	/**
+	 * Makes a staff account a professor's: the way back from {@link #demote}, and the way to
+	 * a professor account for somebody whose address already has a staff one.
+	 * <p>
+	 * The professor is one on file without an account, or one created here in the same
+	 * transaction. Its sessions end, as a demotion's do, so each phone signs in again and
+	 * starts over as the professor. Not one's own account, for the same reason.
+	 */
+	@PostMapping("/{accountId}/promote")
+	@NonNull
+	public SessionsEnded promote(@PathVariable long accountId,
+	                             @RequestBody @NonNull Promotion body,
+	                             @NonNull HttpServletRequest http) throws SQLException {
+
+		RequestActor actor = RequestActor.of(http);
+		Long wantedProf = key(body.profId(), "profId");
+
+		refuseOwnAccount(actor, accountId);
+
+		if ((wantedProf == null) == (body.person() == null)) {
+			throw new ApiException(400, "needs_person",
+					"Name the professor this account is for, or give the details of a new one, "
+							+ "but not both.");
+		}
+
+		return database.inTransaction(actor, connection -> {
+
+			refuseUnlessAdmin(connection);
+
+			if (!accountExists(connection, accountId)) {
+				throw new ApiException(404, "no_account", "There is no account " + accountId);
+			}
+
+			// An if and not a ternary, for the reason create() gives.
+			Long profId = wantedProf;
+
+			if (profId == null) {
+				profId = createProfessor(connection, body.person());
+			}
+
+			onFile(connection, "professors", "prof_id", profId,
+					"That professor is not on the server.");
+
+			try (PreparedStatement statement = connection.prepareStatement(
+					"SELECT account_id FROM app_account WHERE prof_id = ?")) {
+
+				statement.setLong(1, profId);
+
+				try (ResultSet results = statement.executeQuery()) {
+					if (results.next()) {
+						throw new ApiException(409, "professor_has_account",
+								"That professor already has an account (#"
+										+ results.getLong(1) + ").");
+					}
+				}
+			}
+
+			try (PreparedStatement statement = connection.prepareStatement(
+					"UPDATE app_account SET kind = 'PROFESSOR', prof_id = ?, "
+							+ "updated_at = now(), updated_by = ? "
+							+ "WHERE account_id = ? AND kind = 'STAFF'")) {
+
+				statement.setLong(1, profId);
+				statement.setLong(2, actor.accountId());
+				statement.setLong(3, accountId);
+
+				if (statement.executeUpdate() == 0) {
+					throw new ApiException(409, "not_staff",
+							"Only a staff account can be made a professor's.");
+				}
+			}
+
+			return new SessionsEnded(Sessions.revokeAllFor(connection, accountId, null,
+					"made a professor account by an administrator"));
+		});
+	}
+
+	/**
+	 * Disables an account: it can no longer sign in, and its sessions stop working at once.
+	 * Everything it did stays, and {@link #enable} undoes it. The way to remove somebody who
+	 * has left, since an account with a history cannot be deleted.
+	 */
+	@PostMapping("/{accountId}/disable")
+	@NonNull
+	public SessionsEnded disable(@PathVariable long accountId,
+	                             @NonNull HttpServletRequest http) throws SQLException {
+
+		RequestActor actor = RequestActor.of(http);
+		refuseOwnAccount(actor, accountId);
+
+		return database.inTransaction(actor, connection -> {
+
+			refuseUnlessAdmin(connection);
+			setDisabled(connection, actor, accountId, true);
+
+			return new SessionsEnded(Sessions.revokeAllFor(connection, accountId, null,
+					"account disabled by an administrator"));
+		});
+	}
+
+	/** Lets a disabled account sign in again, with the password it had. */
+	@PostMapping("/{accountId}/enable")
+	@NonNull
+	public SessionsEnded enable(@PathVariable long accountId,
+	                            @NonNull HttpServletRequest http) throws SQLException {
+
+		RequestActor actor = RequestActor.of(http);
+
+		return database.inTransaction(actor, connection -> {
+
+			refuseUnlessAdmin(connection);
+			setDisabled(connection, actor, accountId, false);
+			return new SessionsEnded(0);
+		});
+	}
+
+	/**
+	 * Deletes an account that nothing points at yet: one that has never signed in and never
+	 * held a role or an appointment, which is an account created by mistake. Anything else is
+	 * refused by the foreign keys, and the answer says to disable it instead. A professor
+	 * created along with the account stays on file; lectures and courses may name them.
+	 */
+	@DeleteMapping("/{accountId}")
+	@NonNull
+	public SessionsEnded delete(@PathVariable long accountId,
+	                            @NonNull HttpServletRequest http) throws SQLException {
+
+		RequestActor actor = RequestActor.of(http);
+		refuseOwnAccount(actor, accountId);
+
+		return database.inTransaction(actor, connection -> {
+
+			refuseUnlessAdmin(connection);
+
+			try (PreparedStatement statement = connection.prepareStatement(
+					"DELETE FROM app_account WHERE account_id = ?")) {
+
+				statement.setLong(1, accountId);
+
+				if (statement.executeUpdate() == 0) {
+					throw new ApiException(404, "no_account",
+							"There is no account " + accountId);
+				}
+
+			} catch (SQLException e) {
+
+				// 23001 is what an ON DELETE RESTRICT key reports, and every key on
+				// app_account is one; 23503 in case one is ever made NO ACTION.
+				if (!"23001".equals(e.getSQLState()) && !"23503".equals(e.getSQLState())) {
+					throw e;
+				}
+				throw new ApiException(409, "has_history",
+						"This account has signed in or held a role, and the record of that "
+								+ "points at it. Disable it instead: it can no longer sign "
+								+ "in, and its history stays.");
+			}
+
+			return new SessionsEnded(0);
+		});
+	}
+
+	private static void refuseOwnAccount(@NonNull RequestActor actor, long accountId) {
+		if (accountId == actor.accountId()) {
+			throw new ApiException(409, "own_account",
+					"Another administrator has to change your own account.");
+		}
+	}
+
+	private static void setDisabled(@NonNull Connection connection, @NonNull RequestActor actor,
+	                                long accountId, boolean disabled) throws SQLException {
+
+		if (!accountExists(connection, accountId)) {
+			throw new ApiException(404, "no_account", "There is no account " + accountId);
+		}
+
+		// Only a change is written, so the audit trail has no entry for disabling an account
+		// that already was.
+		try (PreparedStatement statement = connection.prepareStatement(
+				"UPDATE app_account SET disabled_at = " + (disabled ? "now()" : "NULL")
+						+ ", updated_at = now(), updated_by = ? "
+						+ "WHERE account_id = ? AND disabled_at IS "
+						+ (disabled ? "NULL" : "NOT NULL"))) {
+
+			statement.setLong(1, actor.accountId());
+			statement.setLong(2, accountId);
+			statement.executeUpdate();
+		}
 	}
 
 	/**

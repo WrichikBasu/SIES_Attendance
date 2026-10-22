@@ -361,6 +361,16 @@ final class AuditMessages {
 			return "Deleted the account of " + who;
 		}
 
+		if (changed(before, after, "kind")) {
+			String kind = label(AccountKind::fromAny, AuditNames.text(after, "kind"));
+			return "Made " + possessive(who) + " account " + article(kind) + " "
+					+ kind.toLowerCase(Locale.ENGLISH) + " account"
+					+ ("PROFESSOR".equals(AuditNames.text(before, "kind"))
+					? ", no longer a professor's"
+					: "PROFESSOR".equals(AuditNames.text(after, "kind"))
+					? ", for " + professor(AuditNames.id(after, "prof_id")) : "");
+		}
+
 		if (changed(before, after, "disabled_at")) {
 			return AuditNames.text(after, "disabled_at") == null
 					? "Re-enabled " + possessive(who) + " account"

@@ -259,6 +259,11 @@ POST /accounts                            create an account (optionally with a r
 POST /accounts/{id}/roles                 grant a role
 POST /accounts/{id}/roles/{grantId}/revoke
 POST /accounts/{id}/sessions/end           sign an account out everywhere (admin)
+POST /accounts/{id}/demote                 make a professor's account a staff one, and end its sessions (admin)
+POST /accounts/{id}/promote                {"profId"} or {"person"}: make a staff account a professor's, and end its sessions (admin)
+POST /accounts/{id}/disable                stop an account signing in, and end its sessions (admin)
+POST /accounts/{id}/enable                 let a disabled account sign in again (admin)
+DELETE /accounts/{id}                      delete an account that has never been used; anything else is disabled (admin)
 POST /backup/import?label=&node=&dryRun=   import a .siesbak, the file as the body (admin)
 POST /backup/export                        {"password"}: download everything a phone holds (admin)
 GET  /progress/{id}                        how far your import or export sent with X-Progress-Id has got

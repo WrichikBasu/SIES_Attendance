@@ -175,6 +175,23 @@ class AuditMessagesTest {
 						with(account, "failed_logins", 1L), null));
 	}
 
+	@Test
+	void changingAnAccountsKindSaysSo() {
+
+		Map<String, Object> account = row("account_id", 10L, "display_name", "Dr. Manoj Singh",
+				"kind", "PROFESSOR", "prof_id", PROF);
+
+		Map<String, Object> staff = with(account, "kind", "STAFF");
+		staff.put("prof_id", null);
+
+		assertEquals("Made Dr. Manoj Singh's account a staff account, no longer a professor's",
+				messages.describe("UPDATE", "app_account", null, account, staff, null));
+
+		assertEquals("Made Dr. Manoj Singh's account a professor account, for "
+						+ "Prof. Jesica D'Cruz",
+				messages.describe("UPDATE", "app_account", null, staff, account, null));
+	}
+
 	// ── Events ───────────────────────────────────────────────────────────
 
 	@Test
