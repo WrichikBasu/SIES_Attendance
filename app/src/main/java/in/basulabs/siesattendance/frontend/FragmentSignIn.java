@@ -27,6 +27,7 @@ import java.util.Arrays;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.sync.SyncSignIn;
+import in.basulabs.siesattendance.frontend.util.PasswordDialog;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -179,15 +180,31 @@ public class FragmentSignIn extends Fragment {
 						askToDiscard(email, characters, unsent, previous)),
 				displayName -> Ui.onMain(this, () -> {
 
-					Arrays.fill(characters, '\0');
-
 					if (displayName == null) {
 						// The server's own sentence is already on its way to the snackbar;
 						// the screen stays where it is, with the address still typed.
+						Arrays.fill(characters, '\0');
 						return;
 					}
 
-					enterTheApp();
+					if (!viewModel.passwordChangeRequired()) {
+						Arrays.fill(characters, '\0');
+						enterTheApp();
+						return;
+					}
+
+					// A new account, or one whose password was reset: the server refuses
+					// everything else until it is changed, so it is asked for here rather
+					// than leaving somebody in an app that cannot sync.
+					PasswordDialog.show(this, viewModel, characters,
+							() -> {
+								Arrays.fill(characters, '\0');
+								enterTheApp();
+							},
+							() -> {
+								Arrays.fill(characters, '\0');
+								viewModel.abandonSignIn();
+							});
 				}));
 	}
 

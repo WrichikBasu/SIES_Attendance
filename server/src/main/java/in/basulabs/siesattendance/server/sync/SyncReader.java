@@ -394,6 +394,28 @@ public final class SyncReader {
 		return new ArrayList<>(last.values());
 	}
 
+	/**
+	 * How many rows a snapshot read on this connection would send, for a caller that wants to
+	 * say how far it has got. Counted under the same policies, so it is this actor's number;
+	 * a row changed while the snapshot runs can make it a little off, which is fine for that.
+	 */
+	public static long snapshotSize(@NonNull Connection connection) throws SQLException {
+
+		long rows = 0;
+
+		for (String table : syncedTables(connection)) {
+
+			try (Statement statement = connection.createStatement();
+			     ResultSet results = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
+
+				if (results.next()) {
+					rows += results.getLong(1);
+				}
+			}
+		}
+		return rows;
+	}
+
 	@NonNull
 	private static List<String> syncedTables(@NonNull Connection connection)
 			throws SQLException {

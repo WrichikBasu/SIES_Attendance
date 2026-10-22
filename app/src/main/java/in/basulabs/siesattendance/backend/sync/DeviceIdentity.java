@@ -90,6 +90,8 @@ public final class DeviceIdentity {
 
 	private static final String IMPORT_DEPARTMENTS = "importDepartments";
 
+	private static final String REGISTRATION_PENDING = "registrationPending";
+
 	/** How many refusals are kept. Enough to read; not a log. */
 	private static final int REFUSALS_KEPT = 20;
 
@@ -502,6 +504,18 @@ public final class DeviceIdentity {
 	public static void recordPasswordChangeRequired(@NonNull Context context,
 	                                                boolean required) {
 		prefs(context).edit().putBoolean(MUST_ROTATE, required).apply();
+	}
+
+	/**
+	 * Whether this install still has to be registered: signing in left it for later because the
+	 * account had to change its password first. See {@code SyncSignIn.registerIfPending}.
+	 */
+	public static boolean registrationPending(@NonNull Context context) {
+		return prefs(context).getBoolean(REGISTRATION_PENDING, false);
+	}
+
+	public static void recordRegistrationPending(@NonNull Context context, boolean pending) {
+		prefs(context).edit().putBoolean(REGISTRATION_PENDING, pending).apply();
 	}
 
 	// ── Internals ────────────────────────────────────────────────────────

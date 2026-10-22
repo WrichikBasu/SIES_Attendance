@@ -185,6 +185,22 @@ public final class ActorSession {
 	}
 
 	/**
+	 * Marks the transaction as a backup import, after {@link #announce}. The one thing that
+	 * lets an administrator write a phone's batches, which are otherwise the professors'
+	 * alone; see V29. Here, like every other setting, so that nothing outside this class
+	 * can set one.
+	 */
+	public static void announceImport(@NonNull Connection connection, long runId)
+			throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT set_config('app.import_run', ?, true)")) {
+			statement.setString(1, Long.toString(runId));
+			statement.execute();
+		}
+	}
+
+	/**
 	 * Announces an actor whose identity is not an account at all, so that the audit entries a
 	 * transaction writes still say something.
 	 * <p>

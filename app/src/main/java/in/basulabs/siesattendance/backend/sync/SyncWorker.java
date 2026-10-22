@@ -75,6 +75,10 @@ public final class SyncWorker extends Worker {
 		OutboxDrain drain = new OutboxDrain(db, client);
 
 		try {
+			// A phone signed in to an account that had to change its password first was not
+			// registered then; the change has happened if this run is allowed at all.
+			SyncSignIn.registerIfPending(context);
+
 			Pushed pushed = pushEverything(drain);
 			Pulled pulled = pullEverything(drain);
 
@@ -134,6 +138,16 @@ public final class SyncWorker extends Worker {
 			return Result.failure();
 
 		} catch (SyncClient.Refused e) {
+
+			if (e.passwordMustChange()) {
+				// Not this app's version, which is what the line below would say. The screen
+				// sends the person to sign in again, which asks for the new password.
+				DeviceIdentity.recordPasswordChangeRequired(context, true);
+				DeviceIdentity.recordSyncError(context,
+						context.getString(R.string.sync_must_change_password));
+				return Result.failure();
+			}
+
 			Log.e(TAG, "the server refused the request: " + e.getMessage());
 			DeviceIdentity.recordSyncError(context,
 					"This version of the app cannot sync with the server");

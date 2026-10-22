@@ -195,6 +195,7 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 | import attendance (CSV) | — | their courses | the department's | — | — | ✓ |
 | appoint a CR | — | their courses | the department's | — | — | ✓ |
 | create accounts, grant or revoke roles | — | — | — | — | — | ✓ |
+| import or export a backup (.siesbak) | — | — | — | — | — | ✓ |
 | read the audit trail | their own actions | their department's teaching | their department's | their own actions | all | all |
 | export a register | courses they represent | their courses | the department's | all | all | all |
 
@@ -258,6 +259,9 @@ POST /accounts                            create an account (optionally with a r
 POST /accounts/{id}/roles                 grant a role
 POST /accounts/{id}/roles/{grantId}/revoke
 POST /accounts/{id}/sessions/end           sign an account out everywhere (admin)
+POST /backup/import?label=&node=&dryRun=   import a .siesbak, the file as the body (admin)
+POST /backup/export                        {"password"}: download everything a phone holds (admin)
+GET  /progress/{id}                        how far your import or export sent with X-Progress-Id has got
 
 GET  /courses/{id}/roll?academicYear=     a course's roll, for appointing a CR
 POST /courses/{id}/representatives        appoint a CR
@@ -271,7 +275,8 @@ an account is locked, and each address gets `LOGIN_ATTEMPTS` tries per five minu
 
 `/console.html` holds the Accounts, Data, Representatives, Import and Audit trail panels. Import
 has a student import (pick the session, choose the file) and an attendance import (preview, then
-import), each with its CSV format written out. Only the staff
+import), each with its CSV format written out; for an admin, it also imports a `.siesbak`
+(preview, then import) and exports one. Only the staff
 sign-in is accepted, so students cannot use it. The page shows only the panels `/me` says the
 account can use, and refreshes the visible panel every ten seconds. The old URLs
 `/accounts.html` and `/data.html` redirect to it.
@@ -324,6 +329,10 @@ curl -sS -H "Authorization: Bearer $TOKEN" -H "X-Device-Install: <uuid>" localho
 
 ## Importing a phone's backup
 
+An admin can do this from the console's Import tab, with the same preview and the same rules
+below. The password travels in the `X-Backup-Password` header, as Base64 of its UTF-8. The
+command line:
+
 ```sh
 ./server/tools/dev-database.sh
 eval "$(./server/tools/dev-database.sh --env)"
@@ -351,3 +360,13 @@ Each import runs in one transaction and its report is stored in `import_run`. Ro
 key, then by natural key (roll number, course code and so on), and inserted only if neither
 matches. Importing the same unchanged backup again changes nothing. A row that breaks a constraint
 stops the import: fix the data, not the constraint.
+
+**Exporting** (`POST /backup/export`, or the console) writes what a phone signed in as the admin
+would hold after its first sync, encrypted if a password is given, and imports back unchanged. It
+has no accounts, roles, CR appointments, devices or audit trail, so it is not a backup of the
+server: `pg_dump` is.
+
+Both take an optional `X-Progress-Id` header, an id the caller makes up. While the request runs,
+`GET /progress/{id}` answers `{"stage", "done", "total"}` (a total of 0 means the stage has no
+count) to the account that sent it, and 404 once it has finished. The console uses it for its
+progress bars. It is held in memory, so it is per server process.

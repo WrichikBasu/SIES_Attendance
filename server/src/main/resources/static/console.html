@@ -125,10 +125,27 @@
         font-size: 0.78rem; white-space: pre-wrap; word-break: break-word;
     }
     .trail .peek { all: unset; cursor: pointer; color: var(--accent); font-size: 0.8rem; }
-    .say { padding: 0.6rem 0.8rem; border-radius: 7px; margin-bottom: 1rem;
-           font-size: 0.9rem; display: none; }
-    .say.bad { display: block; background: #fdecee; color: var(--bad); }
-    .say.good { display: block; background: #eaf5ee; color: var(--ok); }
+    .toasts {
+        position: fixed; top: 1rem; right: 1rem; z-index: 10;
+        display: flex; flex-direction: column; gap: 0.5rem;
+        width: min(24rem, calc(100vw - 2rem));
+    }
+    .toast {
+        display: flex; align-items: flex-start; gap: 0.6rem;
+        padding: 0.7rem 0.6rem 0.7rem 0.9rem; border-radius: 7px; font-size: 0.9rem;
+        border: 1px solid; box-shadow: 0 4px 14px rgba(17, 24, 28, 0.14);
+        animation: toast-in 0.18s ease-out;
+    }
+    .toast.bad { background: #fdecee; color: var(--bad); border-color: #f3c3c8; }
+    .toast.good { background: #eaf5ee; color: var(--ok); border-color: #bfdfca; }
+    .toast span { flex: 1; overflow-wrap: anywhere; }
+    .toast button {
+        all: unset; cursor: pointer; padding: 0 0.3rem; font-size: 1.1rem; line-height: 1.2;
+        opacity: 0.7;
+    }
+    .toast button:hover, .toast button:focus-visible { opacity: 1; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(-0.4rem); } }
+    @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
     .note { font-size: 0.85rem; color: var(--ink-2); margin: 0 0 0.9rem; }
     .note.after { margin: 0.8rem 0 0; }
     [hidden] { display: none !important; }
@@ -137,6 +154,10 @@
         padding: 0.8rem; border-radius: 7px; margin: 0.4rem 0 0.9rem; }
     .problems { margin: 0.4rem 0 0; padding-left: 1.2rem; font-size: 0.85rem; }
     .problems li.bad { color: var(--bad); }
+    .progress { margin: 0.8rem 0; font-size: 0.85rem; color: var(--ink-2);
+        font-variant-numeric: tabular-nums; }
+    .progress progress { display: block; width: 100%; max-width: 28rem; height: 0.6rem;
+        margin-top: 0.3rem; accent-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -157,7 +178,7 @@
 </header>
 
 <main>
-    <p class="say" id="say"></p>
+    <div class="toasts" id="say"></div>
 
     <!-- Signing in. One door: the staff one. See the note. -->
     <section id="signInCard">
@@ -329,6 +350,36 @@
             <div id="attendanceResult"></div>
             <button id="attendanceImport" hidden>Import</button>
         </section>
+
+        <section id="backupImportCard" hidden>
+            <h2>Import a backup</h2>
+            <p class="note">The device number only matters for backups made before phones had one.</p>
+            <div class="row">
+                <div><label for="backupFile">File</label>
+                     <input id="backupFile" type="file" accept=".siesbak"></div>
+                <div><label for="backupLabel">From</label>
+                     <input id="backupLabel" placeholder="Dr Rao's phone"></div>
+                <div><label for="backupNode">Device number</label>
+                     <input id="backupNode" type="number" min="1"></div>
+                <div><label for="backupPassword">Password</label>
+                     <input id="backupPassword" type="password" autocomplete="off"></div>
+            </div>
+            <button id="backupPreview">Preview</button>
+            <div id="backupProgress" class="progress" hidden><span></span><progress></progress></div>
+            <div id="backupResult"></div>
+            <button id="backupImport" hidden>Import</button>
+        </section>
+
+        <section id="backupExportCard" hidden>
+            <h2>Export a backup</h2>
+            <p class="note">Students, professors, courses, batches, sessions, lectures and attendance. Not accounts, roles, class representatives or the audit trail.</p>
+            <div class="row">
+                <div><label for="exportPassword">Password (optional)</label>
+                     <input id="exportPassword" type="password" autocomplete="new-password"></div>
+            </div>
+            <button id="backupExport">Export</button>
+            <div id="exportProgress" class="progress" hidden><span></span><progress></progress></div>
+        </section>
     </div>
 
     <!-- ── Audit trail ───────────────────────────────────────────── -->
@@ -395,14 +446,43 @@ function keepToken(value) {
     }
 }
 
+/**
+ * A toast in the top right, where it is seen whatever the page is scrolled to. Good news goes
+ * by itself after a few seconds; an error stays until it is closed or the next action starts,
+ * because somebody who looked away should still find out what went wrong.
+ */
 function say(message, good) {
-    const box = $("say");
-    box.textContent = message;
-    box.className = "say " + (good ? "good" : "bad");
+
+    const toast = document.createElement("div");
+    toast.className = "toast " + (good ? "good" : "bad");
+    toast.setAttribute("role", good ? "status" : "alert");
+
+    const text = document.createElement("span");
+    text.textContent = message;
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "Close");
+    close.addEventListener("click", () => toast.remove());
+
+    toast.append(text, close);
+
+    // Newest on top, and no more than a handful: older ones are stale by then.
+    const toasts = $("say");
+    toasts.prepend(toast);
+    while (toasts.children.length > 4) {
+        toasts.lastElementChild.remove();
+    }
+
+    if (good) {
+        setTimeout(() => toast.remove(), 5000);
+    }
 }
 
+/** Closes the toasts of the last action, as a new one starts. */
 function clearSay() {
-    $("say").className = "say";
+    $("say").textContent = "";
 }
 
 // ── Talking to the server ────────────────────────────────────────────
@@ -462,6 +542,12 @@ async function sendCsv(path, text) {
             "Authorization": "Bearer " + token},
         body: text,
     });
+
+    return await jsonReply(response, path);
+}
+
+/** A response's JSON, or the error it carries. */
+async function jsonReply(response, path) {
 
     const reply = await response.text();
     let parsed = null;
@@ -617,7 +703,9 @@ async function opened() {
     const imports = me.imports || {};
     $("importStudents").hidden = !imports.students;
     $("importAttendance").hidden = !imports.attendance;
-    $("tabImport").hidden = !(imports.students || imports.attendance);
+    $("backupImportCard").hidden = !admin;
+    $("backupExportCard").hidden = !admin;
+    $("tabImport").hidden = !(imports.students || imports.attendance || admin);
 
     if (imports.students || imports.attendance) {
         await loadImportPanel();
@@ -934,11 +1022,12 @@ async function loadAccounts() {
     const rows = $("rows");
     rows.textContent = "";
 
-    // Only accounts that hold something. One whose last role was revoked or last
-    // appointment ended has nothing left to show here; it stays in the grant form's list
-    // below, which is the one place it can be given something again.
-    const holding = accounts.filter((account) =>
-        account.roles.length > 0 || account.delegations.length > 0);
+    // Accounts that hold something, and new ones that have not held anything yet. One whose
+    // last role was revoked or last appointment ended has nothing left to show here; it
+    // stays in the grant form's list below, which is the one place it can be given
+    // something again.
+    const holding = accounts.filter((account) => !account.everHeld
+        || account.roles.length > 0 || account.delegations.length > 0);
 
     holding.forEach((account) => {
 
@@ -1473,6 +1562,316 @@ $("studentsImport").addEventListener("click", async () => {
 
 /** The text of the file the preview was made from, so Import sends exactly that. */
 let previewedAttendance = null;
+
+// ── Backups ──────────────────────────────────────────────────────────
+
+/** The password as the header carries it: Base64 of its UTF-8. */
+function base64Utf8(text) {
+    let binary = "";
+    new TextEncoder().encode(text).forEach((byte) => { binary += String.fromCharCode(byte); });
+    return btoa(binary);
+}
+
+/** Fills a progress line: a fraction from 0 to 1, or null for a bar that only says "working". */
+function showProgress(id, text, fraction) {
+
+    const box = $(id);
+    const bar = box.querySelector("progress");
+
+    box.hidden = false;
+    box.querySelector("span").textContent = text;
+
+    if (fraction === null) {
+        bar.removeAttribute("value");
+    } else {
+        bar.value = fraction;
+    }
+}
+
+function megabytes(bytes) {
+    return (bytes / 1048576).toFixed(1) + " MB";
+}
+
+/** An id for X-Progress-Id. Not crypto.randomUUID, which a page served over plain http lacks. */
+function progressId() {
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)),
+        (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Asks the server how far the request sent with this id has got, about twice a second, and hands
+ * each answer to show while showing() is true. A 404 means it has not started or has finished,
+ * and a failed ask is tried again; neither is worth an error. Returns the function that stops it.
+ */
+function watchProgress(id, showing, show) {
+
+    let stopped = false;
+    let timer = null;
+
+    const ask = async () => {
+        try {
+            const response = await fetch("/api/v1/progress/" + id, {
+                headers: {"Accept": "application/json", "Authorization": "Bearer " + token},
+            });
+            if (response.ok && !stopped && showing()) {
+                show(await response.json());
+            }
+        } catch (e) {
+            // The next ask will do.
+        }
+        if (!stopped) {
+            timer = setTimeout(ask, 500);
+        }
+    };
+
+    timer = setTimeout(ask, 500);
+
+    return () => {
+        stopped = true;
+        clearTimeout(timer);
+    };
+}
+
+/** A stage as the server reports it: counted when it knows how many rows there are. */
+function showServerProgress(id, state) {
+    if (state.total > 0) {
+        showProgress(id, state.stage + ": " + state.done.toLocaleString() + " of "
+            + state.total.toLocaleString() + " rows", Math.min(state.done / state.total, 1));
+    } else {
+        showProgress(id, state.stage + "…", null);
+    }
+}
+
+/**
+ * A POST through XMLHttpRequest, because fetch cannot say how much of a body has gone up. Resolves
+ * to the parts of a fetch Response that jsonReply and the export read. The callbacks are optional:
+ * sending(loaded, total) while the body goes up, sent() once it is all there and the server is
+ * working, receiving(loaded, total) while the answer comes down, with a total of 0 when the server
+ * did not say how long it is.
+ */
+function postWithProgress(url, headers, body, responseType, progress) {
+
+    return new Promise((resolve, reject) => {
+
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", url);
+        xhr.responseType = responseType;
+        Object.entries(headers).forEach(([name, value]) => xhr.setRequestHeader(name, value));
+
+        if (progress.sending) {
+            xhr.upload.onprogress = (event) =>
+                progress.sending(event.loaded, event.lengthComputable ? event.total : 0);
+        }
+        if (progress.sent) {
+            xhr.upload.onload = () => progress.sent();
+        }
+        if (progress.receiving) {
+            xhr.onprogress = (event) =>
+                progress.receiving(event.loaded, event.lengthComputable ? event.total : 0);
+        }
+
+        xhr.onload = () => resolve({
+            status: xhr.status,
+            ok: xhr.status >= 200 && xhr.status < 300,
+            headers: {get: (name) => xhr.getResponseHeader(name)},
+            text: async () => responseType === "blob" ? await xhr.response.text()
+                : xhr.responseText,
+            blob: async () => xhr.response,
+        });
+        xhr.onerror = () => reject(new Error("The connection to the server failed."));
+        xhr.send(body);
+    });
+}
+
+async function sendBackup(dryRun) {
+
+    const file = $("backupFile").files[0];
+    if (!file) {
+        throw new Error("Choose a .siesbak file first.");
+    }
+
+    const label = $("backupLabel").value.trim();
+    const node = $("backupNode").value.trim();
+    if (!label || !node) {
+        throw new Error("Say which phone the backup came from, and its device number.");
+    }
+
+    const headers = {"Accept": "application/json", "Content-Type": "application/octet-stream",
+        "Authorization": "Bearer " + token};
+    const password = $("backupPassword").value;
+    if (password) {
+        headers["X-Backup-Password"] = base64Utf8(password);
+    }
+
+    const path = "/backup/import?label=" + encodeURIComponent(label)
+        + "&node=" + encodeURIComponent(node) + "&dryRun=" + dryRun;
+
+    const id = progressId();
+    headers["X-Progress-Id"] = id;
+
+    // The upload's own bar until the file is all sent; the server's stages after that.
+    let uploaded = false;
+    const reading = () => {
+        if (!uploaded) {
+            uploaded = true;
+            showProgress("backupProgress", "The server is reading the backup…", null);
+        }
+    };
+
+    const stop = watchProgress(id, () => uploaded,
+        (state) => showServerProgress("backupProgress", state));
+
+    try {
+        return await jsonReply(await postWithProgress("/api/v1" + path, headers, file, "text", {
+            sending: (loaded, total) => {
+                if (total && loaded < total) {
+                    showProgress("backupProgress", "Sending the backup: " + megabytes(loaded)
+                        + " of " + megabytes(total), loaded / total);
+                } else {
+                    reading();
+                }
+            },
+            sent: reading,
+        }), "/backup/import");
+    } finally {
+        stop();
+    }
+}
+
+function showBackupReport(reply) {
+
+    const result = $("backupResult");
+    result.textContent = "";
+
+    if (!reply.succeeded) {
+        result.appendChild(lineList([["Nothing was written: " + reply.failure, true]]));
+        return;
+    }
+
+    const items = [[(reply.dryRun ? "Preview, nothing written yet: " : "Imported: ")
+        + reply.inserted + " added, " + reply.updated + " updated, "
+        + reply.unchanged + " already here.", false]];
+
+    if (reply.seenBefore) {
+        items.push(["This exact file has been imported before.", false]);
+    }
+
+    Object.entries(reply.tables).forEach(([table, counts]) => {
+        if (counts.inserted || counts.updated) {
+            items.push([table + ": " + counts.inserted + " added, " + counts.updated
+                + " updated", false]);
+        }
+    });
+
+    reply.skipped.forEach((line) => items.push([line, true]));
+    result.appendChild(lineList(items));
+}
+
+/**
+ * Runs one backup request with both buttons disabled and a progress bar. A phone's backup takes
+ * the server half a minute or more, and a page that showed nothing in that time was clicked
+ * again, which queued a second import behind the first.
+ */
+async function whileReadingBackup(work) {
+
+    const buttons = [$("backupPreview"), $("backupImport")];
+    const result = $("backupResult");
+
+    buttons.forEach((button) => { button.disabled = true; });
+    result.textContent = "";
+    showProgress("backupProgress", "Sending the backup", 0);
+
+    try {
+        await work();
+    } catch (e) {
+        result.textContent = "";
+        say(e.message, false);
+    } finally {
+        $("backupProgress").hidden = true;
+        buttons.forEach((button) => { button.disabled = false; });
+    }
+}
+
+$("backupPreview").addEventListener("click", () => {
+
+    clearSay();
+    $("backupImport").hidden = true;
+
+    return whileReadingBackup(async () => {
+        const reply = await sendBackup(true);
+        showBackupReport(reply);
+        $("backupImport").hidden = !reply.succeeded;
+    });
+});
+
+$("backupImport").addEventListener("click", () => {
+
+    clearSay();
+
+    return whileReadingBackup(async () => {
+        const reply = await sendBackup(false);
+        showBackupReport(reply);
+        $("backupImport").hidden = true;
+        $("backupPassword").value = "";
+        say(reply.succeeded ? "Backup imported." : "The import failed; nothing was written.",
+            reply.succeeded);
+    });
+});
+
+$("backupExport").addEventListener("click", async () => {
+
+    clearSay();
+    const button = $("backupExport");
+    button.disabled = true;
+    showProgress("exportProgress", "The server is putting the backup together…", null);
+
+    // The server's stages until the file starts coming down; the download's own bar after that.
+    const id = progressId();
+    let downloading = false;
+    const stop = watchProgress(id, () => !downloading,
+        (state) => showServerProgress("exportProgress", state));
+
+    try {
+        const response = await postWithProgress("/api/v1/backup/export",
+            {"Content-Type": "application/json", "Authorization": "Bearer " + token,
+                "X-Progress-Id": id},
+            JSON.stringify({password: $("exportPassword").value || null}), "blob", {
+                receiving: (loaded, total) => {
+                    downloading = true;
+                    showProgress("exportProgress", "Downloading: " + megabytes(loaded)
+                        + (total ? " of " + megabytes(total) : ""),
+                        total ? loaded / total : null);
+                },
+            });
+        stop();
+
+        if (!response.ok) {
+            await jsonReply(response, "/backup/export");
+        }
+
+        const disposition = response.headers.get("Content-Disposition") || "";
+        const named = /filename="?([^";]+)"?/.exec(disposition);
+
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(await response.blob());
+        link.download = named ? named[1] : "sies-attendance.siesbak";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+
+        $("exportPassword").value = "";
+        say("Backup exported.", true);
+
+    } catch (e) {
+        say(e.message, false);
+
+    } finally {
+        stop();
+        $("exportProgress").hidden = true;
+        button.disabled = false;
+    }
+});
 
 $("attendancePreview").addEventListener("click", async () => {
 

@@ -117,6 +117,13 @@ public final class BackupImporter {
 	@NonNull
 	public Outcome run(@NonNull Request request)
 			throws StagedBackup.RejectedException, SQLException {
+		return run(request, new Progress());
+	}
+
+	/** {@link #run(Request)}, saying how far it has got as it goes. */
+	@NonNull
+	public Outcome run(@NonNull Request request, @NonNull Progress progress)
+			throws StagedBackup.RejectedException, SQLException {
 
 		if (request.sourceNode() < StructuredId.FIRST_ASSIGNABLE_NODE_ID
 				|| request.sourceNode() > StructuredId.MAX_NODE_ID) {
@@ -127,6 +134,8 @@ public final class BackupImporter {
 					+ StructuredId.SERVER_NODE + " is the server's own): "
 					+ request.sourceNode());
 		}
+
+		progress.stage("Opening the backup");
 
 		try (StagedBackup backup = StagedBackup.open(request.backup(), request.password(),
 				request.zone(), request.workDir())) {
@@ -150,7 +159,9 @@ public final class BackupImporter {
 					setActor(server, request.actorAccount(), runId, request.sourceLabel());
 
 					new ImportSession(backup.connection(), server, ids, request.sourceNode(),
-							report).importAll();
+							report, progress).importAll();
+
+					progress.stage(request.dryRun() ? "Undoing the preview" : "Saving");
 
 					// INSIDE the transaction, and before it ends. Two reasons, and both of
 					// them were wrong in the first draft of this: a dry run must not leave an
@@ -235,6 +246,10 @@ public final class BackupImporter {
 		ActorSession.announce(server, ActorSession.Actor
 				.ofAccount(account, "pre-migration (import #" + runId + " from "
 						+ sourceLabel + ")"));
+
+		// What lets an administrator write a phone's batches, which are otherwise the
+		// professors' alone.
+		ActorSession.announceImport(server, runId);
 	}
 
 	/**

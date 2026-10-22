@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import org.junit.jupiter.api.AfterAll;
@@ -1295,6 +1296,128 @@ class WireTest {
 	}
 
 	@Test
+	void aBackupExportedHereImportsBackUnchanged() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+
+		HttpResponse<byte[]> exported = exportBackup("{\"password\": \"pässwörd\"}", admin);
+
+		assertEquals(200, exported.statusCode(), () -> new String(exported.body(),
+				StandardCharsets.UTF_8));
+		assertEquals("SIESBAK1", new String(exported.body(), 0, 8, StandardCharsets.US_ASCII));
+		assertTrue(exported.headers().firstValue("Content-Disposition").orElse("")
+				.contains(".siesbak"));
+		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'EXPORT' "
+				+ "AND table_name = 'backup' AND (detail->>'encrypted')::boolean"));
+
+		long attendance = count("SELECT count(*) FROM attendance");
+		long students = count("SELECT count(*) FROM students");
+
+		assertTrue(attendance > 0 && students > 0, "a round trip of nothing proves nothing");
+		assertTrue(count("SELECT (detail->>'rows')::bigint FROM audit_log WHERE action = 'EXPORT' "
+				+ "AND table_name = 'backup'") >= attendance + students);
+
+		Reply wrong = importBackup(exported.body(), "wrong", false, admin);
+
+		assertEquals(400, wrong.status(), wrong::toString);
+		assertEquals("That is not the password for this backup.",
+				wrong.body().get("message").stringValue());
+
+		Reply preview = importBackup(exported.body(), "pässwörd", true, admin);
+
+		assertEquals(200, preview.status(), preview::toString);
+		assertTrue(preview.body().get("succeeded").booleanValue(), preview::toString);
+		assertEquals(0, preview.body().get("inserted").intValue(),
+				"everything in it came from here: " + preview);
+
+		Reply imported = importBackup(exported.body(), "pässwörd", false, admin);
+
+		assertEquals(200, imported.status(), imported::toString);
+		assertTrue(imported.body().get("succeeded").booleanValue(), imported::toString);
+		assertEquals(attendance, count("SELECT count(*) FROM attendance"));
+		assertEquals(students, count("SELECT count(*) FROM students"));
+
+		String professor = tokenFor("a.cs@sies.edu.in", "STAFF");
+
+		assertEquals(403, exportBackup("{}", professor).statusCode(),
+				"backups are an administrator's");
+		assertEquals(403, importBackup(exported.body(), "pässwörd", true, professor).status());
+	}
+
+	@Test
+	void aBackupBringsBackBatchesAProfessorMade() throws Exception {
+
+		// Only professors write batches and their links, but an import runs as an
+		// administrator. These two are what an import of a real phone first tripped over.
+		postgres.asSuperuser("""
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year)
+				    VALUES (5201, 'FY CS Full class', 2025);
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3001, 5201);
+				""");
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+		HttpResponse<byte[]> exported = exportBackup("{}", admin);
+
+		assertEquals(200, exported.statusCode());
+
+		postgres.asSuperuser("""
+				DELETE FROM course_batch_map WHERE batch_id = 5201;
+				DELETE FROM batch_desc WHERE batch_id = 5201;
+				""");
+
+		Reply imported = importBackup(exported.body(), "", false, admin);
+
+		assertEquals(200, imported.status(), imported::toString);
+		assertTrue(imported.body().get("succeeded").booleanValue(), imported::toString);
+		// By name: 5201 reads as an old phone's key, so the batch comes back under a new one.
+		assertEquals(1, count("SELECT count(*) FROM batch_desc "
+				+ "WHERE batch_name = 'FY CS Full class' AND academic_year = 2025"));
+		assertEquals(1, count("SELECT count(*) FROM course_batch_map m "
+				+ "JOIN batch_desc b USING (batch_id) "
+				+ "WHERE b.batch_name = 'FY CS Full class' AND m.course_id = 3001"));
+
+		// And outside an import, an administrator still cannot make one.
+		try (Connection connection = postgres.actingAs(accountAdmin, null, null)) {
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("INSERT INTO batch_desc (batch_id, batch_name, academic_year) "
+						+ "VALUES (5202, 'Not an import', 2025)");
+				fail("an administrator wrote a batch outside an import");
+			} catch (SQLException refused) {
+				assertTrue(refused.getMessage().contains("row-level security"),
+						refused.getMessage());
+			} finally {
+				connection.rollback();
+			}
+		}
+	}
+
+	private HttpResponse<byte[]> exportBackup(String body, String token) throws Exception {
+
+		return HTTP.send(HttpRequest
+						.newBuilder(URI.create("http://localhost:" + port + Api.V1
+								+ "/backup/export"))
+						.header("Content-Type", "application/json")
+						.header("Authorization", "Bearer " + token)
+						.POST(HttpRequest.BodyPublishers.ofString(body))
+						.build(),
+				HttpResponse.BodyHandlers.ofByteArray());
+	}
+
+	private Reply importBackup(byte[] file, String password, boolean dryRun, String token)
+			throws Exception {
+
+		HttpRequest.Builder request = HttpRequest
+				.newBuilder(URI.create("http://localhost:" + port + Api.V1
+						+ "/backup/import?label=round%20trip&node=7&dryRun=" + dryRun))
+				.header("Content-Type", "application/octet-stream")
+				.header(BackupController.PASSWORD_HEADER, java.util.Base64.getEncoder()
+						.encodeToString(password.getBytes(StandardCharsets.UTF_8)))
+				.POST(HttpRequest.BodyPublishers.ofByteArray(file));
+
+		return send(request, token, null);
+	}
+
+	@Test
 	void anAdministratorEndsSomebodysSessionsEverywhere() throws Exception {
 
 		String admin = tokenFor("admin@sies.edu.in", "STAFF");
@@ -1356,6 +1479,42 @@ class WireTest {
 		}
 
 		assertTrue(foundTheAdmin, listed::toString);
+	}
+
+	@Test
+	void aNewAccountIsToldApartFromOneWhoseRolesWereRevoked() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply created = post("/accounts", json(
+				"kind", "STAFF",
+				"displayName", "G NEWCOMER",
+				"loginEmail", "newcomer@sies.edu.in",
+				"password", "a long enough opening password"), token, null);
+
+		assertEquals(200, created.status(), created::toString);
+		assertFalse(created.body().get("everHeld").booleanValue());
+
+		long newcomer = created.body().get("accountId").longValue();
+
+		long grantId = Long.parseLong(row("SELECT user_role_id FROM user_role WHERE account_id = "
+				+ accountOffice + " AND role = 'OFFICE'").get("user_role_id"));
+		assertEquals(200, post("/accounts/" + accountOffice + "/roles/" + grantId + "/revoke",
+				json("reason", "left"), token, null).status());
+
+		Map<Long, JsonNode> listed = new LinkedHashMap<>();
+		for (JsonNode account : get("/accounts", token, null).body()) {
+			listed.put(account.get("accountId").longValue(), account);
+		}
+
+		// Nothing held either way; the console lists the first and not the second.
+		assertEquals(0, listed.get(newcomer).get("roles").size());
+		assertFalse(listed.get(newcomer).get("everHeld").booleanValue());
+
+		assertEquals(0, listed.get(accountOffice).get("roles").size());
+		assertTrue(listed.get(accountOffice).get("everHeld").booleanValue());
+
+		assertTrue(listed.get(accountAdmin).get("everHeld").booleanValue());
 	}
 
 	@Test

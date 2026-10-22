@@ -418,6 +418,11 @@ final class AuditMessages {
 					: "Changed their password";
 
 			case "EXPORT" -> {
+				if ("backup".equals(table)) {
+					long rows = number(detail, "rows");
+					yield "Exported a backup" + ("true".equals(AuditNames.text(detail, "encrypted"))
+							? " (encrypted)" : "") + ": " + rows + (rows == 1 ? " row" : " rows");
+				}
 				String filter = AuditNames.text(detail, "filter");
 				long rows = number(detail, "rows");
 				yield "Exported the " + session(AuditNames.id(detail, "academic_year"))

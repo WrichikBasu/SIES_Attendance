@@ -214,6 +214,13 @@ class AuditMessagesTest {
 	}
 
 	@Test
+	void aBackupIsNotARegister() {
+		assertEquals("Exported a backup (encrypted): 14072 rows",
+				messages.describe("EXPORT", "backup", null, null, null,
+						row("rows", 14072L, "encrypted", true)));
+	}
+
+	@Test
 	void endingSessionsNamesWhoseTheyWere() {
 		assertEquals("Signed Dr. Manoj Singh out everywhere: 2 sessions ended",
 				messages.describe("SESSIONS_END", "app_account", null, null, null,

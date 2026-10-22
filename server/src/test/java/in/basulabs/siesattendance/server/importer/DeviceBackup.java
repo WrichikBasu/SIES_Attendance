@@ -30,7 +30,8 @@ import in.basulabs.siesattendance.backend.util.BackupContainer;
  * built rather than stubbed.
  *
  * <h3>Why it starts at version 6</h3>
- * The only schema written out by hand here is version 6. Everything newer is produced by running
+ * The only schema written out by hand is version 6, in {@link DeviceDatabase}, which the
+ * server's own backup export starts from too. Everything newer is produced by running
  * {@link SchemaMigrations} over it — the same code the phone runs and the importer runs — so the
  * current shape is never hand-written and cannot drift from the migrations.
  * <p>
@@ -70,7 +71,7 @@ final class DeviceBackup implements AutoCloseable {
 
 			statement.execute("PRAGMA foreign_keys = OFF");
 
-			for (String ddl : VERSION_6_DDL) {
+			for (String ddl : DeviceDatabase.VERSION_6_DDL) {
 				statement.execute(ddl);
 			}
 			statement.execute("PRAGMA user_version = " + BASE_VERSION);
@@ -224,94 +225,4 @@ final class DeviceBackup implements AutoCloseable {
 		}
 		Files.deleteIfExists(sqlite);
 	}
-
-	/**
-	 * The version 6 schema, written out.
-	 * <p>
-	 * Taken from the version 10 DDL that Room generates, with the four things that happened
-	 * after version 6 undone: the five main tables are still
-	 * {@code INTEGER PRIMARY KEY AUTOINCREMENT}, {@code student_year} has no {@code division},
-	 * and {@code course_instructor} does not exist. The indices are the ones migrations 1 to 5
-	 * had created by then.
-	 */
-	private static final String[] VERSION_6_DDL = {
-
-			"CREATE TABLE `students` (`studentID` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-					+ "`name` TEXT NOT NULL, `pronouns` TEXT NOT NULL, `email` TEXT)",
-			"CREATE UNIQUE INDEX `index_students_email` ON `students` (`email`)",
-
-			"CREATE TABLE `professors` (`profID` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-					+ "`name` TEXT NOT NULL, `email` TEXT NOT NULL, `department` TEXT NOT NULL, "
-					+ "`designation` TEXT NOT NULL)",
-			"CREATE UNIQUE INDEX `index_professors_email` ON `professors` (`email`)",
-
-			"CREATE TABLE `academic_years` (`academicYear` INTEGER NOT NULL, "
-					+ "`startDate` INTEGER NOT NULL, `endDate` INTEGER NOT NULL, "
-					+ "`startEpoch` INTEGER NOT NULL, `endEpoch` INTEGER NOT NULL, "
-					+ "PRIMARY KEY(`academicYear`))",
-
-			"CREATE TABLE `student_year` (`studentID` INTEGER NOT NULL, "
-					+ "`academicYear` INTEGER NOT NULL, `rollNo` TEXT NOT NULL, "
-					+ "`year` TEXT NOT NULL, `stream` TEXT NOT NULL, "
-					+ "`majorDept` TEXT NOT NULL, `minorDept` TEXT, `oeDept` TEXT, "
-					+ "`semester` INTEGER, PRIMARY KEY(`studentID`, `academicYear`), "
-					+ "FOREIGN KEY(`studentID`) REFERENCES `students`(`studentID`) "
-					+ "ON UPDATE CASCADE ON DELETE RESTRICT)",
-
-			"CREATE TABLE `courses` (`courseID` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-					+ "`profID` INTEGER NOT NULL, `courseCode` TEXT NOT NULL, "
-					+ "`courseTopic` TEXT NOT NULL, `stream` TEXT NOT NULL, "
-					+ "`offeringDepartment` TEXT NOT NULL, `year` TEXT NOT NULL, "
-					+ "`semester` INTEGER NOT NULL, `courseType` TEXT NOT NULL, "
-					+ "`remarks` TEXT, `dateIntroduced` TEXT, `dateDiscontinued` TEXT, "
-					+ "FOREIGN KEY(`profID`) REFERENCES `professors`(`profID`) "
-					+ "ON UPDATE CASCADE ON DELETE RESTRICT)",
-			"CREATE UNIQUE INDEX `index_courses_courseCode` ON `courses` (`courseCode`)",
-			"CREATE INDEX `index_courses_profID` ON `courses` (`profID`)",
-
-			"CREATE TABLE `batch_desc` (`batchID` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-					+ "`batchName` TEXT NOT NULL, `batchDesc` TEXT, "
-					+ "`academicYear` INTEGER NOT NULL)",
-
-			"CREATE TABLE `batch_student_map` (`batchID` INTEGER NOT NULL, "
-					+ "`studentID` INTEGER NOT NULL, `academicYear` INTEGER NOT NULL, "
-					+ "PRIMARY KEY(`batchID`, `studentID`, `academicYear`), "
-					+ "FOREIGN KEY(`batchID`) REFERENCES `batch_desc`(`batchID`) "
-					+ "ON UPDATE CASCADE ON DELETE RESTRICT, "
-					+ "FOREIGN KEY(`studentID`) REFERENCES `students`(`studentID`) "
-					+ "ON UPDATE CASCADE ON DELETE RESTRICT)",
-			"CREATE INDEX `index_batch_student_map_studentID` "
-					+ "ON `batch_student_map` (`studentID`)",
-
-			"CREATE TABLE `course_batch_map` (`courseID` INTEGER NOT NULL, "
-					+ "`batchID` INTEGER NOT NULL, PRIMARY KEY(`courseID`, `batchID`), "
-					+ "FOREIGN KEY(`courseID`) REFERENCES `courses`(`courseID`) "
-					+ "ON UPDATE CASCADE ON DELETE RESTRICT, "
-					+ "FOREIGN KEY(`batchID`) REFERENCES `batch_desc`(`batchID`) "
-					+ "ON UPDATE CASCADE ON DELETE RESTRICT)",
-			"CREATE INDEX `index_course_batch_map_batchID` ON `course_batch_map` (`batchID`)",
-
-			"CREATE TABLE `lectures` (`lectureID` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-					+ "`courseID` INTEGER NOT NULL, `batchID` INTEGER, "
-					+ "`startDateTime` TEXT NOT NULL, `endDateTime` TEXT NOT NULL, "
-					+ "`notes` TEXT, "
-					+ "FOREIGN KEY(`batchID`) REFERENCES `batch_desc`(`batchID`) "
-					+ "ON UPDATE CASCADE ON DELETE RESTRICT, "
-					+ "FOREIGN KEY(`courseID`) REFERENCES `courses`(`courseID`) "
-					+ "ON UPDATE CASCADE ON DELETE RESTRICT)",
-			"CREATE UNIQUE INDEX "
-					+ "`index_lectures_courseID_batchID_startDateTime_endDateTime` "
-					+ "ON `lectures` (`courseID`, `batchID`, `startDateTime`, `endDateTime`)",
-			"CREATE INDEX `index_lectures_batchID` ON `lectures` (`batchID`)",
-			"CREATE INDEX `index_lectures_courseID` ON `lectures` (`courseID`)",
-
-			"CREATE TABLE `attendance` (`lectureID` INTEGER NOT NULL, "
-					+ "`studentID` INTEGER NOT NULL, `present` INTEGER NOT NULL, "
-					+ "PRIMARY KEY(`lectureID`, `studentID`), "
-					+ "FOREIGN KEY(`lectureID`) REFERENCES `lectures`(`lectureID`) "
-					+ "ON UPDATE NO ACTION ON DELETE RESTRICT, "
-					+ "FOREIGN KEY(`studentID`) REFERENCES `students`(`studentID`) "
-					+ "ON UPDATE NO ACTION ON DELETE RESTRICT)",
-			"CREATE INDEX `index_attendance_studentID` ON `attendance` (`studentID`)"
-	};
 }

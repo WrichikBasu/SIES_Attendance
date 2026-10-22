@@ -8,7 +8,7 @@
 # that is not a shell script.
 #
 #   server/tools/dev-database.sh          start it, or re-apply migrations
-#   server/tools/dev-database.sh --reset  destroy it and start again
+#   server/tools/dev-database.sh --reset  destroy it, data and all, and stop there
 #   server/tools/dev-database.sh --env    print the variables to run with
 #
 # tools/verify-schema.sh is the other half of this: it throws a container
@@ -51,6 +51,8 @@ if [[ "${1:-}" == "--reset" ]]; then
     echo "Removing $NAME and $VOLUME"
     docker rm -f "$NAME" >/dev/null 2>&1 || true
     docker volume rm "$VOLUME" >/dev/null 2>&1 || true
+    echo "Gone. $0 makes a new, empty one."
+    exit 0
 fi
 
 if ! docker ps -a --format '{{.Names}}' | grep -qx "$NAME"; then
@@ -133,7 +135,7 @@ if [[ "${MIGRATE:-0}" == "1" ]]; then
 
     echo
     echo "Schema applied without Flyway, so the service will NOT start against"
-    echo "this database. Run $0 --reset before trying."
+    echo "this database. Run $0 --reset and then $0 before trying."
 fi
 
 echo
@@ -145,5 +147,5 @@ echo
 echo "Flyway applies every migration on that first start."
 echo
 echo "A shell on it:     docker exec -it $NAME psql -U postgres -d sies"
-echo "Schema, no server: MIGRATE=1 $0 --reset"
+echo "Schema, no server: $0 --reset && MIGRATE=1 $0"
 echo "Throw it away:     $0 --reset"

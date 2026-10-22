@@ -718,6 +718,7 @@
         chosen by whoever created it, and changing it signs out every other phone or
         browser that holds this account's session.
     -->
+    <string name="change_password_required">This account\'s password has to be changed before you can continue.</string>
     <string name="change_password_explained">At least %1$d characters. Your other sign-ins will end.</string>
     <string name="hint_current_password">Current password</string>
     <string name="hint_new_password">New password</string>

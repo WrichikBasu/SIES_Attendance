@@ -101,24 +101,38 @@ final class ImportSession {
 	@NonNull
 	private final ImportReport report;
 
+	@NonNull
+	private final Progress progress;
+
 	/** Table name to device key to server key, built as each table is resolved. */
 	private final Map<String, Map<Long, Long>> maps = new HashMap<>();
 
 	ImportSession(@NonNull Connection device, @NonNull Connection server,
-	              @NonNull ServerIds ids, int sourceNode, @NonNull ImportReport report) {
+	              @NonNull ServerIds ids, int sourceNode, @NonNull ImportReport report,
+	              @NonNull Progress progress) {
 		this.device = device;
 		this.server = server;
 		this.ids = ids;
 		this.sourceNode = sourceNode;
 		this.report = report;
+		this.progress = progress;
 	}
 
 	/** Every table, in dependency order. */
 	void importAll() throws SQLException {
 
+		long rows = 0;
+
+		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
+			rows += countDeviceRows(table);
+		}
+
+		progress.stage("Importing", rows);
+
 		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
 
 			report.seen(table.name());
+			progress.rename("Importing " + table.name().replace('_', ' '));
 
 			switch (table.name()) {
 				case "students" -> importStudents(table);
@@ -150,6 +164,8 @@ final class ImportSession {
 		maps.put(table.name(), map);
 
 		for (Map<String, Object> row : readDeviceRows(table)) {
+
+			progress.advance();
 
 			long deviceId = ((Number) row.get("studentID")).longValue();
 			String email = (String) row.get("email");
@@ -264,6 +280,8 @@ final class ImportSession {
 		Set<Long> claimed = new HashSet<>();
 
 		for (Map<String, Object> row : readDeviceRows(table)) {
+
+			progress.advance();
 
 			long deviceId = ((Number) row.get("profID")).longValue();
 			String email = (String) row.get("email");
@@ -382,6 +400,8 @@ final class ImportSession {
 		}
 
 		for (Map<String, Object> row : readDeviceRows(table)) {
+
+			progress.advance();
 
 			Long deviceId = table.surrogate() == null
 					? null
@@ -602,6 +622,16 @@ final class ImportSession {
 	}
 
 	// ── Reading the device ───────────────────────────────────────────────
+
+	private long countDeviceRows(@NonNull DeviceTables.Table table) throws SQLException {
+
+		try (Statement statement = device.createStatement();
+		     ResultSet results = statement.executeQuery(
+				     "SELECT COUNT(*) FROM " + table.name())) {
+
+			return results.next() ? results.getLong(1) : 0;
+		}
+	}
 
 	/**
 	 * Every row of one table, in a deterministic order so that two runs over the same backup

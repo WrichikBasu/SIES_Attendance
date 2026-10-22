@@ -559,13 +559,16 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 				// The node has to reach IdGenerator before the next key is issued, and
 				// SyncSignIn has already applied it; this only tells the user.
-				toastMessage.postValue(session.mustRotate()
-						? "Signed in. This account's password has to be changed before "
-								+ "anything else will work."
-						: "Signed in as " + session.displayName() + ", device "
-								+ session.node());
-
-				SyncScheduler.requestSync(getApplication());
+				if (session.mustRotate()) {
+					// The sign-in screen asks for the new password next, and changing it asks
+					// for a sync. One now would only be refused, and would leave "this version
+					// of the app cannot sync" on the screen for the person to wonder about.
+					toastMessage.postValue("Signed in. Choose a new password to continue.");
+				} else {
+					toastMessage.postValue("Signed in as " + session.displayName()
+							+ ", device " + session.node());
+					SyncScheduler.requestSync(getApplication());
+				}
 				onDone.accept(session.displayName());
 
 			} catch (SyncSignIn.UnsentFromSomebodyElse unsent) {
@@ -611,6 +614,25 @@ public class AttendanceViewModel extends AndroidViewModel {
 			forgetTheLastAccount();
 			toastMessage.postValue("Signed out");
 			onDone.run();
+		});
+	}
+
+	/**
+	 * Ends a session that was opened but not used: somebody signed in, was asked to change
+	 * the password, and chose not to. Only the session goes; the phone's data stays, because
+	 * nothing was done under this one.
+	 */
+	public void abandonSignIn() {
+
+		NETWORK_TASK_EXECUTOR.execute(() -> {
+			try {
+				new SyncClient(getApplication()).logout();
+			} catch (java.io.IOException e) {
+				// Best effort: the token is forgotten either way.
+			}
+			DeviceIdentity.forgetToken(getApplication());
+			DeviceIdentity.recordPasswordChangeRequired(getApplication(), false);
+			SyncScheduler.cancelPending(getApplication());
 		});
 	}
 
@@ -735,6 +757,14 @@ public class AttendanceViewModel extends AndroidViewModel {
 				int revoked = new SyncClient(getApplication()).changePassword(current, next);
 
 				DeviceIdentity.recordPasswordChangeRequired(getApplication(), false);
+
+				// Left for now if it fails: the next sync tries again before anything else.
+				try {
+					SyncSignIn.registerIfPending(getApplication());
+				} catch (java.io.IOException notYet) {
+					android.util.Log.i("AttendanceViewModel", "registration left for the next sync: "
+							+ notYet.getMessage());
+				}
 				DeviceIdentity.recordSyncError(getApplication(), null);
 				SyncScheduler.requestSync(getApplication());
 

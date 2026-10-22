@@ -222,6 +222,19 @@ public final class SyncJson {
 		return new PushOutcome(count.intValue(), rejected);
 	}
 
+	/** The machine-readable {@code code} of an error body, or null. */
+	@Nullable
+	public static String codeIn(@NonNull String body) {
+
+		try {
+			Object code = asObject(new Reader(body).readValue(), "the response").get("code");
+			return code instanceof String text && !text.isBlank() ? text : null;
+
+		} catch (RuntimeException notJson) {
+			return null;
+		}
+	}
+
 	/**
 	 * The sentence out of a refusal, or null when the body does not carry one.
 	 * <p>

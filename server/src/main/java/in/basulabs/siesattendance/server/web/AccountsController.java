@@ -84,13 +84,18 @@ public final class AccountsController {
 	 * <p>
 	 * {@code accountId} stays a number because it is a sequence value counted from one, and a
 	 * college will not reach nine quadrillion accounts.
+	 *
+	 * @param everHeld whether the account has ever held a role or an appointment, revoked ones
+	 *                 included. Tells a new account, which the page lists, from one whose
+	 *                 last grant was revoked, which it does not
 	 */
 	public record AccountBody(long accountId, @NonNull String kind, @Nullable String profId,
 	                          @Nullable String studentId, @NonNull String displayName,
 	                          @NonNull String loginEmail, boolean mustRotate, boolean locked,
 	                          boolean disabled, @Nullable String lastLoginAt,
 	                          @NonNull List<GrantBody> roles,
-	                          @NonNull List<Delegates.Delegation> delegations) {
+	                          @NonNull List<Delegates.Delegation> delegations,
+	                          boolean everHeld) {
 	}
 
 	/**
@@ -201,8 +206,11 @@ public final class AccountsController {
 			for (AccountDirectory.Summary account : AccountDirectory.list(connection)) {
 
 				List<GrantBody> roles = new ArrayList<>();
+				List<Roles.Grant> grants = Roles.of(connection, account.accountId());
+				List<Delegates.Delegation> delegations = account.studentId() == null
+						? List.of() : Delegates.forStudent(connection, account.studentId());
 
-				for (Roles.Grant grant : Roles.of(connection, account.accountId())) {
+				for (Roles.Grant grant : grants) {
 
 					// Live ones only. A revoked grant used to appear struck through, which
 					// reads as "this account nearly has this role" and makes a column of
@@ -229,10 +237,8 @@ public final class AccountsController {
 						roles,
 						// A student's reach is its delegations, so the list that shows what an
 						// account holds has to show them beside its roles.
-						account.studentId() == null
-								? List.of()
-								: live(Delegates.forStudent(connection,
-										account.studentId()))));
+						live(delegations),
+						!grants.isEmpty() || !delegations.isEmpty()));
 			}
 
 			return accounts;
@@ -486,7 +492,7 @@ public final class AccountsController {
 					digits(wantedStudent), name, email, true, false, false, null, granted,
 					// Nothing yet: a delegation names a course, and a course is chosen after
 					// the account exists.
-					List.of());
+					List.of(), !granted.isEmpty());
 		});
 	}
 

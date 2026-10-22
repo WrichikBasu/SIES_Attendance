@@ -100,11 +100,13 @@ public class ActivityHome extends AppCompatActivity {
 		// navigate away from it, which is a flash of somebody else's data.
 		NavGraph graph = navController.getNavInflater().inflate(R.navigation.nav_graph);
 
-		graph.setStartDestination(
-				SignInGuard.gate(viewModel.hasServer(), viewModel.isSignedIn())
-						== SignInGuard.Gate.SIGN_IN
-						? R.id.fragmentSignIn
-						: R.id.fragmentDashboard);
+		boolean signIn = mustSignIn();
+
+		if (signIn) {
+			endUnusableSession();
+		}
+
+		graph.setStartDestination(signIn ? R.id.fragmentSignIn : R.id.fragmentDashboard);
 
 		// setGraph restores a saved back stack when there is one, so a rotation returns to the
 		// screen the user was on rather than to the start destination chosen above.
@@ -215,8 +217,7 @@ public class ActivityHome extends AppCompatActivity {
 	/** Goes to the sign-in screen when this phone has a server and no session; see onStart. */
 	private void leaveIfSignedOut() {
 
-		if (SignInGuard.gate(viewModel.hasServer(), viewModel.isSignedIn())
-				!= SignInGuard.Gate.SIGN_IN) {
+		if (!mustSignIn()) {
 			return;
 		}
 
@@ -228,7 +229,27 @@ public class ActivityHome extends AppCompatActivity {
 			return;
 		}
 
+		endUnusableSession();
 		navController.navigate(R.id.action_global_signIn);
+	}
+
+	/**
+	 * Whether this phone belongs on the sign-in screen: no session, or one the server will not
+	 * use until its password is changed. The sign-in screen is where that is asked for, with
+	 * the current password just typed; a session left open with nobody asking was an app that
+	 * looked signed in and failed every sync.
+	 */
+	private boolean mustSignIn() {
+		return SignInGuard.gate(viewModel.hasServer(), viewModel.isSignedIn())
+				== SignInGuard.Gate.SIGN_IN
+				|| (viewModel.isSignedIn() && viewModel.passwordChangeRequired());
+	}
+
+	/** Ends a session that cannot be used until its password changes; signing in reopens it. */
+	private void endUnusableSession() {
+		if (viewModel.isSignedIn() && viewModel.passwordChangeRequired()) {
+			viewModel.abandonSignIn();
+		}
 	}
 
 	/**

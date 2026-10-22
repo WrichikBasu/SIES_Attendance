@@ -69,7 +69,8 @@ public final class SyncSignIn {
 	 *                     whatever the screens kept from it has to go too
 	 */
 	public record Session(long accountId, @NonNull String displayName, boolean mustRotate,
-	                      int node, @Nullable AccountKind kind, boolean somebodyElse) {
+	                      @Nullable Integer node, @Nullable AccountKind kind,
+	                      boolean somebodyElse) {
 	}
 
 	/** The server said no. The message is the server's own and is meant to be shown. */
@@ -218,32 +219,86 @@ public final class SyncSignIn {
 
 			DeviceIdentity.storeToken(context, token);
 
-			Integer node = integer(answer, "deviceNode");
+			try {
+				return afterLogin(context, base, token, answer, email, discardUnsent);
 
-			if (node == null) {
-				// This install is not registered yet: the token it has just been given is what
-				// authorises the registration.
-				node = register(context, base, token);
+			} catch (IOException | RuntimeException failed) {
+				// Undone, so the phone is not left holding a session that the rest of signing
+				// in never finished. Reopening the app used to find somebody "signed in" whose
+				// sign-in had failed, with every sync refused.
+				try {
+					new SyncClient(context).logout();
+				} catch (IOException ignored) {
+					// Best effort: the token is forgotten either way.
+				}
+				DeviceIdentity.forgetToken(context);
+				throw failed;
 			}
-
-			IdGenerator.assignNodeID(context, node);
-
-			Long accountId = longValue(answer, "accountId");
-			String name = string(answer, "displayName");
-
-			boolean somebodyElse = startOverIfSomebodyElse(context,
-					accountId == null ? 0L : accountId, discardUnsent);
-
-			// "kind" is nested inside the response's account object, which this reader
-			// reaches because no field name repeats in that answer. See valueOf.
-			return new Session(accountId == null ? 0L : accountId,
-					name == null ? email : name,
-					"true".equals(flag(answer, "mustRotate")), node,
-					AccountKind.fromAny(string(answer, "kind")), somebodyElse);
 
 		} finally {
 			Arrays.fill(password, '\0');
 		}
+	}
+
+	/** Everything signing in does once there is a token. */
+	@NonNull
+	private static Session afterLogin(@NonNull Context context, @NonNull String base,
+	                                  @NonNull String token, @NonNull String answer,
+	                                  @NonNull String email, boolean discardUnsent)
+			throws IOException {
+
+		boolean mustRotate = "true".equals(flag(answer, "mustRotate"));
+		Integer node = integer(answer, "deviceNode");
+
+		if (node == null && mustRotate) {
+			// Not registered, and the server will not register it yet: until the password is
+			// changed a session may do nothing else. Done straight after the change; see
+			// registerIfPending.
+			DeviceIdentity.recordRegistrationPending(context, true);
+
+		} else if (node == null) {
+			// This install is not registered yet: the token it has just been given is what
+			// authorises the registration.
+			node = register(context, base, token);
+		}
+
+		if (node != null) {
+			IdGenerator.assignNodeID(context, node);
+			DeviceIdentity.recordRegistrationPending(context, false);
+		}
+
+		Long accountId = longValue(answer, "accountId");
+		String name = string(answer, "displayName");
+
+		boolean somebodyElse = startOverIfSomebodyElse(context,
+				accountId == null ? 0L : accountId, discardUnsent);
+
+		// "kind" is nested inside the response's account object, which this reader
+		// reaches because no field name repeats in that answer. See valueOf.
+		return new Session(accountId == null ? 0L : accountId,
+				name == null ? email : name, mustRotate, node,
+				AccountKind.fromAny(string(answer, "kind")), somebodyElse);
+	}
+
+	/**
+	 * Registers this installation if signing in had to leave it for later, which it does for an
+	 * account that must change its password first. Safe to call at any time: it does nothing
+	 * unless a registration is pending, and the server's side is idempotent.
+	 */
+	public static void registerIfPending(@NonNull Context context) throws IOException {
+
+		if (!DeviceIdentity.registrationPending(context)) {
+			return;
+		}
+
+		String token = DeviceIdentity.token(context);
+
+		if (token == null) {
+			return;
+		}
+
+		IdGenerator.assignNodeID(context, register(context, base(context), token));
+		DeviceIdentity.recordRegistrationPending(context, false);
 	}
 
 	/**

@@ -73,9 +73,25 @@ public final class SyncClient {
 
 		private final int status;
 
+		@Nullable
+		private final String code;
+
 		public Refused(int status, @NonNull String message) {
+			this(status, null, message);
+		}
+
+		public Refused(int status, @Nullable String code, @NonNull String message) {
 			super(message);
 			this.status = status;
+			this.code = code;
+		}
+
+		/**
+		 * Whether the server refused because the account's password has to be changed first,
+		 * which nothing but changing it will fix.
+		 */
+		public boolean passwordMustChange() {
+			return "password_rotation_required".equals(code);
 		}
 
 		public int status() {
@@ -332,7 +348,8 @@ public final class SyncClient {
 				String error = read(connection.getErrorStream());
 				String sentence = SyncJson.messageIn(error);
 
-				throw new Refused(status, sentence == null ? error : sentence);
+				throw new Refused(status, SyncJson.codeIn(error),
+						sentence == null ? error : sentence);
 			}
 
 			return read(connection.getInputStream());
