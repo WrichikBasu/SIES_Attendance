@@ -300,7 +300,8 @@ public final class DeviceTables {
 				List.of(integer("batchID", "batch_id", false),
 						text("batchName", "batch_name", false),
 						text("batchDesc", "batch_desc", true),
-						integer("academicYear", "academic_year", false)),
+						integer("academicYear", "academic_year", false),
+						enumeration("department", "department", Department.class, true)),
 				List.of("batchID"), List.of("batchName", "academicYear"), "batchID", fks()));
 
 		tables.add(new Table("batch_student_map",

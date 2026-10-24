@@ -170,7 +170,7 @@ public class FragmentAddCourse extends Fragment {
 		etBatches = view.findViewById(R.id.etCourseBatches);
 
 		if (mayAssignBatches) {
-			etBatches.setOnClickListener(v -> BatchPicker.show(requireContext(), batchOptions,
+			etBatches.setOnClickListener(v -> BatchPicker.show(requireContext(), offeredBatches(),
 					batchIDs, picked -> {
 						batchIDs.clear();
 						batchIDs.addAll(picked);
@@ -266,7 +266,7 @@ public class FragmentAddCourse extends Fragment {
 
 	/** The batches this course may be linked to and is linked to, for the Batches field. */
 	private void loadBatches() {
-		viewModel.loadCourseBatchOptions(editingCourseID, (options, linked) ->
+		viewModel.loadCourseBatchOptions(editingCourseID, null, (options, linked) ->
 				Ui.onMain(this, () -> {
 					batchOptions.clear();
 					batchOptions.addAll(options);
@@ -277,6 +277,25 @@ public class FragmentAddCourse extends Fragment {
 
 					showBatchSummary();
 				}));
+	}
+
+	/**
+	 * What the Batches field offers: the session's batches of the department chosen above,
+	 * when this account keeps that department's batches, and whatever is linked already so it
+	 * can be unticked. A batch is linked only to its own department's courses (V31).
+	 */
+	@NonNull
+	private List<EntityBatchDesc> offeredBatches() {
+
+		boolean keeps = chosenDept != null && viewModel.mayKeepBatchesOf(chosenDept);
+		List<EntityBatchDesc> offered = new ArrayList<>();
+
+		for (EntityBatchDesc batch : batchOptions) {
+			if ((keeps && batch.department == chosenDept) || batchIDs.contains(batch.batchID)) {
+				offered.add(batch);
+			}
+		}
+		return offered;
 	}
 
 	private void showBatchSummary() {
@@ -536,8 +555,26 @@ public class FragmentAddCourse extends Fragment {
 
 		// Null leaves the links alone: the office edits a course without touching batches, and
 		// a save made before the links have loaded must not write an empty set over them.
-		List<Long> chosenBatches = mayAssignBatches && batchesLoaded
-				? new ArrayList<>(batchIDs) : null;
+		List<Long> chosenBatches = null;
+
+		if (mayAssignBatches && batchesLoaded) {
+
+			// A batch of another department cannot stay linked once the department above
+			// has changed: the server would refuse the link. One with no department yet
+			// is left as it was.
+			chosenBatches = new ArrayList<>();
+			for (EntityBatchDesc batch : batchOptions) {
+				if (batchIDs.contains(batch.batchID)
+						&& (batch.department == null || batch.department == chosenDept)) {
+					chosenBatches.add(batch.batchID);
+				}
+			}
+			for (long batchID : batchIDs) {
+				if (!chosenBatches.contains(batchID) && !isListed(batchID)) {
+					chosenBatches.add(batchID);
+				}
+			}
+		}
 
 		Runnable navigateBack = () -> Ui.onMain(this, () -> {
 			Navigation.findNavController(button).navigateUp();
@@ -549,6 +586,15 @@ public class FragmentAddCourse extends Fragment {
 		} else {
 			viewModel.addCourse(course, instructorIDs, chosenBatches, navigateBack);
 		}
+	}
+
+	private boolean isListed(long batchID) {
+		for (EntityBatchDesc batch : batchOptions) {
+			if (batch.batchID == batchID) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**

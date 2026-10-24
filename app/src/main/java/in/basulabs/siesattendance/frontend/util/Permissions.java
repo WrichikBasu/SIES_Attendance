@@ -8,8 +8,11 @@ import java.util.List;
 import java.util.Set;
 
 import in.basulabs.siesattendance.backend.AccountKind;
+import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
+import in.basulabs.siesattendance.backend.EntityProfessor;
+import in.basulabs.siesattendance.backend.sync.SyncClient;
 
 /**
  * What the signed-in account may change on this phone, and the one place that decides it.
@@ -65,15 +68,20 @@ public final class Permissions {
 		/** Adding a student, correcting one, or removing one from a roll. */
 		STUDENTS,
 
-		/** Adding a professor or correcting one. */
+		/**
+		 * Adding a professor or correcting one: the office's and an administrator's, and not a
+		 * professor's, not even a head's (V35).
+		 */
 		PROFESSORS,
 
 		/** Adding a course, correcting one, or marking one discontinued. */
 		COURSES,
 
 		/**
-		 * Making a batch, changing who is in it and which courses it is for, or removing it.
-		 * A professor's, whichever course it is for: see V22.
+		 * Making a batch, changing who is in it and which courses it is for, or removing it:
+		 * a professor's, or an administrator's. Which batches is {@link #mayKeepBatchesOf}'s
+		 * question, since a batch belongs to a department and only that department's own
+		 * professors keep it (V33).
 		 */
 		BATCHES,
 
@@ -150,17 +158,66 @@ public final class Permissions {
 		}
 
 		return switch (what) {
-			// The three roster screens, which are now one authority.
-			case STUDENTS, PROFESSORS, COURSES -> mayKeepARoll;
+			// The roster screens a head keeps for their department.
+			case STUDENTS, COURSES -> mayKeepARoll;
 
-			// Any professor, and only a professor: not the office, not an administrator.
-			// Unknown is permitted for the reason in the class notes.
-			case BATCHES -> who == null || who == AccountKind.PROFESSOR;
+			// The staff list is the office's: no professor changes another, or their own
+			// department. Unknown is permitted for the reason in the class notes.
+			case PROFESSORS -> who == null || admin || office;
+
+			// A professor or an administrator, not the office. Unknown is permitted for the
+			// reason in the class notes.
+			case BATCHES -> who == null || who == AccountKind.PROFESSOR || admin;
 
 			case NEW_SESSION -> admin;
 			case SESSIONS -> admin || office;
 			case IMPORT_STUDENTS -> who == null || who == AccountKind.PROFESSOR || mayKeepARoll;
 		};
+	}
+
+	/**
+	 * Whether this account may make, change or remove a batch of that department.
+	 * <p>
+	 * A professor of the department or an administrator, as {@code /me} reported them. A batch with no department yet is an administrator's alone to place. When nothing
+	 * was ever recorded, any professor may, for the reason in the class notes.
+	 *
+	 * @param keeps the departments {@code /me} last said this account keeps batches for, with
+	 *              {@link SyncClient#ANY_DEPARTMENT} alone for an administrator, or null when it
+	 *              never said
+	 */
+	public static boolean mayKeepBatchesOf(@Nullable AccountKind who, @Nullable Set<String> keeps,
+	                                       @Nullable Department department) {
+
+		if (who == AccountKind.STUDENT) {
+			return false;
+		}
+
+		if (keeps == null) {
+			return who == null || who == AccountKind.PROFESSOR;
+		}
+
+		return keeps.contains(SyncClient.ANY_DEPARTMENT)
+				|| (department != null && keeps.contains(department.name()));
+	}
+
+	/**
+	 * The departments this account may make a batch for, in the order to offer them: every
+	 * department for an administrator, and for anybody nothing was ever recorded about;
+	 * otherwise a professor's own, alone.
+	 */
+	@NonNull
+	public static List<Department> batchDepartments(@Nullable AccountKind who,
+	                                                @Nullable Set<String> keeps) {
+
+		List<Department> departments = new ArrayList<>();
+
+		for (Department department : Department.values()) {
+			if (keeps == null ? who != AccountKind.STUDENT
+					: mayKeepBatchesOf(who, keeps, department)) {
+				departments.add(department);
+			}
+		}
+		return departments;
 	}
 
 	/**
@@ -194,6 +251,67 @@ public final class Permissions {
 			}
 		}
 		return visible;
+	}
+
+	/**
+	 * The batches out of that list a professor browses: their own department's. Everybody else's list is returned as it is, as is a professor's when
+	 * {@code /me} never said which departments are theirs.
+	 * <p>
+	 * For the lists a professor looks through -- the batches tab, the filters -- and not for
+	 * the register. A professor who teaches another department's course takes its attendance
+	 * from that department's batches, which the server sends for exactly that, and the register
+	 * narrows to the course's department itself.
+	 *
+	 * @param keeps the departments {@code /me} last said this account keeps batches for
+	 */
+	@NonNull
+	public static List<EntityBatchDesc> ownDepartmentsBatches(@Nullable AccountKind who,
+	                                                          @Nullable Set<String> keeps,
+	                                                          @NonNull List<EntityBatchDesc> batches) {
+
+		if (who != AccountKind.PROFESSOR || keeps == null
+				|| keeps.contains(SyncClient.ANY_DEPARTMENT)) {
+			return batches;
+		}
+
+		List<EntityBatchDesc> own = new ArrayList<>();
+
+		for (EntityBatchDesc batch : batches) {
+			if (batch.department != null && keeps.contains(batch.department.name())) {
+				own.add(batch);
+			}
+		}
+		return own;
+	}
+
+	/**
+	 * The professors out of that list a professor is shown on the Professors tab: their own
+	 * department's (V35). The phone may hold others -- whoever coordinates or teaches a course
+	 * it holds -- and those stay for the course screens that name them. Everybody else's list
+	 * is returned as it is, as is a professor's when {@code /me} never said which department
+	 * is theirs.
+	 *
+	 * @param own the departments {@code /me} last said this account keeps batches for, which
+	 *            for a professor is their own department alone (V33)
+	 */
+	@NonNull
+	public static List<EntityProfessor> ownDepartmentsProfessors(
+			@Nullable AccountKind who, @Nullable Set<String> own,
+			@NonNull List<EntityProfessor> professors) {
+
+		if (who != AccountKind.PROFESSOR || own == null
+				|| own.contains(SyncClient.ANY_DEPARTMENT)) {
+			return professors;
+		}
+
+		List<EntityProfessor> colleagues = new ArrayList<>();
+
+		for (EntityProfessor professor : professors) {
+			if (professor.department != null && own.contains(professor.department.name())) {
+				colleagues.add(professor);
+			}
+		}
+		return colleagues;
 	}
 
 	/**

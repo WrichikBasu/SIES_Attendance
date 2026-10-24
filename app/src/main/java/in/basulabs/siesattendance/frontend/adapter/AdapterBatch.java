@@ -16,8 +16,8 @@ import in.basulabs.siesattendance.backend.EntityBatchDesc;
 /**
  * The batch list, one row per batch in the chosen session.
  * <p>
- * The description is optional, so the second line falls back to the session on its own rather
- * than leaving a dangling separator.
+ * The second line leads with the batch's department, then its session and its description.
+ * The description is optional, so it is left off rather than leaving a dangling separator.
  */
 public class AdapterBatch extends ListAdapter<EntityBatchDesc, AdapterBatch.Holder> {
 
@@ -42,7 +42,9 @@ public class AdapterBatch extends ListAdapter<EntityBatchDesc, AdapterBatch.Hold
 				public boolean areContentsTheSame(@NonNull EntityBatchDesc a,
 				                                  @NonNull EntityBatchDesc b) {
 					return a.batchName.equals(b.batchName)
-							&& a.academicYear == b.academicYear;
+							&& a.academicYear == b.academicYear
+							&& a.department == b.department
+							&& java.util.Objects.equals(a.batchDesc, b.batchDesc);
 				}
 			};
 
@@ -76,9 +78,13 @@ public class AdapterBatch extends ListAdapter<EntityBatchDesc, AdapterBatch.Hold
 		void bind(@NonNull EntityBatchDesc batch) {
 			name.setText(batch.batchName);
 			String session = batch.academicYear + "-" + ((batch.academicYear + 1) % 100);
+			String department = batch.department == null
+					? itemView.getContext().getString(R.string.label_batch_no_department)
+					: batch.department.toString();
+			String line = department + " · " + session;
 			details.setText(batch.batchDesc == null || batch.batchDesc.isEmpty()
-					? session
-					: session + " · " + batch.batchDesc);
+					? line
+					: line + " · " + batch.batchDesc);
 
 			itemView.setOnClickListener(v -> {
 				if (listener != null) {

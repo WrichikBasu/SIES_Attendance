@@ -62,7 +62,19 @@ public final class MeController {
 	                  boolean mustRotate, boolean mayManageAccounts, boolean mayKeepARoll,
 	                  @NonNull String auditEntries, @NonNull List<Held> roles,
 	                  @NonNull List<Delegates.Delegation> represents,
-	                  @NonNull Imports imports) {
+	                  @NonNull Imports imports, @NonNull Batches batches) {
+	}
+
+	/**
+	 * Whose batches this account keeps (V33), so the phone offers a batch's editor only to
+	 * somebody who may save it, and files a new one under the right department.
+	 *
+	 * @param anyDepartment true for an administrator, who keeps every department's batches
+	 * @param departments   otherwise, a professor's own department alone: heading another
+	 *                      does not make its batches theirs. Empty for everybody else, who
+	 *                      reads batches and keeps none
+	 */
+	public record Batches(boolean anyDepartment, @NonNull List<String> departments) {
 	}
 
 	/**
@@ -140,6 +152,8 @@ public final class MeController {
 				}
 			}
 
+			Imports imports = imports(connection, roles);
+
 			return new Who(accountId,
 					// name(), not toString(): AccountKind's toString is the human label
 					// ("Professor"), and what crosses a wire in this system is always the
@@ -155,13 +169,16 @@ public final class MeController {
 					// signed in and narrowed what each of them sees, so "may you read it" is
 					// no longer the useful question. "Is there anything in it for you" is.
 					Long.toString(counted(connection, "SELECT audit_size() AS total")),
-					roles, represents, imports(connection, roles));
+					roles, represents, imports,
+					new Batches(asked(connection, "SELECT actor_has_role('ADMIN')"),
+							ownDepartment(connection)));
 		});
 	}
 
+	/** A professor's own department, as a list of one; empty for anybody who is not one. */
 	@NonNull
-	private static Imports imports(@NonNull java.sql.Connection connection,
-	                               @NonNull List<Held> roles) throws SQLException {
+	private static List<String> ownDepartment(@NonNull java.sql.Connection connection)
+			throws SQLException {
 
 		List<String> departments = new ArrayList<>();
 
@@ -173,6 +190,15 @@ public final class MeController {
 				departments.add(results.getString(1));
 			}
 		}
+		return departments;
+	}
+
+	@NonNull
+	private static Imports imports(@NonNull java.sql.Connection connection,
+	                               @NonNull List<Held> roles) throws SQLException {
+
+		// A professor's own department and the ones they head.
+		List<String> departments = ownDepartment(connection);
 
 		for (Held role : roles) {
 			if ("HOD".equals(role.role()) && role.department() != null

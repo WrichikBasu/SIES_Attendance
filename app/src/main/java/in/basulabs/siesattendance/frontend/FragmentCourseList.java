@@ -99,13 +99,13 @@ public class FragmentCourseList extends Fragment {
 	}
 
 	/**
-	 * The course, who teaches it and its batches. Nothing to change, except that a professor may
-	 * assign batches to it: any professor may, for any course, whether or not they may edit the
-	 * course itself.
+	 * The course, who teaches it and its batches. Nothing to change, except that a professor of
+	 * its department may assign the department's batches to it, whether or not they may edit
+	 * the course itself.
 	 */
 	private void showReadOnly(@NonNull EntityCourse course) {
 
-		Runnable assign = viewModel.may(Permissions.Capability.BATCHES)
+		Runnable assign = viewModel.mayKeepBatchesOf(course.offeringDepartment)
 				? () -> assignBatches(course) : null;
 
 		viewModel.loadCourseDetails(course.courseID, (loaded, instructors, batches) ->
@@ -114,7 +114,8 @@ public class FragmentCourseList extends Fragment {
 	}
 
 	private void assignBatches(@NonNull EntityCourse course) {
-		viewModel.loadCourseBatchOptions(course.courseID, (options, linked) ->
+		viewModel.loadCourseBatchOptions(course.courseID, course.offeringDepartment,
+				(options, linked) ->
 				Ui.onMain(this, () -> BatchPicker.show(requireContext(), options,
 						new java.util.LinkedHashSet<>(linked), picked ->
 								viewModel.setCourseBatches(course.courseID,

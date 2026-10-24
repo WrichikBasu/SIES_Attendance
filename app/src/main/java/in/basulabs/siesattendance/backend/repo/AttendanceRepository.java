@@ -184,7 +184,8 @@ public interface AttendanceRepository {
 	@NonNull
 	List<StudentWithYear> studentsInBatchSync(long batchID);
 
-	void updateBatch(long batchID, String name, String description, int academicYear,
+	void updateBatch(long batchID, String name, String description,
+	                 @Nullable Department department, int academicYear,
 	                 @NonNull List<Long> studentIDs);
 
 	@NonNull

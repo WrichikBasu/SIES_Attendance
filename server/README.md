@@ -186,11 +186,12 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 | add or correct students and enrolments | — | their own department | the department's | ✓ | — | ✓ |
 | remove students | — | — | the department's | ✓ | — | ✓ |
 | add or correct a professor | — | — | — | ✓ | — | ✓ |
+| read professors | those teaching their courses | their own department's, and those teaching courses they read | the same, and the departments they head | all | all | all |
 | add or withdraw a course | — | — | the department's | ✓ | — | ✓ |
 | open a new academic session | — | — | — | — | — | ✓ |
 | correct or remove a session | — | — | — | ✓ | — | ✓ |
-| create, edit, delete batches; link them to courses | — | any course | any course | — | — | — |
-| read batches | those linked to their courses | all | all | all | all | all |
+| create, edit, delete batches; link them to courses | — | their own department's | their own department's | — | — | ✓ |
+| read batches | those linked to their courses | their own department's, and those their courses use | the department's, and those their courses use | all | all | all |
 | import students (CSV) | — | their own department | the department's | ✓ | — | ✓ |
 | import attendance (CSV) | — | their courses | the department's | — | — | ✓ |
 | appoint a CR | — | their courses | the department's | — | — | ✓ |
@@ -267,6 +268,9 @@ DELETE /accounts/{id}                      delete an account that has never been
 POST /backup/import?label=&node=&dryRun=   import a .siesbak, the file as the body (admin)
 POST /backup/export                        {"password"}: download everything a phone holds (admin)
 GET  /progress/{id}                        how far your import or export sent with X-Progress-Id has got
+
+GET  /batches/unplaced                     batches with no department yet, and their courses and majors (admin)
+POST /batches/{id}/department              {"department"}: place one, unlinking other departments' courses (admin)
 
 GET  /courses/{id}/roll?academicYear=     a course's roll, for appointing a CR
 POST /courses/{id}/representatives        appoint a CR

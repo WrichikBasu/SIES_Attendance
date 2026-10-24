@@ -34,7 +34,9 @@ public final class ReadOnlyDetails {
 	                             @NonNull List<StudentWithYear> members,
 	                             @NonNull List<EntityCourse> courses) {
 
-		StringBuilder text = new StringBuilder();
+		StringBuilder text = new StringBuilder(batch.department == null
+				? context.getString(R.string.label_batch_no_department)
+				: batch.department.toString()).append("\n\n");
 
 		if (batch.batchDesc != null && !batch.batchDesc.isBlank()) {
 			text.append(batch.batchDesc).append("\n\n");
@@ -62,8 +64,8 @@ public final class ReadOnlyDetails {
 
 	/**
 	 * @param onAssignBatches what the Assign batches button does, or null for no button: a
-	 *                        professor may link batches to a course they cannot edit, and
-	 *                        nobody else may
+	 *                        professor of the course's department may link its batches to a
+	 *                        course they cannot edit, and nobody else may
 	 */
 	public static void showCourse(@NonNull Context context, @NonNull EntityCourse course,
 	                              @NonNull List<EntityProfessor> instructors,
@@ -106,6 +108,40 @@ public final class ReadOnlyDetails {
 					(d, w) -> onAssignBatches.run());
 		}
 		dialog.show();
+	}
+
+	/** A professor, their courses and the batches those courses are taught to. */
+	public static void showProfessor(@NonNull Context context, @NonNull EntityProfessor professor,
+	                                 @NonNull List<EntityCourse> courses,
+	                                 @NonNull List<EntityBatchDesc> batches) {
+
+		StringBuilder text = new StringBuilder(professor.designation).append(" · ")
+				.append(professor.department).append('\n').append(professor.email);
+
+		text.append("\n\n").append(context.getString(R.string.section_professor_courses));
+
+		if (courses.isEmpty()) {
+			text.append('\n').append(context.getString(R.string.label_no_courses_taught));
+		}
+		for (EntityCourse course : courses) {
+			text.append('\n').append(course.courseCode).append(" · ").append(course.courseTopic);
+			if (course.dateDiscontinued != null) {
+				text.append(" (").append(context.getString(R.string.label_discontinued))
+						.append(')');
+			}
+		}
+
+		List<String> batchNames = new ArrayList<>();
+		for (EntityBatchDesc batch : batches) {
+			batchNames.add(BatchPicker.describe(batch));
+		}
+
+		text.append("\n\n").append(context.getString(R.string.tab_batches)).append('\n')
+				.append(batchNames.isEmpty()
+						? context.getString(R.string.label_no_linked_batches)
+						: String.join(", ", batchNames));
+
+		show(context, professor.name, text);
 	}
 
 	private static void show(@NonNull Context context, @NonNull String title,

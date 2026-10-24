@@ -90,6 +90,8 @@ public final class DeviceIdentity {
 
 	private static final String IMPORT_DEPARTMENTS = "importDepartments";
 
+	private static final String BATCH_DEPARTMENTS = "batchDepartments";
+
 	private static final String REGISTRATION_PENDING = "registrationPending";
 
 	/** How many refusals are kept. Enough to read; not a log. */
@@ -377,6 +379,10 @@ public final class DeviceIdentity {
 		if (me.importDepartments() != null) {
 			recordImportDepartments(context, me.importDepartments());
 		}
+
+		if (me.batchDepartments() != null) {
+			recordBatchDepartments(context, me.batchDepartments());
+		}
 	}
 
 	/**
@@ -386,8 +392,35 @@ public final class DeviceIdentity {
 	 */
 	@Nullable
 	public static Set<String> importDepartments(@NonNull Context context) {
+		return departmentsAt(context, IMPORT_DEPARTMENTS);
+	}
 
-		String stored = prefs(context).getString(IMPORT_DEPARTMENTS, null);
+	/** Null forgets them, as signing in again and signing out do. */
+	public static void recordImportDepartments(@NonNull Context context,
+	                                           @Nullable Collection<String> departments) {
+		recordDepartmentsAt(context, IMPORT_DEPARTMENTS, departments);
+	}
+
+	/**
+	 * The departments whose batches this account keeps, as {@code /me} last said: a professor's
+	 * own, alone (V33). Null when it has never said, and
+	 * {@link SyncClient#ANY_DEPARTMENT} alone for an administrator.
+	 */
+	@Nullable
+	public static Set<String> batchDepartments(@NonNull Context context) {
+		return departmentsAt(context, BATCH_DEPARTMENTS);
+	}
+
+	/** Null forgets them, as signing in again and signing out do. */
+	public static void recordBatchDepartments(@NonNull Context context,
+	                                          @Nullable Collection<String> departments) {
+		recordDepartmentsAt(context, BATCH_DEPARTMENTS, departments);
+	}
+
+	@Nullable
+	private static Set<String> departmentsAt(@NonNull Context context, @NonNull String key) {
+
+		String stored = prefs(context).getString(key, null);
 
 		if (stored == null) {
 			return null;
@@ -402,16 +435,14 @@ public final class DeviceIdentity {
 		return departments;
 	}
 
-	/** Null forgets them, as signing in again and signing out do. */
-	public static void recordImportDepartments(@NonNull Context context,
-	                                           @Nullable Collection<String> departments) {
+	private static void recordDepartmentsAt(@NonNull Context context, @NonNull String key,
+	                                        @Nullable Collection<String> departments) {
 
 		if (departments == null) {
-			prefs(context).edit().remove(IMPORT_DEPARTMENTS).apply();
+			prefs(context).edit().remove(key).apply();
 			return;
 		}
-		prefs(context).edit().putString(IMPORT_DEPARTMENTS, String.join(",", departments))
-				.apply();
+		prefs(context).edit().putString(key, String.join(",", departments)).apply();
 	}
 
 	/**

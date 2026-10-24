@@ -128,6 +128,7 @@ public final class SignOut {
 		DeviceIdentity.recordRepresents(context, null);
 		DeviceIdentity.recordRoles(context, null);
 		DeviceIdentity.recordImportDepartments(context, null);
+		DeviceIdentity.recordBatchDepartments(context, null);
 		DeviceIdentity.recordLastRun(context, 0, 0);
 		DeviceIdentity.clearRefusals(context);
 	}

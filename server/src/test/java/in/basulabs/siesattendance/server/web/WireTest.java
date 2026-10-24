@@ -818,8 +818,8 @@ class WireTest {
 
 		// A batch for the class, which every imported lecture is filed against.
 		postgres.asSuperuser("""
-				INSERT INTO batch_desc (batch_id, batch_name, academic_year)
-				    VALUES (5101, 'CS-101 class', 2025);
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year, department)
+				    VALUES (5101, 'CS-101 class', 2025, 'COMPUTER_SCIENCE');
 				INSERT INTO batch_student_map (batch_id, student_id, academic_year)
 				    VALUES (5101, 2001, 2025);
 				""");
@@ -1376,12 +1376,14 @@ class WireTest {
 				+ "JOIN batch_desc b USING (batch_id) "
 				+ "WHERE b.batch_name = 'FY CS Full class' AND m.course_id = 3001"));
 
-		// And outside an import, an administrator still cannot make one.
-		try (Connection connection = postgres.actingAs(accountAdmin, null, null)) {
+		// And outside an import, the office still cannot make one. An administrator may since
+		// V31, which gave a batch a department and its keeping to that department and to
+		// administrators.
+		try (Connection connection = postgres.actingAs(accountOffice, null, null)) {
 			try (Statement statement = connection.createStatement()) {
-				statement.execute("INSERT INTO batch_desc (batch_id, batch_name, academic_year) "
-						+ "VALUES (5202, 'Not an import', 2025)");
-				fail("an administrator wrote a batch outside an import");
+				statement.execute("INSERT INTO batch_desc (batch_id, batch_name, academic_year, "
+						+ "department) VALUES (5202, 'Not an import', 2025, 'COMPUTER_SCIENCE')");
+				fail("the office wrote a batch outside an import");
 			} catch (SQLException refused) {
 				assertTrue(refused.getMessage().contains("row-level security"),
 						refused.getMessage());

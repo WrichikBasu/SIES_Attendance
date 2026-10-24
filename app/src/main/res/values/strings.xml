@@ -72,6 +72,15 @@
     <string name="hint_notes">Notes (optional)</string>
     <string name="hint_batch_name">Batch name</string>
     <string name="hint_batch_description">Description (optional)</string>
+    <string name="hint_batch_department">Department</string>
+    <string name="section_professor_courses">Courses</string>
+    <string name="label_no_courses_taught">No course on this phone</string>
+    <string name="helper_batch_department">Whose batch this is. Its students may come from any department.</string>
+    <string name="helper_no_department_courses">No course of this department to link.</string>
+    <string name="message_batch_courses_dropped">Unlinked %1$s: a batch is linked only to its own department\'s courses.</string>
+    <string name="label_batch_no_department">No department yet</string>
+    <string name="not_permitted_batch">This is %1$s\'s batch. Only its professors and head can change it.</string>
+    <string name="not_permitted_batch_unplaced">This batch has no department yet. An administrator sets it on the web console; until then it cannot be changed.</string>
     <string name="hint_filter_date">Pick a date</string>
 
     <!-- Actions -->

@@ -27,7 +27,9 @@ local attendance register.
     departments, division)
   - professors
   - courses: type, offering department, coordinator and co-instructors
-  - batches: named groups of students, linked to the courses they sit
+  - batches: named groups of students, linked to the courses they sit. Each batch belongs to a
+    department and is linked only to that department's courses. Its students may come from any
+    department
 - **Rolls.** A course with batches linked for the session takes its roll from those batches.
   Otherwise the roll comes from the course type: major courses take the offering department's
   majors, open electives take students whose OE department it is, and so on.

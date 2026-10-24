@@ -111,7 +111,8 @@ public abstract class MainDatabase extends RoomDatabase {
 						Migrations.MIGRATION_6_7, Migrations.MIGRATION_7_8,
 						Migrations.MIGRATION_8_9, Migrations.MIGRATION_9_10,
 						Migrations.MIGRATION_10_11,
-						Migrations.MIGRATION_11_12)
+						Migrations.MIGRATION_11_12,
+						Migrations.MIGRATION_12_13)
 				.addCallback(PRIME_IDS)
 				.addCallback(INSTALL_SYNC_TRIGGERS);
 	}

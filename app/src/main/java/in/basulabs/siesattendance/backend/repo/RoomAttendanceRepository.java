@@ -269,9 +269,11 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	}
 
 	@Override
-	public void updateBatch(long batchID, String name, String description, int academicYear,
+	public void updateBatch(long batchID, String name, String description,
+	                        @Nullable Department department, int academicYear,
 	                        @NonNull List<Long> studentIDs) {
-		db.daoBatch().updateBatch(batchID, name, description, academicYear, studentIDs);
+		db.daoBatch().updateBatch(batchID, name, description, department, academicYear,
+				studentIDs);
 	}
 
 	@Override

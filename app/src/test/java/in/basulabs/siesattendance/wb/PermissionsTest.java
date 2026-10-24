@@ -24,6 +24,7 @@ import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
+import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.frontend.util.Permissions;
 
@@ -51,8 +52,7 @@ public class PermissionsTest {
 
 	/** The capabilities that are the roll, and so follow the server's mayKeepARoll answer. */
 	private static final List<Permissions.Capability> ROSTER = List.of(
-			Permissions.Capability.STUDENTS, Permissions.Capability.PROFESSORS,
-			Permissions.Capability.COURSES);
+			Permissions.Capability.STUDENTS, Permissions.Capability.COURSES);
 
 	@Test
 	public void aStudentChangesNoneOfTheCollegesRecords() {
@@ -109,7 +109,7 @@ public class PermissionsTest {
 	}
 
 	private static EntityBatchDesc batch(long id, String name) {
-		EntityBatchDesc batch = new EntityBatchDesc(name, 2026, null);
+		EntityBatchDesc batch = new EntityBatchDesc(name, 2026, null, null);
 		batch.batchID = id;
 		return batch;
 	}
@@ -162,7 +162,7 @@ public class PermissionsTest {
 	}
 
 	@Test
-	public void batchesAreAProfessorsAndNobodyElses() {
+	public void batchesAreAProfessorsOrAnAdministratorsAndNobodyElses() {
 
 		Permissions.Capability batches = Permissions.Capability.BATCHES;
 
@@ -170,10 +170,58 @@ public class PermissionsTest {
 				Permissions.may(AccountKind.PROFESSOR, false, batches));
 		assertTrue(Permissions.may(AccountKind.PROFESSOR, true, batches));
 
+		assertTrue("an administrator, since V31",
+				Permissions.may(AccountKind.STAFF, true, Set.of("ADMIN"), batches));
+
 		assertFalse("not a class representative",
 				Permissions.may(AccountKind.STUDENT, true, batches));
-		assertFalse("and not the office or an administrator, who keep the roll but not batches",
-				Permissions.may(AccountKind.STAFF, true, batches));
+		assertFalse("and not the office, who keeps the roll but not batches",
+				Permissions.may(AccountKind.STAFF, true, Set.of("OFFICE"), batches));
+	}
+
+	@Test
+	public void aProfessorBrowsesTheirOwnDepartmentsBatches() {
+
+		EntityBatchDesc cs = batch(5001, "CS A");
+		cs.department = Department.COMPUTER_SCIENCE;
+		EntityBatchDesc chem = batch(5002, "CH A");
+		chem.department = Department.CHEMISTRY;
+		EntityBatchDesc nobody = batch(5003, "Unplaced");
+
+		List<EntityBatchDesc> all = List.of(cs, chem, nobody);
+
+		assertEquals(List.of("CS A"), names(Permissions.ownDepartmentsBatches(
+				AccountKind.PROFESSOR, Set.of("COMPUTER_SCIENCE"), all)));
+		assertEquals("an administrator browses them all", List.of("CS A", "CH A", "Unplaced"),
+				names(Permissions.ownDepartmentsBatches(AccountKind.STAFF, Set.of("*"), all)));
+		assertEquals("and so does an install that never asked", 3,
+				Permissions.ownDepartmentsBatches(AccountKind.PROFESSOR, null, all).size());
+	}
+
+	@Test
+	public void aBatchIsKeptByItsOwnDepartment() {
+
+		Set<String> cs = Set.of("COMPUTER_SCIENCE");
+
+		assertTrue(Permissions.mayKeepBatchesOf(AccountKind.PROFESSOR, cs,
+				Department.COMPUTER_SCIENCE));
+		assertFalse("another department's batch is read, not changed",
+				Permissions.mayKeepBatchesOf(AccountKind.PROFESSOR, cs, Department.CHEMISTRY));
+		assertFalse("and one with no department is an administrator's to place",
+				Permissions.mayKeepBatchesOf(AccountKind.PROFESSOR, cs, null));
+
+		Set<String> any = Set.of("*");
+		assertTrue(Permissions.mayKeepBatchesOf(AccountKind.STAFF, any, Department.CHEMISTRY));
+		assertTrue(Permissions.mayKeepBatchesOf(AccountKind.STAFF, any, null));
+
+		assertEquals("a professor makes batches for their own department alone",
+				List.of(Department.COMPUTER_SCIENCE),
+				Permissions.batchDepartments(AccountKind.PROFESSOR, cs));
+
+		assertTrue("an install that never asked is permitted, as everywhere",
+				Permissions.mayKeepBatchesOf(AccountKind.PROFESSOR, null, Department.CHEMISTRY));
+		assertFalse(Permissions.mayKeepBatchesOf(AccountKind.STUDENT, any,
+				Department.CHEMISTRY));
 	}
 
 	@Test
@@ -210,6 +258,36 @@ public class PermissionsTest {
 				Permissions.may(AccountKind.STAFF, false, importing));
 		assertFalse("never a student, CR or not",
 				Permissions.may(AccountKind.STUDENT, true, importing));
+	}
+
+	@Test
+	public void theStaffListIsTheOfficesAndNoProfessors() {
+
+		Permissions.Capability professors = Permissions.Capability.PROFESSORS;
+
+		assertFalse("not a head of department, who keeps a roll (V35)",
+				Permissions.may(AccountKind.PROFESSOR, true, Set.of("HOD"), professors));
+		assertFalse(Permissions.may(AccountKind.PROFESSOR, false, Set.of(), professors));
+		assertTrue("the office", Permissions.may(AccountKind.STAFF, true, Set.of("OFFICE"),
+				professors));
+		assertTrue("an administrator", Permissions.may(AccountKind.STAFF, true,
+				Set.of("ADMIN"), professors));
+		assertFalse("nor an auditor", Permissions.may(AccountKind.STAFF, false,
+				Set.of("AUDITOR"), professors));
+	}
+
+	@Test
+	public void aProfessorSeesTheirOwnDepartmentsProfessors() {
+
+		EntityProfessor cs = new EntityProfessor("A CS", "a@sies.edu.in",
+				Department.COMPUTER_SCIENCE, "Professor");
+		EntityProfessor chem = new EntityProfessor("B CH", "b@sies.edu.in",
+				Department.CHEMISTRY, "Professor");
+
+		assertEquals(List.of(cs), Permissions.ownDepartmentsProfessors(AccountKind.PROFESSOR,
+				Set.of("COMPUTER_SCIENCE"), List.of(cs, chem)));
+		assertEquals("the office sees them all", 2, Permissions.ownDepartmentsProfessors(
+				AccountKind.STAFF, Set.of(), List.of(cs, chem)).size());
 	}
 
 	@Test

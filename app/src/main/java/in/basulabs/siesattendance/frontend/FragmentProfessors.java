@@ -19,11 +19,15 @@ import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.frontend.adapter.AdapterProfessor;
 import in.basulabs.siesattendance.frontend.util.Permissions;
+import in.basulabs.siesattendance.frontend.util.ReadOnlyDetails;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
  * The professor list, with a search-free layout since the number of staff stays small enough to
- * scroll. Adding and editing both route to {@link FragmentAddProfessor}.
+ * scroll. A professor sees their own department's colleagues; tapping one shows their courses
+ * and those courses' batches. The office and an administrator, who keep the staff list, add and
+ * correct professors in {@link FragmentAddProfessor} instead.
  */
 public class FragmentProfessors extends Fragment {
 
@@ -56,8 +60,12 @@ public class FragmentProfessors extends Fragment {
 			@Override
 			public void onEdit(EntityProfessor professor) {
 
+				// No professor changes another, not even a head (V35): they are shown what the
+				// colleague teaches instead.
 				if (!viewModel.may(Permissions.Capability.PROFESSORS)) {
-					viewModel.sayNotPermitted();
+					viewModel.loadProfessorDetails(professor.profID, (loaded, courses, batches) ->
+							Ui.onMain(FragmentProfessors.this, () -> ReadOnlyDetails.showProfessor(
+									requireContext(), loaded, courses, batches)));
 					return;
 				}
 

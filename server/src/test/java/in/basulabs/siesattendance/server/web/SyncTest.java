@@ -456,6 +456,47 @@ class SyncTest {
 	}
 
 	@Test
+	void aProfessorPushesABatchOfTheirDepartmentWithAnotherDepartmentsStudent() throws Exception {
+
+		// R RAO, a CS major in BSc_unaided, takes Chemistry as an open elective. No Chemistry
+		// course reaches her by the rules -- it is BSc -- so the Chemistry professor reads her
+		// only as one of Chemistry's own open-elective students (V30).
+		postgres.asSuperuser("UPDATE student_year SET oe_dept = 'CHEMISTRY' "
+				+ "WHERE student_id = 2001");
+
+		Phone phone = signInWithAPhone("b.chem@sies.edu.in");
+		long batchID = phone.key(620);
+
+		Map<String, Object> batch = new LinkedHashMap<>();
+		batch.put("batchID", batchID);
+		batch.put("batchName", "Chemistry OE");
+		batch.put("batchDesc", null);
+		batch.put("academicYear", 2025);
+		batch.put("department", "CHEMISTRY");
+
+		Map<String, Object> member = new LinkedHashMap<>();
+		member.put("batchID", batchID);
+		member.put("studentID", 2001L);
+		member.put("academicYear", 2025);
+
+		Map<String, Object> link = new LinkedHashMap<>();
+		link.put("courseID", 3002L);
+		link.put("batchID", batchID);
+
+		// Every push is an upsert, which PostgreSQL also holds to the read policies: V34 is
+		// what lets a batch, and its members, be read before anything points at them.
+		Reply pushed = push(phone, List.of(
+				intent("batch_desc", List.of(batchID), "UPSERT", batch),
+				intent("batch_student_map", List.of(batchID, 2001L, 2025L), "UPSERT", member),
+				intent("course_batch_map", List.of(3002L, batchID), "UPSERT", link)));
+
+		assertEquals(200, pushed.status(), pushed::toString);
+		assertEquals(3, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertEquals(1, count("SELECT count(*) FROM batch_student_map WHERE batch_id = "
+				+ batchID));
+	}
+
+	@Test
 	void theOfficeMayPushTheRoll() throws Exception {
 
 		Phone office = signInWithAPhone("office@sies.edu.in");
@@ -1002,10 +1043,9 @@ class SyncTest {
 		// sent: the session, the staff list, the one student it may see, that student's
 		// enrolment, its own course, and then the lecture and the mark.
 		assertEquals(1, changesFor(pulled.body(), "academic_years").size());
-		// Three: the two who teach and the head of department, who is a professors row like
-		// any other. The staff list is not filtered by who teaches what -- a phone picking a
-		// coordinator needs the whole of it.
-		assertEquals(3, changesFor(pulled.body(), "professors").size());
+		// Two: the professors of Computer Science, the head among them. Chemistry's professor
+		// teaches nothing this professor reads, so does not come (V35).
+		assertEquals(2, changesFor(pulled.body(), "professors").size());
 		assertEquals(1, changesFor(pulled.body(), "courses").size(), pulled::toString);
 		assertEquals(1, changesFor(pulled.body(), "students").size());
 		assertEquals(1, changesFor(pulled.body(), "student_year").size());
@@ -1061,7 +1101,7 @@ class SyncTest {
 			}
 		}
 
-		assertEquals(10, seen.size(), "every row, across the pages: " + seen);
+		assertEquals(9, seen.size(), "every row, across the pages: " + seen);
 		assertEquals(seen.size(), new java.util.LinkedHashSet<>(seen).size(),
 				"and each of them once: " + seen);
 

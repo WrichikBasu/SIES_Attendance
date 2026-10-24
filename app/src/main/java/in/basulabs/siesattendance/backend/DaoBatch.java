@@ -127,9 +127,10 @@ public abstract class DaoBatch {
 	@Query("DELETE FROM batch_desc WHERE batchID = :batchID")
 	public abstract void deleteBatchRow(long batchID);
 
-	@Query("UPDATE batch_desc SET batchName = :name, batchDesc = :description " +
-			"WHERE batchID = :batchID")
-	public abstract void renameBatch(long batchID, String name, String description);
+	@Query("UPDATE batch_desc SET batchName = :name, batchDesc = :description, " +
+			"department = :department WHERE batchID = :batchID")
+	public abstract void renameBatch(long batchID, String name, String description,
+	                                 Department department);
 
 	/**
 	 * The IDs of a batch's members, for pre-ticking the student list when a batch is opened for
@@ -147,10 +148,10 @@ public abstract class DaoBatch {
 	 * avoids having to work out which students were added and which removed.
 	 */
 	@Transaction
-	public void updateBatch(long batchID, String name, String description, int academicYear,
-	                        List<Long> studentIDs) {
+	public void updateBatch(long batchID, String name, String description,
+	                        Department department, int academicYear, List<Long> studentIDs) {
 
-		renameBatch(batchID, name, description);
+		renameBatch(batchID, name, description, department);
 		clearMembers(batchID);
 
 		for (long studentID : studentIDs) {

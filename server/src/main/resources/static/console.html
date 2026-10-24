@@ -254,6 +254,22 @@
             <button id="create">Create</button>
         </section>
 
+        <section id="unplacedCard" hidden>
+            <h2>Batches without a department</h2>
+            <p class="note">Every batch now belongs to a department, and only that department's
+                professors and head can change it. These ones could not be placed from their
+                courses or their students, so until you choose, only an administrator can
+                change them. Choosing a department unlinks the batch from other departments'
+                courses.</p>
+            <div class="scroll"><table>
+                <thead><tr>
+                    <th>Batch</th><th>Session</th><th>Students</th><th>Linked courses</th>
+                    <th>Students' majors</th><th>Department</th>
+                </tr></thead>
+                <tbody id="unplacedRows"></tbody>
+            </table></div>
+        </section>
+
         <section id="listCard">
             <h2>Accounts</h2>
             <div class="scroll"><table>
@@ -859,6 +875,11 @@ async function refresh(quietly) {
         if (panel === "accounts") {
             await loadOptions();
             await loadAccounts();
+            if (!quietly) {
+                // Not on the poll: rebuilding the table would reset a department somebody
+                // is in the middle of choosing.
+                await loadUnplaced();
+            }
         } else if (panel === "data") {
             await loadTables(!quietly);
         } else if (panel === "reps") {
@@ -1353,6 +1374,85 @@ async function setDisabled(account, disabled) {
         say(account.displayName + "'s account is " + (disabled ? "disabled." : "enabled again."),
             true);
         await loadAccounts();
+
+    } catch (e) {
+        say(e.message, false);
+    }
+}
+
+// ── Accounts: batches without a department ───────────────────────────
+
+/** The batches V31 could not place, each with a department picker. Hidden when there are none. */
+async function loadUnplaced() {
+
+    const batches = await api("/batches/unplaced");
+    const rows = $("unplacedRows");
+    rows.textContent = "";
+    $("unplacedCard").hidden = batches.length === 0;
+
+    const departments = options.departments.map((d) =>
+        typeof d === "string" ? {value: d, label: d} : d);
+
+    batches.forEach((batch) => {
+
+        const row = document.createElement("tr");
+
+        const cell = (value) => {
+            const td = document.createElement("td");
+            td.textContent = value;
+            row.appendChild(td);
+            return td;
+        };
+
+        cell(batch.batchName + (batch.batchDesc ? " · " + batch.batchDesc : ""));
+        cell(batch.academicYear + "–" + String((batch.academicYear + 1) % 100).padStart(2, "0"));
+        cell(batch.members);
+        cell(batch.links.length === 0 ? "none"
+            : batch.links.map((link) => link.courseCode + " (" + link.departmentLabel + ")")
+                .join(", "));
+        cell(batch.majors.length === 0 ? "none" : batch.majors.join(", "));
+
+        const choose = document.createElement("select");
+        fill(choose, [""].concat(departments.map((d) => d.value)),
+            ["Choose…"].concat(departments.map((d) => d.label)));
+
+        const place = document.createElement("button");
+        place.textContent = "Set";
+        place.addEventListener("click", () => placeBatch(batch, choose.value));
+
+        const actions = cell("");
+        actions.className = "actions";
+        actions.append(choose, place);
+
+        rows.appendChild(row);
+    });
+}
+
+async function placeBatch(batch, department) {
+
+    clearSay();
+
+    if (!department) {
+        say("Choose the department " + batch.batchName + " belongs to.", false);
+        return;
+    }
+
+    const leaving = batch.links.filter((link) => link.department !== department);
+    const label = departmentLabel(department);
+
+    if (!confirm("Make " + batch.batchName + " a batch of " + label + "?"
+            + (leaving.length === 0 ? ""
+                : " It will be unlinked from "
+                + leaving.map((link) => link.courseCode).join(", ")
+                + ", which are other departments' courses."))) {
+        return;
+    }
+
+    try {
+        await request("POST", "/batches/" + batch.batchId + "/department",
+            {department: department});
+        say(batch.batchName + " is now a batch of " + label + ".", true);
+        await loadUnplaced();
 
     } catch (e) {
         say(e.message, false);

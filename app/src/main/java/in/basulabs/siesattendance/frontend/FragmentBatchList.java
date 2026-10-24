@@ -54,8 +54,9 @@ public class FragmentBatchList extends Fragment {
 			public void onEdit(EntityBatchDesc batch) {
 
 				// Somebody who may not change a batch may still read it: a class
-				// representative needs to know who is in the one they mark.
-				if (!viewModel.may(Permissions.Capability.BATCHES)) {
+				// representative needs to know who is in the one they mark, and a
+				// professor may read another department's.
+				if (!mayChange(batch)) {
 					showReadOnly(batch);
 					return;
 				}
@@ -69,7 +70,7 @@ public class FragmentBatchList extends Fragment {
 			@Override
 			public void onLongPress(EntityBatchDesc batch) {
 
-				if (!viewModel.may(Permissions.Capability.BATCHES)) {
+				if (!mayChange(batch)) {
 					showReadOnly(batch);
 					return;
 				}
@@ -96,6 +97,22 @@ public class FragmentBatchList extends Fragment {
 		}
 
 		viewModel.getBatches().observe(getViewLifecycleOwner(), adapter::submitList);
+	}
+
+	/**
+	 * Whether this account may change that batch: one of its department's professors, its head,
+	 * or an administrator. A professor who may keep batches but not this one is told whose it
+	 * is, since the editor they expected is not opening.
+	 */
+	private boolean mayChange(@NonNull EntityBatchDesc batch) {
+
+		if (viewModel.mayKeepBatchesOf(batch.department)) {
+			return true;
+		}
+		if (viewModel.may(Permissions.Capability.BATCHES)) {
+			viewModel.sayNotYourBatch(batch);
+		}
+		return false;
 	}
 
 	/** The batch, its members and its courses, with nothing to change. */

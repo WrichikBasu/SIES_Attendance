@@ -379,10 +379,20 @@ public class FragmentTakeAttendance extends Fragment {
 	 * of merely noting the absence.
 	 */
 	private void loadBatchOptions(@NonNull EntityCourse course) {
-		viewModel.loadBatchesForSession(list -> {
+		viewModel.loadBatchesForSession(all -> {
 			if (!isAdded()) {
 				return;
 			}
+
+			// The course's own department's batches (V31), and any nobody has placed yet,
+			// which could be anybody's.
+			List<EntityBatchDesc> list = new ArrayList<>();
+			for (EntityBatchDesc batch : all) {
+				if (batch.department == null || batch.department == course.offeringDepartment) {
+					list.add(batch);
+				}
+			}
+
 			Ui.onMain(this, () -> {
 				batches = list;
 

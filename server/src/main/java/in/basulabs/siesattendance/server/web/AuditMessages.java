@@ -245,9 +245,13 @@ final class AuditMessages {
 			case "batch_desc" -> {
 				String name = orElse(AuditNames.text(row, "batch_name"), "a batch");
 
+				String department = AuditNames.text(row, "department");
+
 				if (insert) {
-					yield "Created batch " + name + " for "
-							+ session(AuditNames.id(row, "academic_year"));
+					yield "Created batch " + name
+							+ (department == null ? ""
+							: " of " + label(Department::fromAny, department))
+							+ " for " + session(AuditNames.id(row, "academic_year"));
 				}
 				if (delete) {
 					yield "Deleted batch " + name;
@@ -255,6 +259,11 @@ final class AuditMessages {
 				if (changed(before, after, "batch_name")) {
 					yield "Renamed batch " + AuditNames.text(before, "batch_name") + " to "
 							+ AuditNames.text(after, "batch_name");
+				}
+				if (changed(before, after, "department")) {
+					yield department == null ? "Took batch " + name + " out of its department"
+							: "Made batch " + name + " a batch of "
+							+ label(Department::fromAny, department);
 				}
 				yield "Updated the description of batch " + name;
 			}

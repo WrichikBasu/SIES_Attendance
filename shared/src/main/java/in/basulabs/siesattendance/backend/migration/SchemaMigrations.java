@@ -43,7 +43,7 @@ public final class SchemaMigrations {
 	 * against. The app asserts this equals its own {@code DATABASE_VERSION}: if a migration is
 	 * added and this is not raised, that test is what says so.
 	 */
-	public static final int CURRENT_VERSION = 12;
+	public static final int CURRENT_VERSION = 13;
 
 	private SchemaMigrations() {
 	}
@@ -110,6 +110,7 @@ public final class SchemaMigrations {
 		steps.add(step(9, 10, SchemaMigrations::v9ToV10));
 		steps.add(step(10, 11, SchemaMigrations::v10ToV11));
 		steps.add(step(11, 12, SchemaMigrations::v11ToV12));
+		steps.add(step(12, 13, SchemaMigrations::v12ToV13));
 
 		return steps;
 	}
@@ -584,6 +585,57 @@ public final class SchemaMigrations {
 
 		db.exec("ALTER TABLE `student_year` ADD COLUMN `joinDate` INTEGER");
 		db.exec("ALTER TABLE `student_year` ADD COLUMN `leaveDate` INTEGER");
+	}
+
+	/**
+	 * The department a batch belongs to.
+	 * <p>
+	 * A nullable column, added in place, and then filled where the batch says which department
+	 * it is: the department of the courses it is linked to or was taught under, when that is
+	 * one; with no course at all, its members' major, when that is one. Anything else stays
+	 * null for an administrator to settle. This is the server's {@code batch_department_guess()}
+	 * (V31), translated, so a phone with no server and a backup an older phone wrote both
+	 * arrive at what the server would have.
+	 * <p>
+	 * The fill runs with {@code sync_state.applying} set, so the outbox triggers do not queue
+	 * it: it is a guess about rows the server already holds, and a professor pushing a guess
+	 * about another department's batch would only be refused. The watermark is forgotten for
+	 * the same reason, so a phone that syncs takes the server's answer, which may be an
+	 * administrator's rather than a guess, with its next pull.
+	 */
+	private static void v12ToV13(@NonNull SqliteDb db, @NonNull MigrationContext context) {
+
+		db.exec("ALTER TABLE `batch_desc` ADD COLUMN `department` TEXT");
+
+		db.exec("INSERT OR IGNORE INTO `sync_state` "
+				+ "(`id`, `applying`, `lastPullAt`, `lastPushAt`) VALUES (1, 0, 0, 0)");
+		db.exec("UPDATE `sync_state` SET `applying` = 1 WHERE `id` = 1");
+
+		String taught = "SELECT c.`offeringDepartment` AS dept "
+				+ "FROM `course_batch_map` cb "
+				+ "JOIN `courses` c ON c.`courseID` = cb.`courseID` "
+				+ "WHERE cb.`batchID` = `batch_desc`.`batchID` "
+				+ "UNION "
+				+ "SELECT c.`offeringDepartment` "
+				+ "FROM `lectures` l "
+				+ "JOIN `courses` c ON c.`courseID` = l.`courseID` "
+				+ "WHERE l.`batchID` = `batch_desc`.`batchID`";
+
+		String majors = "SELECT DISTINCT y.`majorDept` AS dept "
+				+ "FROM `batch_student_map` m "
+				+ "JOIN `student_year` y ON y.`studentID` = m.`studentID` "
+				+ "AND y.`academicYear` = m.`academicYear` "
+				+ "WHERE m.`batchID` = `batch_desc`.`batchID`";
+
+		db.exec("UPDATE `batch_desc` SET `department` = CASE "
+				+ "WHEN (SELECT COUNT(*) FROM (" + taught + ")) = 1 "
+				+ "THEN (SELECT MIN(dept) FROM (" + taught + ")) "
+				+ "WHEN EXISTS (" + taught + ") THEN NULL "
+				+ "WHEN (SELECT COUNT(*) FROM (" + majors + ")) = 1 "
+				+ "THEN (SELECT MIN(dept) FROM (" + majors + ")) "
+				+ "END");
+
+		db.exec("UPDATE `sync_state` SET `applying` = 0, `watermark` = NULL WHERE `id` = 1");
 	}
 
 	// ── Helpers ──────────────────────────────────────────────────────────

@@ -906,7 +906,10 @@ public final class SyncWriter {
 					+ "server, and will come back here the next time the roll is loaded.";
 			case "professors" -> "the staff list is the office's, so removing a professor "
 					+ "here cannot be sent. They are still on the server.";
-			case "courses", "course_instructor", "course_batch_map" -> "a course is the "
+			case "batch_desc", "batch_student_map", "course_batch_map" -> "a batch is kept "
+					+ "by its own department's professors and head, so this deletion stays on "
+					+ "this device. The batch is unchanged on the server.";
+			case "courses", "course_instructor" -> "a course is the "
 					+ "department's to withdraw, and withdrawing it is marking it "
 					+ "discontinued rather than deleting it. This deletion stays on this "
 					+ "device.";

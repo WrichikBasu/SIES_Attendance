@@ -22,6 +22,9 @@ import androidx.room.PrimaryKey;
  * every batch in the session rather than guessing which ones belong to the selected course.
  * <p>
  * Batches do not carry forward.
+ * <p>
+ * A batch belongs to a {@link #department}, whose professors and head keep it, and it is
+ * linked only to that department's courses. Its members may come from any department.
  */
 @Entity(tableName = EntityBatchDesc.TABLE_NAME,
 		indices = {@Index(value = {"batchID", "academicYear"}, unique = true)})
@@ -55,10 +58,19 @@ public class EntityBatchDesc {
 	 */
 	public int academicYear;
 
-	public EntityBatchDesc(@NonNull String batchName,
-	                       int academicYear, @Nullable String batchDesc) {
+	/**
+	 * The department whose batch this is. Null only for a batch made before batches had one,
+	 * which could not be placed from its courses or its members: an administrator sets it on
+	 * the web console, and until then nobody else may change the batch.
+	 */
+	@Nullable
+	public Department department;
+
+	public EntityBatchDesc(@NonNull String batchName, int academicYear,
+	                       @Nullable String batchDesc, @Nullable Department department) {
 		this.batchName = batchName;
 		this.batchDesc = batchDesc;
 		this.academicYear = academicYear;
+		this.department = department;
 	}
 }

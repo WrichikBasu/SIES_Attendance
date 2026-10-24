@@ -127,7 +127,7 @@ public class MigrationSqlTest {
 				Migrations.MIGRATION_3_4, Migrations.MIGRATION_4_5, Migrations.MIGRATION_5_6,
 				Migrations.MIGRATION_6_7, Migrations.MIGRATION_7_8, Migrations.MIGRATION_8_9,
 				Migrations.MIGRATION_9_10, Migrations.MIGRATION_10_11,
-				Migrations.MIGRATION_11_12);
+				Migrations.MIGRATION_11_12, Migrations.MIGRATION_12_13);
 	}
 
 	/**

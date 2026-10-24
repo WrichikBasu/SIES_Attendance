@@ -541,6 +541,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				DeviceIdentity.recordRepresents(getApplication(), null);
 				DeviceIdentity.recordRoles(getApplication(), null);
 				DeviceIdentity.recordImportDepartments(getApplication(), null);
+				DeviceIdentity.recordBatchDepartments(getApplication(), null);
 
 				// What the server will let this account change, and which courses a class
 				// representative may mark. Asked here rather than guessed from the account
@@ -718,6 +719,31 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return Permissions.may(DeviceIdentity.accountKind(getApplication()),
 				DeviceIdentity.mayKeepARoll(getApplication()),
 				DeviceIdentity.roles(getApplication()), what);
+	}
+
+	/**
+	 * Whether the signed-in account may make, change or remove a batch of that department; see
+	 * {@link Permissions#mayKeepBatchesOf}.
+	 */
+	public boolean mayKeepBatchesOf(@Nullable Department department) {
+		return may(Permissions.Capability.BATCHES)
+				&& Permissions.mayKeepBatchesOf(DeviceIdentity.accountKind(getApplication()),
+				DeviceIdentity.batchDepartments(getApplication()), department);
+	}
+
+	/** The departments this account may make a batch for, in the order to offer them. */
+	@NonNull
+	public List<Department> batchDepartments() {
+		return Permissions.batchDepartments(DeviceIdentity.accountKind(getApplication()),
+				DeviceIdentity.batchDepartments(getApplication()));
+	}
+
+	/** Why a batch opened read-only, for a professor who expected to change it. */
+	public void sayNotYourBatch(@NonNull EntityBatchDesc batch) {
+		toastMessage.setValue(batch.department == null
+				? getApplication().getString(R.string.not_permitted_batch_unplaced)
+				: getApplication().getString(R.string.not_permitted_batch,
+				batch.department.toString()));
 	}
 
 	/** Why a control is missing, for a screen that has to say something. */
@@ -1178,8 +1204,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void loadBatchesForStudentFilter(
 			@NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
 		final int acadYear = studentFilter().academicYear;
-		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(visibleBatches(repository.batchesForYearSync(acadYear))));
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(ownDepartmentsBatches(
+				visibleBatches(repository.batchesForYearSync(acadYear)))));
 	}
 
 	public void addStudent(@NonNull EntityStudent student, @NonNull String rollNo,
@@ -1341,8 +1367,61 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	// ── Professors ───────────────────────────────────────────────────────
 
+	/**
+	 * The Professors tab's list: a professor's own department's colleagues, and everybody for
+	 * anybody else; see {@link Permissions#ownDepartmentsProfessors}.
+	 */
 	public LiveData<List<EntityProfessor>> getProfessors() {
-		return repository.observeProfessors();
+		return Transformations.map(repository.observeProfessors(), professors ->
+				Permissions.ownDepartmentsProfessors(
+						DeviceIdentity.accountKind(getApplication()),
+						DeviceIdentity.batchDepartments(getApplication()), professors));
+	}
+
+	/**
+	 * A professor as somebody who may not change them is shown: the courses they coordinate or
+	 * teach, out of the ones this account is shown, and the batches linked to those courses.
+	 */
+	public void loadProfessorDetails(long profID, @NonNull ProfessorDetailsCallback cb) {
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+
+			EntityProfessor professor = null;
+			for (EntityProfessor candidate : repository.professorsSync()) {
+				if (candidate.profID == profID) {
+					professor = candidate;
+				}
+			}
+
+			if (professor == null) {
+				return;
+			}
+
+			List<EntityCourse> courses = new ArrayList<>();
+			Set<Long> batchIDs = new java.util.LinkedHashSet<>();
+
+			for (EntityCourse course : visible(repository.coursesSync())) {
+				if (course.profID == profID
+						|| repository.courseInstructorIdsSync(course.courseID).contains(profID)) {
+					courses.add(course);
+					batchIDs.addAll(repository.courseBatchIdsSync(course.courseID));
+				}
+			}
+
+			List<EntityBatchDesc> batches = new ArrayList<>();
+			for (long batchID : batchIDs) {
+				EntityBatchDesc batch = repository.batchSync(batchID);
+				if (batch != null) {
+					batches.add(batch);
+				}
+			}
+
+			cb.onLoaded(professor, courses, visibleBatches(batches));
+		});
+	}
+
+	public interface ProfessorDetailsCallback {
+		void onLoaded(@NonNull EntityProfessor professor, @NonNull List<EntityCourse> courses,
+		              @NonNull List<EntityBatchDesc> batches);
 	}
 
 	public void addProfessor(@NonNull EntityProfessor professor, @NonNull Runnable onDone) {
@@ -1477,8 +1556,19 @@ public class AttendanceViewModel extends AndroidViewModel {
 				return repository.observeBatchesForYearLinkedTo(year,
 						courses == null ? new ArrayList<>() : new ArrayList<>(courses));
 			}
-			return repository.observeBatchesForYear(year);
+
+			// A professor's, narrowed to their own department's: a plain filter over rows
+			// already read, so it can run here.
+			return Transformations.map(repository.observeBatchesForYear(year),
+					this::ownDepartmentsBatches);
 		});
+	}
+
+	/** That list as a professor browses it; see {@link Permissions#ownDepartmentsBatches}. */
+	@NonNull
+	private List<EntityBatchDesc> ownDepartmentsBatches(@NonNull List<EntityBatchDesc> batches) {
+		return Permissions.ownDepartmentsBatches(DeviceIdentity.accountKind(getApplication()),
+				DeviceIdentity.batchDepartments(getApplication()), batches);
 	}
 
 	/**
@@ -1526,14 +1616,15 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * years, streams and departments within the academic year.
 	 */
 	public void createBatch(@NonNull String batchName, @Nullable String description,
-	                        @NonNull List<Long> studentIDs, @NonNull List<Long> courseIDs,
-	                        @NonNull Runnable onDone) {
+	                        @NonNull Department department, @NonNull List<Long> studentIDs,
+	                        @NonNull List<Long> courseIDs, @NonNull Runnable onDone) {
 
 		final int acadYear = studentFilter().academicYear;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				EntityBatchDesc batch = new EntityBatchDesc(batchName, acadYear, description);
+				EntityBatchDesc batch =
+						new EntityBatchDesc(batchName, acadYear, description, department);
 				long batchID = repository.createBatchFromStudents(batch, studentIDs);
 				repository.setBatchCourses(batchID, courseIDs);
 				toastMessage.postValue("Batch created with " + studentIDs.size() + " students");
@@ -2079,10 +2170,15 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * The current session's batches, since that is where a course is being set up, plus any
 	 * batch already linked from another session: leaving those out would untick them, and
 	 * confirming the dialog would then remove a link nobody chose to remove.
+	 * <p>
+	 * A batch is linked only to its own department's courses (V31), so with a department the
+	 * session's batches are narrowed to that department's. The course editor passes none and
+	 * narrows as its department field changes.
 	 *
-	 * @param courseID the course, or -1 for one not saved yet, which has no links
+	 * @param courseID   the course, or -1 for one not saved yet, which has no links
+	 * @param department the course's offering department, or null for every batch
 	 */
-	public void loadCourseBatchOptions(long courseID,
+	public void loadCourseBatchOptions(long courseID, @Nullable Department department,
 	                                   @NonNull java.util.function.BiConsumer<
 			                                   List<EntityBatchDesc>, List<Long>> cb) {
 
@@ -2093,8 +2189,13 @@ public class AttendanceViewModel extends AndroidViewModel {
 			List<Long> linked = courseID > 0
 					? repository.courseBatchIdsSync(courseID) : new ArrayList<>();
 
-			List<EntityBatchDesc> options = new ArrayList<>(
-					repository.batchesForYearSync(acadYear));
+			List<EntityBatchDesc> options = new ArrayList<>();
+
+			for (EntityBatchDesc batch : repository.batchesForYearSync(acadYear)) {
+				if (department == null || batch.department == department) {
+					options.add(batch);
+				}
+			}
 
 			for (long batchID : linked) {
 
@@ -2546,15 +2647,16 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	public void updateBatch(long batchID, @NonNull String name, @Nullable String description,
-	                        @NonNull List<Long> studentIDs, @NonNull List<Long> courseIDs,
-	                        @NonNull Runnable onDone) {
+	                        @NonNull Department department, @NonNull List<Long> studentIDs,
+	                        @NonNull List<Long> courseIDs, @NonNull Runnable onDone) {
 
 		final int fallbackYear = studentFilter().academicYear;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				int acadYear = batchSessionYear(batchID, fallbackYear);
-				repository.updateBatch(batchID, name, description, acadYear, studentIDs);
+				repository.updateBatch(batchID, name, description, department, acadYear,
+						studentIDs);
 				repository.setBatchCourses(batchID, courseIDs);
 				toastMessage.postValue("Batch updated");
 				onDone.run();
@@ -2860,7 +2962,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void loadStatsFilterOptions(@NonNull StatsOptionsCallback cb) {
 		MainDatabase.DB_EXECUTOR.execute(() -> cb.onLoaded(
 				visible(repository.coursesSync()),
-				visibleBatches(repository.batchesSync()),
+				ownDepartmentsBatches(visibleBatches(repository.batchesSync())),
 				repository.professorsSync()));
 	}
 

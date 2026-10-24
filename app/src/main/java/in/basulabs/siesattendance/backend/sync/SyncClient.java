@@ -220,12 +220,19 @@ public final class SyncClient {
 	 * @param importDepartments the departments this account may import students into, or
 	 *                     null when the server did not say. {@link #ANY_DEPARTMENT} alone for
 	 *                     the office and an administrator, who may import into any
+	 * @param batchDepartments the departments whose batches this account keeps, or null when
+	 *                     the server did not say. {@link #ANY_DEPARTMENT} alone for an
+	 *                     administrator, who keeps every department's
 	 */
 	public record Me(boolean mayKeepARoll, @Nullable List<Long> represents,
-	                 @Nullable List<String> roles, @Nullable List<String> importDepartments) {
+	                 @Nullable List<String> roles, @Nullable List<String> importDepartments,
+	                 @Nullable List<String> batchDepartments) {
 	}
 
-	/** What {@link Me#importDepartments} holds for an account that may import anywhere. */
+	/**
+	 * What {@link Me#importDepartments} and {@link Me#batchDepartments} hold for an account
+	 * that may act in any department.
+	 */
 	public static final String ANY_DEPARTMENT = "*";
 
 	/**
@@ -249,9 +256,13 @@ public final class SyncClient {
 				? List.of(ANY_DEPARTMENT)
 				: SyncJson.textListAt(body, "imports", "departments");
 
+		List<String> batchDepartments = SyncJson.flagAt(body, "batches", "anyDepartment", false)
+				? List.of(ANY_DEPARTMENT)
+				: SyncJson.textListAt(body, "batches", "departments");
+
 		return new Me(SyncJson.flagIn(body, "mayKeepARoll", fallback),
 				SyncJson.courseIdsIn(body, "represents"),
-				SyncJson.textsIn(body, "roles", "role"), departments);
+				SyncJson.textsIn(body, "roles", "role"), departments, batchDepartments);
 	}
 
 	/** One password as a JSON string, escaped the little that a password can need. */

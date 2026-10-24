@@ -78,4 +78,7 @@ public final class Migrations {
 
 	/** A student's APAAR ID, and the day they joined and left a session's class. */
 	public static final Migration MIGRATION_11_12 = adapt(11);
+
+	/** The department a batch belongs to, guessed for the batches already here. */
+	public static final Migration MIGRATION_12_13 = adapt(12);
 }

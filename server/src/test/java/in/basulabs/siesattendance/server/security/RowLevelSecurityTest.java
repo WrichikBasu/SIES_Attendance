@@ -2,6 +2,7 @@ package in.basulabs.siesattendance.server.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -674,14 +675,15 @@ class RowLevelSecurityTest {
 	}
 
 	@Test
-	void theCalendarAndTheStaffListAreReadableByEverybodySignedIn() throws Exception {
+	void theCalendarIsReadableByEverybodySignedIn() throws Exception {
 
-		// Both are needed by every device -- a lecture's session is resolved against the
-		// calendar -- and neither says anything about a student.
+		// Needed by every device -- a lecture's session is resolved against the calendar --
+		// and says nothing about a student. The staff list is narrower since V35: a class
+		// representative reads the professor of the course they represent, and no other.
 		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
 
 			assertEquals(2, count(as, "SELECT count(*) FROM academic_years"));
-			assertEquals(3, count(as, "SELECT count(*) FROM professors"));
+			assertEquals(1, count(as, "SELECT count(*) FROM professors"));
 
 			assertEquals(0, update(as, "UPDATE academic_years SET end_date = '2026-06-30' "
 							+ "WHERE academic_year = 2025"),
@@ -802,46 +804,202 @@ class RowLevelSecurityTest {
 	}
 
 	@Test
-	void batchesAndTheirCoursesAreAnyProfessorsAndNobodyElses() throws Exception {
+	void aBatchIsKeptByItsDepartmentAndLinkedToItsCourses() throws Exception {
 
-		String batch = "INSERT INTO batch_desc (batch_id, batch_name, academic_year) VALUES ";
+		String batch = "INSERT INTO batch_desc (batch_id, batch_name, academic_year, "
+				+ "department) VALUES ";
 
-		// A Chemistry professor makes a batch and links it to a Computer Science course they
-		// do not teach: an open elective's batch is often put together by somebody else.
-		try (Connection as = postgres.actingAs(accountProfChem, PROF_CHEM, null)) {
-			execute(as, batch + "(5001, 'OE takers', " + SESSION + ")");
+		// A Computer Science professor makes a CS batch, puts a student in it and links it to
+		// a CS course.
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			execute(as, batch + "(5001, 'Practical A', " + SESSION + ", 'COMPUTER_SCIENCE')");
+			execute(as, "INSERT INTO batch_student_map (batch_id, student_id, academic_year) "
+					+ "VALUES (5001, " + STUDENT_CR + ", " + SESSION + ")");
 			execute(as, "INSERT INTO course_batch_map (course_id, batch_id) VALUES ("
 					+ COURSE_CS + ", 5001)");
-
-			// actingAs is one transaction; the next actor has to see these rows.
 			as.commit();
 		}
 
-		// And the CS professor may undo it, on a batch they did not make.
-		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
-			assertEquals(1, update(as, "DELETE FROM course_batch_map WHERE batch_id = 5001"));
-			assertEquals(1, update(as, "UPDATE batch_desc SET batch_name = 'renamed' "
+		assertRefused(accountProfCs, PROF_CS, null, "INSERT INTO course_batch_map (course_id, "
+				+ "batch_id) VALUES (" + COURSE_CHEM + ", 5001)",
+				"a CS batch is not linked to a Chemistry course");
+
+		assertRefused(accountProfCs, PROF_CS, null, batch + "(5002, 'Not ours', " + SESSION
+				+ ", 'CHEMISTRY')", "nor does a CS professor make Chemistry's batches");
+
+		// Not even as Chemistry's head: heading a department is not being one of its
+		// professors (V33).
+		grantRole(accountProfCs, "HOD", "CHEMISTRY", SESSION, accountAdmin);
+		assertRefused(accountProfCs, PROF_CS, null, batch + "(5002, 'Not ours', " + SESSION
+				+ ", 'CHEMISTRY')", "a head makes batches for their own department alone");
+
+		// Another department's professor neither reads it (V32) nor changes anything about it.
+		try (Connection as = postgres.actingAs(accountProfChem, PROF_CHEM, null)) {
+			assertEquals(0, count(as, "SELECT count(*) FROM batch_desc WHERE batch_id = 5001"),
+					"another department's batch is not theirs to read");
+			assertEquals(0, update(as, "UPDATE batch_desc SET batch_name = 'no' "
+					+ "WHERE batch_id = 5001"), "renamed only by its own department");
+			assertEquals(0, update(as, "DELETE FROM course_batch_map WHERE batch_id = 5001"),
+					"unlinked only by its own department");
+			assertEquals(0, update(as, "DELETE FROM batch_student_map WHERE batch_id = 5001"),
+					"and its members are not theirs to change");
+			assertEquals(0, update(as, "UPDATE batch_desc SET department = 'CHEMISTRY' "
+					+ "WHERE batch_id = 5001"), "nor is it taken into their own");
+		}
+
+		// Every professor of the department keeps it, its head among them.
+		try (Connection as = postgres.actingAs(accountHeadCs, PROF_HEAD_CS, null)) {
+			assertEquals(1, update(as, "UPDATE batch_desc SET batch_name = 'Practical B' "
 					+ "WHERE batch_id = 5001"));
 		}
 
 		// Each refusal on a connection of its own: a refused statement aborts the transaction,
 		// and the next one would then fail for that reason rather than for its own.
-		assertRefused(accountOffice, null, null, batch + "(5002, 'by the office', " + SESSION
-				+ ")", "the office keeps the roll and not the batches");
+		assertRefused(accountOffice, null, null, batch + "(5003, 'by the office', " + SESSION
+				+ ", 'CHEMISTRY')", "the office keeps the roll and not the batches");
 
-		try (Connection as = postgres.actingAs(accountOffice, null, null)) {
-			assertEquals(0, update(as, "UPDATE batch_desc SET batch_name = 'no' "
-					+ "WHERE batch_id = 5001"), "nor renames one");
-		}
-
-		assertRefused(accountAdmin, null, null, "INSERT INTO course_batch_map (course_id, "
-				+ "batch_id) VALUES (" + COURSE_CS + ", 5001)", "nor does an administrator");
-
-		assertRefused(accountCr, null, STUDENT_CR, batch + "(5003, 'by a CR', " + SESSION + ")",
-				"and a class representative makes none");
+		assertRefused(accountCr, null, STUDENT_CR, batch + "(5004, 'by a CR', " + SESSION
+				+ ", 'COMPUTER_SCIENCE')", "and a class representative makes none");
 
 		assertRefused(accountCr, null, STUDENT_CR, "INSERT INTO course_batch_map (course_id, "
 				+ "batch_id) VALUES (" + COURSE_CS + ", 5001)", "nor links one");
+
+		// An administrator keeps every department's.
+		try (Connection as = postgres.actingAs(accountAdmin, null, null)) {
+			execute(as, batch + "(5005, 'by the admin', " + SESSION + ", 'CHEMISTRY')");
+			execute(as, "INSERT INTO course_batch_map (course_id, batch_id) VALUES ("
+					+ COURSE_CHEM + ", 5005)");
+		}
+	}
+
+	@Test
+	void aProfessorReadsTheirDepartmentsProfessorsAndChangesNone() throws Exception {
+
+		String which = "SELECT string_agg(prof_id::text, ',' ORDER BY prof_id) FROM professors";
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals("1001,1003", textAs(as, which), "Computer Science's, and not Chemistry's");
+			assertEquals(0, update(as, "UPDATE professors SET designation = 'Professor' "
+					+ "WHERE prof_id = 1001"), "not even their own row (V35)");
+		}
+
+		// A head changes no professor either, of their department or another.
+		try (Connection as = postgres.actingAs(accountHeadCs, PROF_HEAD_CS, null)) {
+			assertEquals(0, update(as, "UPDATE professors SET designation = 'Dean' "
+					+ "WHERE prof_id IN (1001, 1002, 1003)"));
+		}
+
+		// Teaching another department's course brings that course's coordinator along, or
+		// the phone would hold a course pointing at nobody.
+		postgres.asSuperuser("INSERT INTO course_instructor (course_id, prof_id) VALUES ("
+				+ COURSE_CHEM + ", " + PROF_CS + ")");
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals("1001,1002,1003", textAs(as, which));
+		}
+
+		try (Connection as = postgres.actingAs(accountOffice, null, null)) {
+			assertEquals(1, update(as, "UPDATE professors SET designation = 'Professor' "
+					+ "WHERE prof_id = 1002"), "the office keeps the staff list");
+		}
+	}
+
+	@Test
+	void aProfessorReadsTheirOwnDepartmentsBatches() throws Exception {
+
+		// One batch per department, and a Chemistry batch a CS lecture was taken with.
+		postgres.asSuperuser("""
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year, department) VALUES
+				    (5030, 'CS A', 2025, 'COMPUTER_SCIENCE'),
+				    (5031, 'CH A', 2025, 'CHEMISTRY'),
+				    (5032, 'CH taught by CS', 2025, 'CHEMISTRY');
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3002, 5031);
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year) VALUES
+				    (5031, 2002, 2025);
+				INSERT INTO lectures
+				    (lecture_id, course_id, batch_id, start_at, start_zone, end_at, end_zone) VALUES
+				    (4030, 3001, 5032, '2025-07-28 09:00:00+05:30', 'Asia/Kolkata',
+				     '2025-07-28 10:00:00+05:30', 'Asia/Kolkata');
+				""");
+
+		String which = "SELECT string_agg(batch_id::text, ',' ORDER BY batch_id) FROM batch_desc "
+				+ "WHERE batch_id BETWEEN 5030 AND 5039";
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals("5030,5032", textAs(as, which),
+					"their own department's, and the batch of a lecture of theirs");
+			assertEquals(0, count(as, "SELECT count(*) FROM batch_student_map "
+					+ "WHERE batch_id = 5031"), "and not another department's members");
+		}
+
+		try (Connection as = postgres.actingAs(accountProfChem, PROF_CHEM, null)) {
+			assertEquals("5031,5032", textAs(as, which), "Chemistry's, and none of CS's");
+		}
+
+		try (Connection as = postgres.actingAs(accountOffice, null, null)) {
+			assertEquals("5030,5031,5032", textAs(as, which), "the office reads them all");
+		}
+	}
+
+	@Test
+	void aBatchFromBeforeDepartmentsIsPlacedByWhatItIsFor() throws Exception {
+
+		// The same five cases as the phone's v12 to v13 step, BatchDepartmentMigrationTest.
+		postgres.asSuperuser("""
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year) VALUES
+				    (5020, 'Linked CS', 2025), (5021, 'Taught CH', 2025),
+				    (5022, 'Chemists', 2025), (5023, 'Both', 2025), (5024, 'Mixed', 2025);
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES
+				    (3001, 5020), (3001, 5023), (3002, 5023);
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year) VALUES
+				    (5020, 2002, 2025), (5022, 2002, 2025), (5024, 2001, 2025), (5024, 2002, 2025);
+				INSERT INTO lectures
+				    (lecture_id, course_id, batch_id, start_at, start_zone, end_at, end_zone) VALUES
+				    (4020, 3002, 5021, '2025-07-21 09:00:00+05:30', 'Asia/Kolkata',
+				     '2025-07-21 10:00:00+05:30', 'Asia/Kolkata');
+				""");
+
+		assertEquals("COMPUTER_SCIENCE", text("SELECT batch_department_guess(5020)::text"),
+				"its course's, not its member's");
+		assertEquals("CHEMISTRY", text("SELECT batch_department_guess(5021)::text"),
+				"a lecture says as much as a link");
+		assertEquals("CHEMISTRY", text("SELECT batch_department_guess(5022)::text"),
+				"with no course, its members' major");
+		assertNull(text("SELECT batch_department_guess(5023)::text"), "two departments' courses");
+		assertNull(text("SELECT batch_department_guess(5024)::text"), "two majors and no course");
+	}
+
+	@Test
+	void aBatchWithNoDepartmentIsAnAdministratorsToPlace() throws Exception {
+
+		// A batch from before V31 that could not be placed: linked to both departments.
+		postgres.asSuperuser("""
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year)
+				    VALUES (5010, 'Both', 2025);
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3001, 5010), (3002, 5010);
+				""");
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals(0, update(as, "UPDATE batch_desc SET batch_name = 'mine' "
+					+ "WHERE batch_id = 5010"), "nobody's batch is no professor's to change");
+		}
+
+		assertRefused(accountAdmin, null, null, "UPDATE batch_desc SET department = "
+				+ "'COMPUTER_SCIENCE' WHERE batch_id = 5010",
+				"not while it is linked to a Chemistry course");
+
+		try (Connection as = postgres.actingAs(accountAdmin, null, null)) {
+			execute(as, "DELETE FROM course_batch_map WHERE batch_id = 5010 AND course_id = "
+					+ COURSE_CHEM);
+			assertEquals(1, update(as, "UPDATE batch_desc SET department = 'COMPUTER_SCIENCE' "
+					+ "WHERE batch_id = 5010"), "placed once the other department's course is off");
+			as.commit();
+		}
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals(1, update(as, "UPDATE batch_desc SET batch_name = 'mine' "
+					+ "WHERE batch_id = 5010"), "and then it is the department's");
+		}
 	}
 
 	/*
@@ -924,9 +1082,9 @@ class RowLevelSecurityTest {
 					+ "WHERE batch_id = 5001"));
 		}
 
-		try (Connection as = postgres.actingAs(accountProfChem, PROF_CHEM, null)) {
+		try (Connection as = postgres.actingAs(accountOffice, null, null)) {
 			assertEquals(3, count(as, "SELECT count(*) FROM batch_desc"),
-					"a professor still reads every batch");
+					"the office still reads every batch");
 		}
 	}
 
@@ -1100,6 +1258,16 @@ class RowLevelSecurityTest {
 	}
 
 	/** One text value, read as the superuser. */
+	private static String textAs(Connection connection, String sql) throws SQLException {
+
+		try (Statement statement = connection.createStatement();
+		     ResultSet results = statement.executeQuery(sql)) {
+
+			assertTrue(results.next(), () -> "no row from: " + sql);
+			return results.getString(1);
+		}
+	}
+
 	private String text(String sql) throws SQLException {
 
 		try (Connection connection = postgres.connection();
