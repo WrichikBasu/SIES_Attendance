@@ -860,7 +860,7 @@ async function refresh(quietly) {
             await loadOptions();
             await loadAccounts();
         } else if (panel === "data") {
-            await loadTables();
+            await loadTables(!quietly);
         } else if (panel === "reps") {
             await loadRoll();
         } else if (panel === "import") {
@@ -1636,7 +1636,12 @@ async function endRepresentative(student) {
 let table = null;
 let nextCursor = null;
 
-async function loadTables() {
+/**
+ * The list of tables, and the open one's first page again when reloadRows. The
+ * polling leaves the rows alone: reloading them would throw away the pages somebody has
+ * fetched and the place they had scrolled to.
+ */
+async function loadTables(reloadRows) {
 
     // An array, not an object with a tables field: GET /data answers with the tables
     // themselves, each with the count of rows this actor may see.
@@ -1659,7 +1664,7 @@ async function loadTables() {
         box.appendChild(button);
     });
 
-    if (table) {
+    if (table && reloadRows) {
         // Keep the open table open across a reload, and bring its first page up to date.
         await rows(table, null);
     }
