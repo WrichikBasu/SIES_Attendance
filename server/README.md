@@ -182,7 +182,7 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 | sign in on the phone | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | sign in on the web console | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | take and edit a register | courses they represent | their courses | the department's | — | — | ✓ |
-| read students | their courses' rolls | their courses' rolls | the department's | all | all | all |
+| read students | their courses' rolls | their courses' rolls, and every student with their department as major, minor or OE | the department's | all | all | all |
 | add or correct students and enrolments | — | their own department | the department's | ✓ | — | ✓ |
 | remove students | — | — | the department's | ✓ | — | ✓ |
 | add or correct a professor | — | — | — | ✓ | — | ✓ |

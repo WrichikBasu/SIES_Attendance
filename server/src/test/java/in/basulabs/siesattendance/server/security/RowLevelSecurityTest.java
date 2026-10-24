@@ -987,6 +987,42 @@ class RowLevelSecurityTest {
 		}
 	}
 
+	@Test
+	void aProfessorSeesTheirDepartmentsMinorsAndOpenElectivesOnNoCourse() throws Exception {
+
+		// Computer Science majors, one taking Chemistry as a minor, one as an open elective,
+		// and one with nothing to do with Chemistry. No Chemistry course has any of them.
+		postgres.asSuperuser("""
+				INSERT INTO students (student_id, name, pronouns) VALUES
+				    (2020, 'MINOR CH', 'they/them'),
+				    (2021, 'OE CH',    'they/them'),
+				    (2022, 'NO CH',    'they/them');
+
+				INSERT INTO student_year
+				    (student_id, academic_year, roll_no, year, stream, major_dept, minor_dept,
+				     oe_dept, semester) VALUES
+				    (2020, 2025, 'CS-FY-020', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE',
+				     'CHEMISTRY', NULL, 1),
+				    (2021, 2025, 'CS-FY-021', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE',
+				     NULL, 'CHEMISTRY', 1),
+				    (2022, 2025, 'CS-FY-022', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE',
+				     'MATHEMATICS', 'PHYSICS', 1);
+				""");
+
+		try (Connection as = postgres.actingAs(accountProfChem, PROF_CHEM, null)) {
+
+			assertEquals(2, count(as, "SELECT count(*) FROM students "
+					+ "WHERE student_id IN (2020, 2021, 2022)"), "the minor and the OE, no more");
+			assertEquals(2, count(as, "SELECT count(*) FROM student_year "
+					+ "WHERE student_id IN (2020, 2021, 2022)"), "with their enrolments");
+
+			assertEquals(0, update(as, "UPDATE students SET name = 'NO' "
+					+ "WHERE student_id = 2020"), "seen, not corrected: the major is not theirs");
+			assertEquals(0, update(as, "UPDATE student_year SET roll_no = 'NO' "
+					+ "WHERE student_id = 2021"), "nor the enrolment");
+		}
+	}
+
 	// ── Fixture helpers ──────────────────────────────────────────────────
 
 	/** Creates an account as the superuser and returns the id the sequence gave it. */
