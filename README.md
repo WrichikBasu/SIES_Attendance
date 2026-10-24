@@ -1,7 +1,8 @@
-# SIES Attendance
+# SIES Attendance (Unofficial)
+_An attendance system for SIES College of Arts, Science & Commerce, Mumbai, 
+developed by students from the Dept. of Computer Science._
 
-An attendance system for SIES College: an Android app professors and class representatives use to
-take attendance, and a server that holds the college's copy and keeps every phone in step.
+---
 
 The app works fully offline. Attendance is marked and stored on the phone, and changes are queued
 and synced when there's a connection. Without a server configured, the app runs on its own as a
@@ -42,7 +43,7 @@ local attendance register.
 - **Account and sync:** signing in and out, changing your password, and the state of the sync.
   The server holds the college's copy, so the app has no backup of its own.
 
-### Who sees what
+### Permissions
 
 When a server is configured, everyone signs in before taking attendance:
 - **Professors** see and mark their own courses.
