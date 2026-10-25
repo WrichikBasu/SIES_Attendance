@@ -66,6 +66,8 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="20dp"
             android:hint="@string/hint_designation"
+            app:helperText="@string/helper_designation_hod"
+            app:helperTextEnabled="true"
             style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu">
 
             <AutoCompleteTextView

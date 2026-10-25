@@ -497,6 +497,52 @@ class SyncTest {
 	}
 
 	@Test
+	void theOfficeSettingHodOnAPhoneMakesTheProfessorHead() throws Exception {
+
+		// A professor the office added on a phone, with an account made for them since.
+		Phone office = signInWithAPhone("office@sies.edu.in");
+		long profID = office.key(630);
+
+		Map<String, Object> professor = new LinkedHashMap<>();
+		professor.put("profID", profID);
+		professor.put("name", "D DUTTA");
+		professor.put("email", "d.dutta@sies.edu.in");
+		professor.put("department", "CHEMISTRY");
+		professor.put("designation", "Professor");
+
+		Reply added = push(office, List.of(
+				intent("professors", List.of(profID), "UPSERT", professor)));
+		assertEquals(1, added.body().get("accepted").intValue(), added::toString);
+
+		long accountID = account(AccountKind.PROFESSOR, profID, null, "d.dutta@sies.edu.in");
+
+		String head = "SELECT count(*) FROM user_role WHERE account_id = " + accountID
+				+ " AND role = 'HOD' AND department = 'CHEMISTRY' AND revoked_at IS NULL";
+
+		assertEquals(0, count(head));
+
+		// The office sets HOD on the phone.
+		professor.put("designation", "HOD");
+		Reply pushed = push(office, List.of(
+				intent("professors", List.of(profID), "UPSERT", professor)));
+
+		assertEquals(1, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertEquals(1, count(head),
+				"head of their own department, as the console would make them");
+		assertEquals(1, count("SELECT count(*) FROM user_role WHERE account_id = " + accountID
+				+ " AND granted_by = " + accountOffice), "granted by whoever set the designation");
+
+		// Sent again, nothing more: one appointment, not two.
+		push(office, List.of(intent("professors", List.of(profID), "UPSERT", professor)));
+		assertEquals(1, count(head));
+
+		// And taken away again, the appointment stays until an administrator ends it.
+		professor.put("designation", "Professor");
+		push(office, List.of(intent("professors", List.of(profID), "UPSERT", professor)));
+		assertEquals(1, count(head));
+	}
+
+	@Test
 	void theOfficeMayPushTheRoll() throws Exception {
 
 		Phone office = signInWithAPhone("office@sies.edu.in");

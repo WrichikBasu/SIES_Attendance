@@ -74,6 +74,7 @@
     <string name="hint_batch_description">Description (optional)</string>
     <string name="hint_batch_department">Department</string>
     <string name="section_professor_courses">Courses</string>
+    <string name="helper_designation_hod">HOD makes them head of their department once this is synced.</string>
     <string name="label_no_courses_taught">No course on this phone</string>
     <string name="helper_batch_department">Whose batch this is. Its students may come from any department.</string>
     <string name="helper_no_department_courses">No course of this department to link.</string>

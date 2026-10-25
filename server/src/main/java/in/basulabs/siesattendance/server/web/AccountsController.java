@@ -24,6 +24,7 @@ import java.util.Locale;
 import in.basulabs.siesattendance.backend.AccountKind;
 import in.basulabs.siesattendance.backend.AuditAction;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Designations;
 import in.basulabs.siesattendance.backend.GrantAuthority;
 import in.basulabs.siesattendance.server.importer.ServerIds;
 import in.basulabs.siesattendance.server.security.AccountDirectory;
@@ -171,10 +172,17 @@ public final class AccountsController {
 	public record Choice(@NonNull String value, @NonNull String label) {
 	}
 
-	/** What the forms need to offer, so that no list is written twice. */
+	/**
+	 * What the forms need to offer, so that no list is written twice.
+	 *
+	 * @param designations the titles a professor may hold, in rank order; see
+	 *                     {@link Designations}
+	 */
 	public record Options(@NonNull List<Choice> departments, @NonNull List<Integer> sessions,
-	                      @NonNull List<String> roles, @NonNull List<String> kinds) {
+	                      @NonNull List<String> roles, @NonNull List<String> kinds,
+	                      @NonNull List<String> designations) {
 	}
+
 
 	/**
 	 * A professor or a student an account can be hung on, for the form's pickers.
@@ -365,7 +373,7 @@ public final class AccountsController {
 
 			return new Options(departments, sessions,
 					List.of("HOD", "OFFICE", "AUDITOR", "ADMIN"),
-					List.of("PROFESSOR", "STUDENT", "STAFF"));
+					List.of("PROFESSOR", "STUDENT", "STAFF"), Designations.ALL);
 		});
 	}
 
@@ -426,6 +434,14 @@ public final class AccountsController {
 		String role = body.role() == null || body.role().isBlank()
 				? null : body.role().trim().toUpperCase(Locale.ROOT);
 
+		// A professor's account is given no role by hand. The one role a professor holds is
+		// the head's, and that follows from their designation, below.
+		if (kind == AccountKind.PROFESSOR && role != null) {
+			throw new ApiException(400, "professor_role_from_designation",
+					"A professor's account takes no role. A professor whose designation is "
+							+ "HOD is made head of their department with it.");
+		}
+
 		if (role != null) {
 			checkRoleShape(role, body.department(), body.academicYear());
 		}
@@ -481,6 +497,17 @@ public final class AccountsController {
 					actor.session().accountId());
 
 			List<GrantBody> granted = new ArrayList<>();
+
+			// A professor whose designation is HOD heads their own department, until the
+			// appointment is revoked: the designation is what the office records, and the role
+			// is what the policies read.
+			if (kind == AccountKind.PROFESSOR && profId != null) {
+				GrantBody head = grantHeadIfDesignated(connection, accountId, profId,
+						actor.session().accountId());
+				if (head != null) {
+					granted.add(head);
+				}
+			}
 
 			if (role != null) {
 				// Same transaction as the account: "create an auditor" is one act, and an
@@ -721,6 +748,9 @@ public final class AccountsController {
 				}
 			}
 
+			// As when a professor's account is created: a head's designation makes them head.
+			grantHeadIfDesignated(connection, accountId, profId, actor.accountId());
+
 			return new SessionsEnded(Sessions.revokeAllFor(connection, accountId, null,
 					"made a professor account by an administrator"));
 		});
@@ -917,6 +947,62 @@ public final class AccountsController {
 	 */
 
 	/**
+	 * Makes the account head of its professor's department, until revoked, when the professor's
+	 * designation is a head's and the account is not head of it already.
+	 *
+	 * @return the grant made, or null when none was
+	 */
+	@Nullable
+	private static GrantBody grantHeadIfDesignated(@NonNull Connection connection,
+	                                               long accountId, long profId, long grantedBy)
+			throws SQLException {
+
+		String[] held = professorDepartmentAndDesignation(connection, profId);
+
+		if (held[0] == null || !Designations.isHeads(held[1])) {
+			return null;
+		}
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT 1 FROM user_role WHERE account_id = ? AND role = 'HOD' "
+						+ "AND department = ?::department AND revoked_at IS NULL")) {
+
+			statement.setLong(1, accountId);
+			statement.setString(2, held[0]);
+
+			try (ResultSet results = statement.executeQuery()) {
+				if (results.next()) {
+					return null;
+				}
+			}
+		}
+
+		long grantId = Roles.grant(connection, accountId, "HOD", held[0], null, grantedBy,
+				"a professor whose designation is HOD");
+
+		return new GrantBody(grantId, "HOD", held[0], null, true,
+				java.time.Instant.now().toString());
+	}
+
+	/** A professor's department, as stored, and designation. */
+	@NonNull
+	private static String[] professorDepartmentAndDesignation(@NonNull Connection connection,
+	                                                          long profId) throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT department::text, designation FROM professors WHERE prof_id = ?")) {
+
+			statement.setLong(1, profId);
+
+			try (ResultSet results = statement.executeQuery()) {
+				return results.next()
+						? new String[]{results.getString(1), results.getString(2)}
+						: new String[]{null, null};
+			}
+		}
+	}
+
+	/**
 	 * Writes a professors row and returns its key.
 	 * <p>
 	 * Keyed by {@link ServerIds}, under node 0, which is what makes a row the server invented
@@ -930,7 +1016,13 @@ public final class AccountsController {
 		String name = text(person.name(), "person.name");
 		String email = text(person.email(), "person.email");
 		String department = text(person.department(), "person.department");
-		String designation = text(person.designation(), "person.designation");
+		String designation = text(person.designation(), "person.designation").trim();
+
+		if (!Designations.isListed(designation)) {
+			throw new ApiException(400, "bad_designation",
+					"A professor's designation is one of "
+							+ String.join(", ", Designations.ALL) + ".");
+		}
 
 		ServerIds ids = new ServerIds();
 		ids.primeFrom(connection);

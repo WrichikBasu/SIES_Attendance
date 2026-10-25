@@ -2590,6 +2590,71 @@ class WireTest {
 						+ noStudent.body().get("message"));
 	}
 
+	@Test
+	void aProfessorWhoseDesignationIsHodIsMadeHeadOfTheirDepartment() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply created = post("/accounts", json(
+				"kind", "PROFESSOR",
+				"displayName", "H HEAD",
+				"loginEmail", "hhead@sies.edu.in",
+				"password", "a long enough opening password",
+				"person", Map.of(
+						"name", "H HEAD",
+						"email", "hhead@sies.edu.in",
+						"department", "PHYSICS",
+						"designation", "HOD")), token, null);
+
+		assertEquals(200, created.status(), created::toString);
+		assertEquals("HOD", created.body().get("roles").get(0).get("role").stringValue());
+		assertEquals("PHYSICS",
+				created.body().get("roles").get(0).get("department").stringValue());
+
+		assertEquals(1, count("SELECT count(*) FROM user_role r JOIN app_account a "
+				+ "USING (account_id) WHERE a.login_email = 'hhead@sies.edu.in' "
+				+ "AND r.role = 'HOD' AND r.department = 'PHYSICS' "
+				+ "AND r.academic_year IS NULL AND r.revoked_at IS NULL"),
+				"head of their own department, until the appointment is revoked");
+	}
+
+	@Test
+	void aProfessorsAccountTakesNoRoleAndADesignationIsFromTheList() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply withRole = post("/accounts", json(
+				"kind", "PROFESSOR",
+				"displayName", "R ROLE",
+				"loginEmail", "rrole@sies.edu.in",
+				"password", "a long enough opening password",
+				"role", "OFFICE",
+				"person", Map.of(
+						"name", "R ROLE",
+						"email", "rrole@sies.edu.in",
+						"department", "PHYSICS",
+						"designation", "Professor")), token, null);
+
+		assertEquals(400, withRole.status(), withRole::toString);
+		assertEquals("professor_role_from_designation",
+				withRole.body().get("code").stringValue());
+
+		Reply dean = post("/accounts", json(
+				"kind", "PROFESSOR",
+				"displayName", "D DEAN",
+				"loginEmail", "ddean@sies.edu.in",
+				"password", "a long enough opening password",
+				"person", Map.of(
+						"name", "D DEAN",
+						"email", "ddean@sies.edu.in",
+						"department", "PHYSICS",
+						"designation", "Dean")), token, null);
+
+		assertEquals(400, dean.status(), dean::toString);
+		assertEquals("bad_designation", dean.body().get("code").stringValue());
+		assertEquals(0, count("SELECT count(*) FROM professors WHERE email = 'ddean@sies.edu.in'"));
+	}
+
 	// ── Reading the data ─────────────────────────────────────────────────
 
 	/*

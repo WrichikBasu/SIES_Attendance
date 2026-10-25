@@ -21,6 +21,7 @@ import java.util.Arrays;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Designations;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
@@ -51,15 +52,14 @@ public class FragmentAddProfessor extends Fragment {
 	private Department chosenDepartment;
 
 	/**
-	 * Suggestions only. The designation is stored as free text, so the field stays editable and
-	 * anything already saved keeps its wording even if it is no longer offered here. A
-	 * professor recorded under a designation that has since been dropped from this list is left
-	 * exactly as they were, rather than being quietly relabelled.
+	 * One of {@link Designations#ALL}, and nothing else: HOD makes a professor head of their
+	 * department when their account is created, so the field is a fixed choice rather than
+	 * text. A professor on file under the old "Head of Department" opens as HOD; one under a
+	 * title no longer on the list opens with the field empty, to be chosen before saving. A new
+	 * professor starts at the first, as on the console.
 	 */
-	private static final String[] DESIGNATIONS = {
-			"Head of Department", "Professor", "Associate Professor", "Assistant Professor",
-			"Visiting Faculty"
-	};
+	@Nullable
+	private String chosenDesignation = Designations.ALL.get(0);
 
 	@Nullable
 	@Override
@@ -94,8 +94,7 @@ public class FragmentAddProfessor extends Fragment {
 
 		DropdownBinder.bind(actvDepartment, Arrays.asList(Department.values()), null,
 				chosenDepartment, value -> chosenDepartment = value);
-		actvDesignation.setAdapter(new ArrayAdapter<>(requireContext(),
-				android.R.layout.simple_list_item_1, DESIGNATIONS));
+		bindDesignations();
 
 		MaterialButton save = view.findViewById(R.id.btnSaveProfessor);
 		save.setOnClickListener(this::onSave);
@@ -111,10 +110,23 @@ public class FragmentAddProfessor extends Fragment {
 					etEmail.setText(professor.email);
 					chosenDepartment = professor.department;
 					DropdownBinder.setSelection(actvDepartment, professor.department, null);
-					actvDesignation.setText(professor.designation, false);
+					chosenDesignation = Designations.normalise(professor.designation);
+					bindDesignations();
 				});
 			});
 		}
+	}
+
+	/** Fills the designation field with the fixed list and the current choice. */
+	private void bindDesignations() {
+
+		actvDesignation.setAdapter(new ArrayAdapter<>(requireContext(),
+				android.R.layout.simple_list_item_1, Designations.ALL));
+		actvDesignation.setText(chosenDesignation == null ? "" : chosenDesignation, false);
+		actvDesignation.setOnItemClickListener((parent, v, position, id) -> {
+			chosenDesignation = Designations.ALL.get(position);
+			((TextInputLayout) requireView().findViewById(R.id.tilDesignation)).setError(null);
+		});
 	}
 
 	/**
@@ -149,9 +161,12 @@ public class FragmentAddProfessor extends Fragment {
 			return;
 		}
 
-		String designation = actvDesignation.getText().toString().trim();
-		if (designation.isEmpty()) {
-			designation = "Professor";
+		String designation = chosenDesignation;
+
+		if (designation == null) {
+			((TextInputLayout) requireView().findViewById(R.id.tilDesignation))
+					.setError(getString(R.string.error_required));
+			return;
 		}
 
 		EntityProfessor professor =

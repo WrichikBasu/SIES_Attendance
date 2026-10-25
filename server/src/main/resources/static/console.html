@@ -229,7 +229,8 @@
                      <select id="person"></select></div>
                 <div id="newPersonWrap" hidden><label for="newPersonName">Professor's
                      name</label><input id="newPersonName"></div>
-                <div><label for="displayName">Display name</label><input id="displayName"></div>
+                <div><label for="displayName" id="displayNameLabel">Display name</label>
+                     <input id="displayName"></div>
             </div>
             <div class="row" id="newPersonRow" hidden>
                 <div><label for="newPersonEmail">Professor's email</label>
@@ -237,20 +238,23 @@
                 <div><label for="newPersonDepartment">Department</label>
                      <select id="newPersonDepartment"></select></div>
                 <div><label for="newPersonDesignation">Designation</label>
-                     <input id="newPersonDesignation" value="Assistant Professor"></div>
+                     <select id="newPersonDesignation"></select></div>
             </div>
             <div class="row">
-                <div><label for="newEmail">Login email</label>
+                <div><label for="newEmail" id="newEmailLabel">Login email</label>
                      <input id="newEmail" type="email"></div>
                 <div><label for="openingPassword">Opening password (12 or more)</label>
                      <input id="openingPassword" type="password"></div>
-                <div><label for="newRole">Role</label><select id="newRole"></select></div>
+                <div id="newRoleWrap"><label for="newRole">Role</label>
+                     <select id="newRole"></select></div>
             </div>
             <div class="row" id="newScopeWrap" hidden>
                 <div><label for="newDepartment">Department</label>
                      <select id="newDepartment"></select></div>
                 <div><label for="newSession">Session</label><select id="newSession"></select></div>
             </div>
+            <p class="note" id="headNote" hidden>A professor whose designation is HOD is made
+                head of their department with their account.</p>
             <button id="create">Create</button>
         </section>
 
@@ -440,7 +444,7 @@
             <div><label for="promoteDepartment">Department</label>
                  <select id="promoteDepartment"></select></div>
             <div><label for="promoteDesignation">Designation</label>
-                 <input id="promoteDesignation" value="Assistant Professor"></div>
+                 <select id="promoteDesignation"></select></div>
         </div>
         <p class="error" id="promoteError" hidden></p>
         <div class="actions">
@@ -983,7 +987,14 @@ async function loadOptions() {
     options = await api("/accounts/options");
 
     fill($("kind"), options.kinds);
-    fill($("newRole"), [""].concat(options.roles), ["No role"].concat(options.roles));
+
+    // Fixed, and the server holds the same list: HOD makes a professor head of their
+    // department, so it cannot be a free-text field somebody types "Head" into. The fallback
+    // is for a page newer than the process serving it.
+    const designations = options.designations
+        || ["Assistant Professor", "Associate Professor", "Professor", "HOD"];
+    fill($("newPersonDesignation"), designations);
+    fill($("promoteDesignation"), designations);
     fill($("grantRole"), options.roles);
 
     // Either shape is accepted, because this page can be newer than the process serving it:
@@ -1022,15 +1033,43 @@ async function loadOptions() {
     optionsLoaded = true;
 }
 
+/** The roles a new account of this kind may start with: a staff account's are the office's. */
+const STAFF_ROLES = ["OFFICE", "AUDITOR", "ADMIN"];
+
+function syncNewRoles(kind) {
+
+    // A professor is given no role here: the head's comes from their designation, which the
+    // server reads, whether the professor is new or already on file.
+    const professor = kind === "PROFESSOR";
+    $("newRoleWrap").hidden = professor;
+    $("headNote").hidden = !professor;
+
+    const roles = professor ? []
+        : kind === "STAFF" ? options.roles.filter((role) => STAFF_ROLES.includes(role))
+        : options.roles;
+
+    fill($("newRole"), [""].concat(roles), ["No role"].concat(roles));
+    syncScope();
+}
+
 async function onKindChanged() {
 
     const kind = $("kind").value;
     const wrap = $("personWrap");
 
+    syncNewRoles(kind);
+
+    // A staff member is a person in their own right, so the fields say so; the others are
+    // somebody already on file, and their account's name is only how it is shown.
+    $("displayNameLabel").textContent = kind === "STAFF" ? "Name" : "Display name";
+    $("newEmailLabel").textContent = kind === "STAFF" ? "Email (to sign in with)" : "Login email";
+
     if (kind === "STAFF") {
         // Office staff are attached to nobody: giving them a professors row would corrupt
-        // every query that counts teaching staff.
+        // every query that counts teaching staff. So no person to pick, and none of the
+        // fields for making a professor.
         wrap.hidden = true;
+        syncPerson();
         return;
     }
 
@@ -1567,8 +1606,11 @@ $("create").addEventListener("click", async () => {
         $("newPersonName").value = "";
         $("newPersonEmail").value = "";
 
+        const head = (created.roles || []).find((grant) => grant.role === "HOD");
+
         say("Created account " + created.accountId
             + (created.profId ? " for professor " + created.profId : "")
+            + (head ? ", head of " + departmentLabel(head.department) : "")
             + ". Tell them the opening password; they will be made to change it before they "
             + "can do anything.", true);
 
