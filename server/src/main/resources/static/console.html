@@ -1016,7 +1016,7 @@ async function loadOptions() {
         || ["Assistant Professor", "Associate Professor", "Professor", "HOD"];
     fill($("newPersonDesignation"), designations);
     fill($("promoteDesignation"), designations);
-    fill($("grantRole"), options.roles);
+    syncGrantRoles();
 
     // Either shape is accepted, because this page can be newer than the process serving it:
     // static files are read off disk per request and classes are loaded once at startup.
@@ -1057,17 +1057,42 @@ async function loadOptions() {
 /** The roles a new account of this kind may start with: a staff account's are the office's. */
 const STAFF_ROLES = ["OFFICE", "AUDITOR", "ADMIN"];
 
+/** The accounts the grant form offers, as the accounts list last loaded them. */
+let grantable = [];
+
+/**
+ * The roles the chosen account may be granted: a professor may be made head of a department
+ * and nothing else, and a staff account any of the office's roles but never head.
+ */
+function syncGrantRoles() {
+
+    if (!options) {
+        return;
+    }
+
+    const account = grantable.find((a) => String(a.accountId) === $("grantAccount").value);
+
+    const roles = !account ? []
+        : account.kind === "PROFESSOR" ? options.roles.filter((role) => role === "HOD")
+        : options.roles.filter((role) => STAFF_ROLES.includes(role));
+
+    fill($("grantRole"), roles);
+    syncScope();
+}
+
+$("grantAccount").addEventListener("change", syncGrantRoles);
+
 function syncNewRoles(kind) {
 
     // A professor is given no role here: the head's comes from their designation, which the
     // server reads, whether the professor is new or already on file.
+    // A student holds no role at all: a class representative is appointed on a course.
     const professor = kind === "PROFESSOR";
-    $("newRoleWrap").hidden = professor;
+    $("newRoleWrap").hidden = kind !== "STAFF";
     $("headNote").hidden = !professor;
 
-    const roles = professor ? []
-        : kind === "STAFF" ? options.roles.filter((role) => STAFF_ROLES.includes(role))
-        : options.roles;
+    const roles = kind === "STAFF"
+        ? options.roles.filter((role) => STAFF_ROLES.includes(role)) : [];
 
     fill($("newRole"), [""].concat(roles), ["No role"].concat(roles));
     syncScope();
@@ -1286,9 +1311,15 @@ async function loadAccounts() {
         rows.appendChild(row);
     });
 
+    // A student holds no role -- a class representative is appointed on a course, on the
+    // Representatives tab -- so they are not offered here at all.
+    grantable = accounts.filter((a) => a.kind !== "STUDENT");
+
     fill($("grantAccount"),
-        accounts.map((a) => a.accountId),
-        accounts.map((a) => a.accountId + " · " + a.displayName + " · " + a.kind));
+        grantable.map((a) => a.accountId),
+        grantable.map((a) => a.accountId + " · " + a.displayName + " · " + a.kind));
+
+    syncGrantRoles();
 
 }
 

@@ -539,6 +539,48 @@ class SyncTest {
 	}
 
 	@Test
+	void aCoordinatorsInstructorRowCannotBeDeletedWhileTheyCoordinate() throws Exception {
+
+		Phone phone = signInWithAPhone("c.head@sies.edu.in");
+		long courseID = phone.key(641);
+
+		Map<String, Object> course = new LinkedHashMap<>();
+		course.put("courseID", courseID);
+		course.put("profID", PROF_CS);
+		course.put("courseCode", "CS-OE-2");
+		course.put("courseTopic", "Computing for some");
+		course.put("stream", "BSc");
+		course.put("offeringDepartment", "COMPUTER_SCIENCE");
+		course.put("year", "SY");
+		course.put("semester", 3);
+		course.put("courseType", "OE");
+
+		assertEquals(1, push(phone, List.of(intent("courses", List.of(courseID), "UPSERT",
+				course))).body().get("accepted").intValue());
+
+		// The coordinator changes and, in the same push, the new coordinator's row is
+		// deleted: what eight courses on the dev server went through (V38).
+		course.put("profID", 1003L);
+
+		Reply changed = push(phone, List.of(
+				intent("courses", List.of(courseID), "UPSERT", course),
+				intent("course_instructor", List.of(courseID, 1003L), "DELETE", null)));
+
+		assertEquals(1, changed.body().get("accepted").intValue(), changed::toString);
+		assertEquals(1, changed.body().get("rejected").size(), changed::toString);
+		assertEquals(1, count("SELECT count(*) FROM course_instructor WHERE course_id = "
+				+ courseID + " AND prof_id = " + 1003L), "the coordinator stays");
+
+		// The former coordinator is an instructor like any other, and may be removed.
+		Reply former = push(phone, List.of(
+				intent("course_instructor", List.of(courseID, PROF_CS), "DELETE", null)));
+
+		assertEquals(1, former.body().get("accepted").intValue(), former::toString);
+		assertEquals(0, count("SELECT count(*) FROM course_instructor WHERE course_id = "
+				+ courseID + " AND prof_id = " + PROF_CS));
+	}
+
+	@Test
 	void theOfficeSettingHodOnAPhoneMakesTheProfessorHead() throws Exception {
 
 		// A professor the office added on a phone, with an account made for them since.

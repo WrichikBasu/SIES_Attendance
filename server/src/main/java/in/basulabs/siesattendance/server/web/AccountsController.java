@@ -444,6 +444,7 @@ public final class AccountsController {
 
 		if (role != null) {
 			checkRoleShape(role, body.department(), body.academicYear());
+			checkRoleFits(kind, role);
 		}
 
 		return database.inTransaction(actor, connection -> {
@@ -546,9 +547,13 @@ public final class AccountsController {
 
 			refuseUnlessAdmin(connection);
 
-			if (!accountExists(connection, accountId)) {
+			AccountKind kind = kindOf(connection, accountId);
+
+			if (kind == null) {
 				throw new ApiException(404, "no_account", "There is no account " + accountId);
 			}
+
+			checkRoleFits(kind, role);
 
 			long grantId = Roles.grant(connection, accountId, role, body.department(),
 					body.academicYear(), actor.session().accountId(), body.reason());
@@ -1113,6 +1118,52 @@ public final class AccountsController {
 			throw new ApiException(400, "scoped_grant",
 					role + " is college-wide and holds until it is revoked, so it takes "
 							+ "neither a department nor a session.");
+		}
+	}
+
+	/**
+	 * Which roles an account of that kind may hold. A professor may be made head of a department
+	 * and nothing else: the office's roles belong to staff accounts, and a professor who also
+	 * works in the office signs in with one of those. A staff account is never a head, which is
+	 * a professor's appointment. A student holds no role at all; a class representative is
+	 * appointed on a course instead.
+	 */
+	private static void checkRoleFits(@NonNull AccountKind kind, @NonNull String role) {
+
+		switch (kind) {
+			case STUDENT -> throw new ApiException(400, "student_takes_no_role",
+					"A student's account takes no role. A class representative is appointed "
+							+ "on the course, from its roll.");
+			case PROFESSOR -> {
+				if (!role.equals("HOD")) {
+					throw new ApiException(400, "professor_only_heads",
+							"A professor may be made head of a department and nothing else. "
+									+ role + " is a staff account's role.");
+				}
+			}
+			case STAFF -> {
+				if (role.equals("HOD")) {
+					throw new ApiException(400, "staff_never_heads",
+							"A staff account cannot head a department: that is a "
+									+ "professor's appointment.");
+				}
+			}
+		}
+	}
+
+	/** The kind of that account, or null when there is no such account. */
+	@Nullable
+	private static AccountKind kindOf(@NonNull Connection connection, long accountId)
+			throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT kind FROM app_account WHERE account_id = ?")) {
+
+			statement.setLong(1, accountId);
+
+			try (ResultSet results = statement.executeQuery()) {
+				return results.next() ? AccountKind.valueOf(results.getString(1)) : null;
+			}
 		}
 	}
 

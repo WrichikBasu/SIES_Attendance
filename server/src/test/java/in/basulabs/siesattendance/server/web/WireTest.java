@@ -1243,6 +1243,34 @@ class WireTest {
 	}
 
 	@Test
+	void aProfessorIsMadeOnlyAHeadAStaffAccountNeverOneAndAStudentNothing() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply office = post("/accounts/" + accountProfChem + "/roles",
+				json("role", "OFFICE"), token, null);
+
+		assertEquals(400, office.status(), office::toString);
+		assertEquals("professor_only_heads", office.body().get("code").stringValue());
+
+		Reply head = post("/accounts/" + accountOffice + "/roles",
+				json("role", "HOD", "department", "CHEMISTRY"), token, null);
+
+		assertEquals(400, head.status(), head::toString);
+		assertEquals("staff_never_heads", head.body().get("code").stringValue());
+
+		Reply student = post("/accounts/" + accountCr + "/roles",
+				json("role", "AUDITOR"), token, null);
+
+		assertEquals(400, student.status(), student::toString);
+		assertEquals("student_takes_no_role", student.body().get("code").stringValue());
+
+		assertEquals(0, count("SELECT count(*) FROM user_role WHERE account_id IN ("
+				+ accountProfChem + ", " + accountOffice + ", " + accountCr + ") "
+				+ "AND role <> 'OFFICE'"), "nothing was granted");
+	}
+
+	@Test
 	void aCollegeWideRoleTakesNoDepartmentAndAHeadTakesBoth() throws Exception {
 
 		String token = tokenFor("admin@sies.edu.in", "STAFF");
