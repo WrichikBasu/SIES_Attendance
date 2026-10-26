@@ -593,7 +593,8 @@ public class DomainRulesTest {
 		// These carry no department condition at all, so their offering department records
 		// only who teaches them.
 		for (CourseType type : Arrays.asList(CourseType.VSC, CourseType.VSC_PRACTICALS,
-				CourseType.SEC, CourseType.SEC_PRACTICALS, CourseType.AEC, CourseType.IKS)) {
+				CourseType.SEC, CourseType.SEC_PRACTICALS, CourseType.AEC, CourseType.IKS,
+				CourseType.VEC)) {
 			assertFalse(type + " takes a whole year and stream, so it cannot be tied to the "
 					+ "offering department", type.followsOfferingDepartment());
 		}

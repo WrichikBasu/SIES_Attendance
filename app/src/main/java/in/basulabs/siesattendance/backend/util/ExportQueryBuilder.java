@@ -102,7 +102,7 @@ public final class ExportQueryBuilder {
 				.append("         AND (y.minorDept = c.offeringDepartment ")
 				.append("              OR y.majorDept = c.offeringDepartment)) ")
 				.append("      OR (c.courseType = 'OE' AND y.oeDept = c.offeringDepartment) ")
-				.append("      OR c.courseType IN ('AEC', 'IKS', 'VSC', 'VSC_PRACTICALS', ")
+				.append("      OR c.courseType IN ('AEC', 'IKS', 'VEC', 'VSC', 'VSC_PRACTICALS', ")
 				.append("                          'SEC', 'SEC_PRACTICALS'))) ")
 				.append("END ");
 		// The two in student_year and academic_years, then the two in the roll condition,

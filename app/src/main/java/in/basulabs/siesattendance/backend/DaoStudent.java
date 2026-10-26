@@ -457,7 +457,7 @@ public abstract class DaoStudent {
 	 * student's three departments has to match depends on how they are taking it: a major
 	 * course matches their major department, an open elective their OE choice. A discipline
 	 * specific elective is chosen from the basket the student's own discipline offers, so it
-	 * follows the major department as well. AEC, IKS, VSC and SEC courses, and the practicals
+	 * follows the major department as well. AEC, IKS, VEC, VSC and SEC courses, and the practicals
 	 * belonging to the latter two, are taken by the whole year and stream regardless of
 	 * department, so no department condition applies to them. Note that this is the opposite of
 	 * how major, minor and DSE practicals behave, which follow the same department as the
@@ -509,7 +509,7 @@ public abstract class DaoStudent {
 			"         AND (y.minorDept = c.offeringDepartment " +
 			"              OR y.majorDept = c.offeringDepartment)) " +
 			"      OR (c.courseType = 'OE' AND y.oeDept = c.offeringDepartment) " +
-			"      OR c.courseType IN ('AEC', 'IKS', 'VSC', 'VSC_PRACTICALS', " +
+			"      OR c.courseType IN ('AEC', 'IKS', 'VEC', 'VSC', 'VSC_PRACTICALS', " +
 			"                           'SEC', 'SEC_PRACTICALS'))) " +
 			"END " +
 			"ORDER BY y.rollNo ASC")

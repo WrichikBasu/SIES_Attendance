@@ -58,7 +58,10 @@ public enum CourseType {
 	SEC("SEC", false),
 	SEC_PRACTICALS("SEC practicals", false),
 	AEC("AEC", false),
-	IKS("IKS", false);
+	IKS("IKS", false),
+
+	/** Value education course, taken by the whole year and stream like AEC and IKS. */
+	VEC("VEC", false);
 
 	@NonNull
 	private final String label;
@@ -126,7 +129,7 @@ public enum CourseType {
 	 * <p>
 	 * False for everything else, for two different reasons. A minor and an open elective are
 	 * deliberately taught by another department, matched on {@code minorDept} and
-	 * {@code oeDept}. AEC, IKS, VSC and SEC carry no department condition at all, the whole
+	 * {@code oeDept}. AEC, IKS, VEC, VSC and SEC carry no department condition at all, the whole
 	 * year and stream taking them, so their offering department only records who teaches them.
 	 * <p>
 	 * What this decides is whether a course's stream has to be one its offering department

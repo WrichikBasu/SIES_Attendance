@@ -218,9 +218,23 @@ public class PostgresSchemaDriftTest {
 	 * for it, and nothing fails loudly.
 	 */
 
+	/**
+	 * course_admits() as the last migration to define it left it: V23 wrote it, and a later one
+	 * replaces it whenever a course type is added (V40).
+	 */
 	private static String courseAdmits() throws IOException {
-		return normalise(statementContaining(read("V23__a_batch_is_the_roll.sql"),
-				"CREATE FUNCTION course_admits"));
+
+		String latest = null;
+
+		for (String file : migrationFileNames()) {
+			if (read(file).contains("FUNCTION course_admits(")) {
+				latest = file;
+			}
+		}
+
+		assertTrue("no migration defines course_admits", latest != null);
+
+		return normalise(statementContaining(read(latest), "FUNCTION course_admits("));
 	}
 
 	@Test
@@ -229,7 +243,7 @@ public class PostgresSchemaDriftTest {
 		String body = courseAdmits();
 
 		for (CourseType type : CourseType.values()) {
-			assertTrue("course_admits in V23__a_batch_is_the_roll.sql never mentions "
+			assertTrue("the latest course_admits never mentions "
 							+ type.name() + ", so a course of that type with no batch would "
 							+ "have an empty roll and no CR could be designated for it",
 					body.contains("'" + type.name() + "'"));

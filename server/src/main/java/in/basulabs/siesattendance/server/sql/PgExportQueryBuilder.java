@@ -113,7 +113,7 @@ public final class PgExportQueryBuilder {
 				.append("         AND (y.minor_dept = c.offering_department ")
 				.append("              OR y.major_dept = c.offering_department)) ")
 				.append("      OR (c.course_type = 'OE' AND y.oe_dept = c.offering_department) ")
-				.append("      OR c.course_type IN ('AEC', 'IKS', 'VSC', 'VSC_PRACTICALS', ")
+				.append("      OR c.course_type IN ('AEC', 'IKS', 'VEC', 'VSC', 'VSC_PRACTICALS', ")
 				.append("                           'SEC', 'SEC_PRACTICALS'))) ")
 				.append("END ");
 		// The two in student_year and academic_years, then the two in the roll condition,
