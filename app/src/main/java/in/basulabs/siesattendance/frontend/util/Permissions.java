@@ -201,6 +201,21 @@ public final class Permissions {
 	}
 
 	/**
+	 * Whether this account may appoint that course's class representatives: its instructor,
+	 * the head of the department offering it, or an administrator, as {@code /me} last listed
+	 * the courses. Never a student. Refused when nothing was ever recorded, unlike the rest of
+	 * this class: an appointment is made on the server and nowhere else, so an install that
+	 * has not asked has nothing to make it with, and the next sync records the list.
+	 *
+	 * @param appoints the course ids {@code /me} last said this account may appoint for, or
+	 *                 null when it never said
+	 */
+	public static boolean mayAppointFor(@Nullable AccountKind who, @Nullable Set<Long> appoints,
+	                                    long courseId) {
+		return who != AccountKind.STUDENT && appoints != null && appoints.contains(courseId);
+	}
+
+	/**
 	 * The departments this account may make a batch for, in the order to offer them: every
 	 * department for an administrator, and for anybody nothing was ever recorded about;
 	 * otherwise a professor's own, alone.

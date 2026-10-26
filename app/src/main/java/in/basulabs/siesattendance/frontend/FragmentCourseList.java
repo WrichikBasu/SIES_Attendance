@@ -22,6 +22,7 @@ import in.basulabs.siesattendance.frontend.adapter.AdapterCourse;
 import in.basulabs.siesattendance.frontend.util.BatchPicker;
 import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.frontend.util.ReadOnlyDetails;
+import in.basulabs.siesattendance.frontend.util.RepresentativePicker;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -100,17 +101,23 @@ public class FragmentCourseList extends Fragment {
 
 	/**
 	 * The course, who teaches it and its batches. Nothing to change, except that a professor of
-	 * its department may assign the department's batches to it, whether or not they may edit
-	 * the course itself.
+	 * its department may assign the department's batches to it, and its instructor may appoint
+	 * its class representatives, whether or not they may edit the course itself.
 	 */
 	private void showReadOnly(@NonNull EntityCourse course) {
 
 		Runnable assign = viewModel.mayKeepBatchesOf(course.offeringDepartment)
 				? () -> assignBatches(course) : null;
 
-		viewModel.loadCourseDetails(course.courseID, (loaded, instructors, batches) ->
-				Ui.onMain(this, () -> ReadOnlyDetails.showCourse(requireContext(), loaded,
-						instructors, batches, assign)));
+		viewModel.checkMayAppointFor(course.courseID, may -> {
+
+			Runnable representatives = may
+					? () -> RepresentativePicker.open(this, viewModel, course) : null;
+
+			viewModel.loadCourseDetails(course.courseID, (loaded, instructors, batches) ->
+					Ui.onMain(this, () -> ReadOnlyDetails.showCourse(requireContext(), loaded,
+							instructors, batches, assign, representatives)));
+		});
 	}
 
 	private void assignBatches(@NonNull EntityCourse course) {

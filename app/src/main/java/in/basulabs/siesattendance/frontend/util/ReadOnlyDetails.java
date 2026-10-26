@@ -66,11 +66,15 @@ public final class ReadOnlyDetails {
 	 * @param onAssignBatches what the Assign batches button does, or null for no button: a
 	 *                        professor of the course's department may link its batches to a
 	 *                        course they cannot edit, and nobody else may
+	 * @param onRepresentatives what the Representatives button does, or null for no button:
+	 *                        the course's instructor appoints its class representatives
+	 *                        whether or not they may edit it
 	 */
 	public static void showCourse(@NonNull Context context, @NonNull EntityCourse course,
 	                              @NonNull List<EntityProfessor> instructors,
 	                              @NonNull List<EntityBatchDesc> batches,
-	                              @Nullable Runnable onAssignBatches) {
+	                              @Nullable Runnable onAssignBatches,
+	                              @Nullable Runnable onRepresentatives) {
 
 		StringBuilder text = new StringBuilder(course.courseTopic).append("\n\n")
 				.append(course.courseType).append(" · ").append(course.offeringDepartment)
@@ -106,6 +110,10 @@ public final class ReadOnlyDetails {
 		if (onAssignBatches != null) {
 			dialog.setNeutralButton(R.string.action_assign_batches,
 					(d, w) -> onAssignBatches.run());
+		}
+		if (onRepresentatives != null) {
+			dialog.setNegativeButton(R.string.action_representatives,
+					(d, w) -> onRepresentatives.run());
 		}
 		dialog.show();
 	}

@@ -240,6 +240,10 @@
     <string name="hint_course_batches">Batches</string>
     <string name="action_assign_batches">Assign batches</string>
     <string name="dialog_course_batches_title">Batches for this course</string>
+    <string name="action_representatives">Representatives</string>
+    <string name="action_class_representatives">Class representatives</string>
+    <string name="dialog_representatives_title">%1$s representatives, %2$s</string>
+    <string name="label_representative_no_account">%1$s (no account yet)</string>
     <string name="helper_no_batches_to_link">No batches in this session yet.</string>
     <string name="label_semester_number">Semester %1$d</string>
     <string name="action_close">Close</string>

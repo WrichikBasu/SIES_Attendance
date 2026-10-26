@@ -57,12 +57,26 @@ public final class MeController {
 	 *                          is a worse screen than no screen
 	 * @param auditEntries      how many audit entries this caller may read. Zero is a real
 	 *                          answer and the page says so rather than offering an empty table
+	 * @param appoints          the courses this caller may appoint a class representative
+	 *                          for, so the phone offers the roll on those and no others
 	 */
 	public record Who(long accountId, @NonNull String kind, @NonNull String displayName,
 	                  boolean mustRotate, boolean mayManageAccounts, boolean mayKeepARoll,
 	                  @NonNull String auditEntries, @NonNull List<Held> roles,
 	                  @NonNull List<Delegates.Delegation> represents,
-	                  @NonNull Imports imports, @NonNull Batches batches) {
+	                  @NonNull Imports imports, @NonNull Batches batches,
+	                  @NonNull List<Appointable> appoints) {
+	}
+
+	/**
+	 * One course this account may appoint a representative for, asked the way
+	 * {@code Delegates.capacityFor} asks it: one they teach, one their department offers if they
+	 * head it, or any for an administrator. Discontinued courses are left out, as the console's
+	 * picker leaves them out.
+	 *
+	 * @param courseId a key, as digits in a string like every key on this wire
+	 */
+	public record Appointable(@NonNull String courseId) {
 	}
 
 	/**
@@ -171,8 +185,31 @@ public final class MeController {
 					Long.toString(counted(connection, "SELECT audit_size() AS total")),
 					roles, represents, imports,
 					new Batches(asked(connection, "SELECT actor_has_role('ADMIN')"),
-							ownDepartment(connection)));
+							ownDepartment(connection)),
+					appoints(connection));
 		});
+	}
+
+	/** See {@link Appointable}. Empty for a student, who teaches and heads nothing. */
+	@NonNull
+	private static List<Appointable> appoints(@NonNull java.sql.Connection connection)
+			throws SQLException {
+
+		List<Appointable> courses = new ArrayList<>();
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT course_id FROM courses WHERE date_discontinued IS NULL "
+						+ "  AND (actor_instructs(course_id) "
+						+ "       OR actor_heads(offering_department) "
+						+ "       OR actor_has_role('ADMIN')) "
+						+ "ORDER BY course_id");
+		     ResultSet results = statement.executeQuery()) {
+
+			while (results.next()) {
+				courses.add(new Appointable(Long.toString(results.getLong(1))));
+			}
+		}
+		return courses;
 	}
 
 	/** A professor's own department, as a list of one; empty for anybody who is not one. */

@@ -60,6 +60,17 @@ public final class SyncJson {
 	                        @NonNull String reason, boolean permanent) {
 	}
 
+	/**
+	 * One student on a course's roll, as {@code GET /courses/{id}/roll} sends them.
+	 *
+	 * @param hasAccount whether they have a student account. A representative without one
+	 *                   holds a grant they cannot use
+	 * @param represents whether they represent the course already, in the session asked about
+	 */
+	public record OnTheRoll(long studentId, @NonNull String name, @Nullable String rollNo,
+	                        boolean hasAccount, boolean represents) {
+	}
+
 	private SyncJson() {
 	}
 
@@ -220,6 +231,27 @@ public final class SyncJson {
 		}
 
 		return new PushOutcome(count.intValue(), rejected);
+	}
+
+	/** A course's roll, in the order the server sent it. */
+	@NonNull
+	public static List<OnTheRoll> parseRoll(@NonNull String body) {
+
+		List<OnTheRoll> roll = new ArrayList<>();
+
+		for (Object entry : asArray(new Reader(body).readValue(), "the roll")) {
+
+			Map<String, Object> student = asObject(entry, "a student");
+			Object rollNo = student.get("rollNo");
+
+			roll.add(new OnTheRoll(
+					Long.parseLong(text(student.get("studentId"), "studentId").trim()),
+					text(student.get("name"), "name"),
+					rollNo instanceof String text ? text : null,
+					Boolean.TRUE.equals(student.get("hasAccount")),
+					Boolean.TRUE.equals(student.get("represents"))));
+		}
+		return roll;
 	}
 
 	/** The machine-readable {@code code} of an error body, or null. */

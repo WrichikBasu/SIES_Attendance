@@ -84,6 +84,8 @@ public final class DeviceIdentity {
 
 	private static final String REPRESENTS = "represents";
 
+	private static final String APPOINTS = "appoints";
+
 	private static final String LAST_ACCOUNT = "lastAccountId";
 
 	private static final String ROLES = "roles";
@@ -274,8 +276,23 @@ public final class DeviceIdentity {
 	 */
 	@Nullable
 	public static Set<Long> represents(@NonNull Context context) {
+		return courseIdsAt(context, REPRESENTS);
+	}
 
-		String stored = prefs(context).getString(REPRESENTS, null);
+	/**
+	 * Remembers the courses this account represents. Null forgets them, which is what a
+	 * sign-in does before asking, so one account's appointments never outlive it on a phone
+	 * passed to somebody else.
+	 */
+	public static void recordRepresents(@NonNull Context context,
+	                                    @Nullable Collection<Long> courses) {
+		recordCourseIdsAt(context, REPRESENTS, courses);
+	}
+
+	@Nullable
+	private static Set<Long> courseIdsAt(@NonNull Context context, @NonNull String key) {
+
+		String stored = prefs(context).getString(key, null);
 
 		if (stored == null) {
 			return null;
@@ -291,16 +308,11 @@ public final class DeviceIdentity {
 		return courses;
 	}
 
-	/**
-	 * Remembers the courses this account represents. Null forgets them, which is what a
-	 * sign-in does before asking, so one account's appointments never outlive it on a phone
-	 * passed to somebody else.
-	 */
-	public static void recordRepresents(@NonNull Context context,
-	                                    @Nullable Collection<Long> courses) {
+	private static void recordCourseIdsAt(@NonNull Context context, @NonNull String key,
+	                                      @Nullable Collection<Long> courses) {
 
 		if (courses == null) {
-			prefs(context).edit().remove(REPRESENTS).apply();
+			prefs(context).edit().remove(key).apply();
 			return;
 		}
 
@@ -309,7 +321,7 @@ public final class DeviceIdentity {
 		for (long id : courses) {
 			stored.append(stored.length() == 0 ? "" : ",").append(id);
 		}
-		prefs(context).edit().putString(REPRESENTS, stored.toString()).apply();
+		prefs(context).edit().putString(key, stored.toString()).apply();
 	}
 
 	/**
@@ -383,6 +395,26 @@ public final class DeviceIdentity {
 		if (me.batchDepartments() != null) {
 			recordBatchDepartments(context, me.batchDepartments());
 		}
+
+		if (me.appoints() != null) {
+			recordAppoints(context, me.appoints());
+		}
+	}
+
+	/**
+	 * The courses this account may appoint a class representative for, as {@code /me} last
+	 * said, or null when it has never said. What decides whether a course offers its roll; see
+	 * {@code Permissions}.
+	 */
+	@Nullable
+	public static Set<Long> appoints(@NonNull Context context) {
+		return courseIdsAt(context, APPOINTS);
+	}
+
+	/** Null forgets them, as signing in again and signing out do. */
+	public static void recordAppoints(@NonNull Context context,
+	                                  @Nullable Collection<Long> courses) {
+		recordCourseIdsAt(context, APPOINTS, courses);
 	}
 
 	/**

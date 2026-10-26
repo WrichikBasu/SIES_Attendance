@@ -111,7 +111,10 @@ class BackupImporterTest {
 		assertRowCount("attendance", 4);
 
 		assertEquals(0, outcome.report().totalUpdated(), "nothing was there to update");
-		assertEquals(0, outcome.report().totalUnchanged(), "and nothing to recognise");
+		// Bar one: the course files its coordinator as an instructor as it lands (V37), so
+		// the backup's own row for that is found already there.
+		assertEquals(1, outcome.report().totalUnchanged(),
+				"and nothing to recognise but the coordinator");
 		assertTrue(outcome.report().skipped().isEmpty(),
 				() -> "nothing should have been skipped: " + outcome.report().skipped());
 	}
@@ -140,7 +143,8 @@ class BackupImporterTest {
 				"the second run must insert nothing");
 		assertEquals(0, second.report().totalUpdated(),
 				"and must change nothing, not merely rewrite it with the same values");
-		assertEquals(insertedFirst, second.report().totalUnchanged(),
+		assertEquals(insertedFirst + first.report().totalUnchanged(),
+				second.report().totalUnchanged(),
 				"every row should be recognised and found identical");
 		assertTrue(second.seenBefore(), "it should know it has seen this file");
 		assertEquals(before, snapshot(), "no row may have changed");

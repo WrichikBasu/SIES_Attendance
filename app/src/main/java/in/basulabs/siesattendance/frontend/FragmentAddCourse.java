@@ -37,6 +37,7 @@ import in.basulabs.siesattendance.frontend.util.BatchPicker;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.util.Permissions;
+import in.basulabs.siesattendance.frontend.util.RepresentativePicker;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -230,6 +231,18 @@ public class FragmentAddCourse extends Fragment {
 				return;
 			}
 			Ui.onMain(this, () -> {
+				// Appointed on the server, with the roll it keeps, so not part of the save:
+				// only for a course the server has and lists as this account's to appoint for.
+				viewModel.checkMayAppointFor(course.courseID, may -> Ui.onMain(this, () -> {
+					if (may) {
+						View representatives =
+								requireView().findViewById(R.id.btnRepresentatives);
+						representatives.setVisibility(View.VISIBLE);
+						representatives.setOnClickListener(v ->
+								RepresentativePicker.open(this, viewModel, course));
+					}
+				}));
+
 				etCode.setText(course.courseCode);
 				etTopic.setText(course.courseTopic);
 				etRemarks.setText(course.remarks);

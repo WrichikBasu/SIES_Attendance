@@ -223,10 +223,12 @@ public final class SyncClient {
 	 * @param batchDepartments the departments whose batches this account keeps, or null when
 	 *                     the server did not say. {@link #ANY_DEPARTMENT} alone for an
 	 *                     administrator, who keeps every department's
+	 * @param appoints     the courses this account may appoint a class representative for, or
+	 *                     null when the server did not say
 	 */
 	public record Me(boolean mayKeepARoll, @Nullable List<Long> represents,
 	                 @Nullable List<String> roles, @Nullable List<String> importDepartments,
-	                 @Nullable List<String> batchDepartments) {
+	                 @Nullable List<String> batchDepartments, @Nullable List<Long> appoints) {
 	}
 
 	/**
@@ -262,7 +264,50 @@ public final class SyncClient {
 
 		return new Me(SyncJson.flagIn(body, "mayKeepARoll", fallback),
 				SyncJson.courseIdsIn(body, "represents"),
-				SyncJson.textsIn(body, "roles", "role"), departments, batchDepartments);
+				SyncJson.textsIn(body, "roles", "role"), departments, batchDepartments,
+				SyncJson.courseIdsIn(body, "appoints"));
+	}
+
+	/**
+	 * A course's roll for one session, with who represents it already.
+	 * <p>
+	 * Asked of the server rather than read from this phone's tables: the roll a representative
+	 * is checked against is the server's, and whether a student has an account is something
+	 * the phone is never told.
+	 *
+	 * @throws Refused when this account may not appoint anybody on that course
+	 */
+	@NonNull
+	public List<SyncJson.OnTheRoll> roll(long courseId, int academicYear) throws IOException {
+		return SyncJson.parseRoll(call("GET", "/courses/" + courseId + "/roll?academicYear="
+				+ academicYear, null));
+	}
+
+	/**
+	 * Makes that student the course's class representative for the session.
+	 *
+	 * @throws Refused when this account may not, or the student is not on the roll
+	 */
+	public void appoint(long courseId, long studentId, int academicYear) throws IOException {
+		call("POST", "/courses/" + courseId + "/representatives",
+				representative(studentId, academicYear));
+	}
+
+	/**
+	 * Ends that student's appointment as the course's class representative for the session.
+	 *
+	 * @throws Refused when this account may not, or there is no appointment to end
+	 */
+	public void endAppointment(long courseId, long studentId, int academicYear)
+			throws IOException {
+		call("POST", "/courses/" + courseId + "/representatives/revoke",
+				representative(studentId, academicYear));
+	}
+
+	/** The body both of those send: a key travels as digits in a string. */
+	@NonNull
+	private static String representative(long studentId, int academicYear) {
+		return "{\"studentId\":\"" + studentId + "\",\"academicYear\":" + academicYear + "}";
 	}
 
 	/** One password as a JSON string, escaped the little that a password can need. */

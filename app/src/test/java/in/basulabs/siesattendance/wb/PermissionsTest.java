@@ -93,6 +93,20 @@ public class PermissionsTest {
 	}
 
 	@Test
+	public void theRollIsOfferedOnTheCoursesTheServerSaysAreYoursToAppointFor() {
+
+		assertTrue(Permissions.mayAppointFor(AccountKind.PROFESSOR, Set.of(3001L), 3001L));
+		assertFalse(Permissions.mayAppointFor(AccountKind.PROFESSOR, Set.of(3001L), 3002L));
+		assertTrue(Permissions.mayAppointFor(AccountKind.STAFF, Set.of(3002L), 3002L));
+
+		assertFalse("never a student, whatever was recorded",
+				Permissions.mayAppointFor(AccountKind.STUDENT, Set.of(3001L), 3001L));
+
+		assertFalse("and nobody before the server has said: an appointment is made there",
+				Permissions.mayAppointFor(AccountKind.PROFESSOR, null, 3001L));
+	}
+
+	@Test
 	public void aStudentSeesOnlyTheBatchesOfTheirCourses() {
 
 		List<EntityBatchDesc> all = List.of(batch(5001, "B1"), batch(5002, "B2"),

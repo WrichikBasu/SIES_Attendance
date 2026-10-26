@@ -129,7 +129,8 @@ class RowLevelSecurityTest {
 				     'CHEMISTRY',        'FY', 1, 'MAJOR');
 
 				INSERT INTO course_instructor (course_id, prof_id) VALUES
-				    (3001, 1001), (3002, 1002);
+				    (3001, 1001), (3002, 1002)
+				    ON CONFLICT DO NOTHING;
 
 				INSERT INTO lectures
 				    (lecture_id, course_id, batch_id, start_at, start_zone, end_at, end_zone) VALUES
@@ -542,7 +543,8 @@ class RowLevelSecurityTest {
 				    VALUES (3003, 1004, 'MATH-MIN-1', 'Discrete', 'BSc_unaided',
 				            'MATHEMATICS', 'FY', 1, 'MINOR');
 
-				INSERT INTO course_instructor (course_id, prof_id) VALUES (3003, 1004);
+				INSERT INTO course_instructor (course_id, prof_id) VALUES (3003, 1004)
+				    ON CONFLICT DO NOTHING;
 				""");
 
 		long accountMath = createAccount("PROFESSOR", 1004L, null, "d.math@sies.edu.in");

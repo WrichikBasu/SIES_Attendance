@@ -67,6 +67,7 @@ import in.basulabs.siesattendance.backend.sync.DeviceIdentity;
 import in.basulabs.siesattendance.backend.sync.SignOut;
 import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.backend.sync.SyncClient;
+import in.basulabs.siesattendance.backend.sync.SyncJson;
 import in.basulabs.siesattendance.backend.sync.SyncScheduler;
 import in.basulabs.siesattendance.backend.sync.SyncSignIn;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
@@ -542,6 +543,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				DeviceIdentity.recordRoles(getApplication(), null);
 				DeviceIdentity.recordImportDepartments(getApplication(), null);
 				DeviceIdentity.recordBatchDepartments(getApplication(), null);
+				DeviceIdentity.recordAppoints(getApplication(), null);
 
 				// What the server will let this account change, and which courses a class
 				// representative may mark. Asked here rather than guessed from the account
@@ -729,6 +731,117 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return may(Permissions.Capability.BATCHES)
 				&& Permissions.mayKeepBatchesOf(DeviceIdentity.accountKind(getApplication()),
 				DeviceIdentity.batchDepartments(getApplication()), department);
+	}
+
+	/**
+	 * Whether to offer that course's class representatives; see
+	 * {@link Permissions#mayAppointFor}. Only with a server signed in to, since that is where
+	 * an appointment is made.
+	 */
+	public boolean mayAppointFor(long courseId) {
+		return hasServer() && isSignedIn()
+				&& Permissions.mayAppointFor(DeviceIdentity.accountKind(getApplication()),
+				DeviceIdentity.appoints(getApplication()), courseId);
+	}
+
+	/**
+	 * The same question, asking {@code /me} first when this phone has never been told which
+	 * courses are this account's to appoint for: an install that has not synced since this
+	 * build arrived would otherwise hide the roll until it did.
+	 *
+	 * @param onAnswer run on a background thread
+	 */
+	public void checkMayAppointFor(long courseId,
+	                               @NonNull java.util.function.Consumer<Boolean> onAnswer) {
+
+		if (!hasServer() || !isSignedIn()
+				|| DeviceIdentity.accountKind(getApplication()) == AccountKind.STUDENT
+				|| DeviceIdentity.appoints(getApplication()) != null) {
+			onAnswer.accept(mayAppointFor(courseId));
+			return;
+		}
+
+		NETWORK_TASK_EXECUTOR.execute(() -> {
+			try {
+				DeviceIdentity.recordMe(getApplication(), new SyncClient(getApplication())
+						.me(DeviceIdentity.mayKeepARoll(getApplication())));
+
+			} catch (java.io.IOException couldNotAsk) {
+				// No button, then, until a sync asks again.
+			}
+			onAnswer.accept(mayAppointFor(courseId));
+		});
+	}
+
+	/**
+	 * The course's roll for the current session, from the server, with who represents it
+	 * already.
+	 *
+	 * @param onLoaded run on a background thread with the roll, and never when it could not
+	 *                 be had: the reason goes to {@link #getToastMessage()}
+	 */
+	public void loadRepresentativeRoll(
+			long courseId,
+			@NonNull java.util.function.Consumer<List<SyncJson.OnTheRoll>> onLoaded) {
+
+		int session = academicYearValue();
+		busy.setValue(true);
+
+		NETWORK_TASK_EXECUTOR.execute(() -> {
+			try {
+				onLoaded.accept(new SyncClient(getApplication()).roll(courseId, session));
+
+			} catch (java.io.IOException e) {
+				toastMessage.postValue(e instanceof SyncClient.Unavailable
+						? "The server could not be reached. Representatives are appointed "
+								+ "there, so try again when there is a connection."
+						: e.getMessage() == null ? "Could not read the roll" : e.getMessage());
+
+			} finally {
+				busy.postValue(false);
+			}
+		});
+	}
+
+	/**
+	 * Appoints and ends class representatives of a course for the current session, on the
+	 * server, one by one. Stops at the first refusal and says what it was: whatever was done
+	 * before it stands, and the roll shows it the next time it is opened.
+	 *
+	 * @param appoint the students to make representatives
+	 * @param end     the students whose appointment ends
+	 */
+	public void setRepresentatives(long courseId, @NonNull Set<Long> appoint,
+	                               @NonNull Set<Long> end) {
+
+		if (appoint.isEmpty() && end.isEmpty()) {
+			return;
+		}
+
+		int session = academicYearValue();
+		busy.setValue(true);
+
+		NETWORK_TASK_EXECUTOR.execute(() -> {
+			try {
+				SyncClient client = new SyncClient(getApplication());
+
+				for (long student : end) {
+					client.endAppointment(courseId, student, session);
+				}
+				for (long student : appoint) {
+					client.appoint(courseId, student, session);
+				}
+
+				toastMessage.postValue("Representatives saved");
+
+			} catch (java.io.IOException e) {
+				toastMessage.postValue(e.getMessage() == null
+						? "Could not save the representatives" : e.getMessage());
+
+			} finally {
+				busy.postValue(false);
+			}
+		});
 	}
 
 	/** The departments this account may make a batch for, in the order to offer them. */

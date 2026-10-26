@@ -903,11 +903,11 @@ public final class AccountsController {
 	/**
 	 * The courses a delegation can name, for the form's picker.
 	 * <p>
-	 * Read under the caller's own actor, so the list is what the policies let them see: every
-	 * course for an administrator, their own for a professor, the department's for its head.
-	 * Visibility is not authority — the grant itself is checked again below and twice in SQL —
-	 * but it is the right list to offer, because a course somebody cannot see is not one they
-	 * will be appointing a representative for.
+	 * The courses the caller could appoint one for, asked the way {@code Delegates.capacityFor}
+	 * asks it: every course for an administrator, the ones they teach for a professor, and the
+	 * department's for its head. Not every course they may read, which is a wider list -- a
+	 * course read for any other reason led to a roll that refused it. The grant itself is still
+	 * checked again on the roll and twice in SQL.
 	 */
 	@GetMapping("/courses")
 	@NonNull
@@ -923,6 +923,9 @@ public final class AccountsController {
 			     ResultSet results = statement.executeQuery(
 					     "SELECT course_id, course_code, course_topic, year::text AS year "
 							     + "FROM courses WHERE date_discontinued IS NULL "
+							     + "  AND (actor_instructs(course_id) "
+							     + "       OR actor_heads(offering_department) "
+							     + "       OR actor_has_role('ADMIN')) "
 							     + "ORDER BY course_code")) {
 
 				while (results.next()) {

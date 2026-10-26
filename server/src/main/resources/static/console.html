@@ -189,6 +189,11 @@
 <main>
     <div class="toasts" id="say"></div>
 
+    <!-- A professor with no course to appoint for and no trail to read: their work is on the phone. -->
+    <section id="nothingCard" hidden>
+        <p>There is nothing here for this account yet. Attendance is kept on the phone.</p>
+    </section>
+
     <!-- Signing in. One door: the staff one. See the note. -->
     <section id="signInCard">
         <h2>Sign in</h2>
@@ -728,6 +733,7 @@ function forget() {
     $("who").textContent = "";
     $("signOut").hidden = true;
     $("tabs").hidden = true;
+    $("nothingCard").hidden = true;
     $("rotateCard").hidden = true;
     $("panelAccounts").hidden = true;
     $("panelData").hidden = true;
@@ -736,6 +742,12 @@ function forget() {
     $("panelAudit").hidden = true;
     $("signInCard").hidden = false;
     $("live").textContent = "";
+}
+
+/** Whether the Data tab is offered: to everybody but a professor who holds no staff role. */
+function mayBrowseData() {
+    return me.kind !== "PROFESSOR"
+        || (me.roles || []).some((grant) => ["ADMIN", "OFFICE", "AUDITOR"].includes(grant.role));
 }
 
 /** Everything that happens once a session is usable. */
@@ -751,6 +763,10 @@ async function opened() {
     // all -- not greyed out, not there.
     $("tabAccounts").hidden = !admin;
     $("tabAudit").hidden = !anyTrail;
+
+    // A professor reads their courses and rolls on the phone, where they keep them; the
+    // tables here are for staff. One who also holds a staff role keeps them.
+    $("tabData").hidden = !mayBrowseData();
 
     // The two imports, each offered to whoever /me says may use it. Which rows land is
     // still the server's decision, row by row and column by column.
@@ -800,9 +816,9 @@ async function opened() {
 
     $("tabs").hidden = false;
 
-    // Land somewhere that exists. Data is the panel everybody has: what it shows is the
-    // policies' answer, which for a professor is their own courses and their own rolls.
-    show(admin ? "accounts" : (panel === "accounts" ? "data" : panel));
+    // Land somewhere that exists: the panel from before, if it is still this account's,
+    // else the first one that is.
+    show(admin ? "accounts" : panel);
     startPolling();
 }
 
@@ -816,9 +832,14 @@ function show(which) {
 
     // A hash in the URL, or a stale panel from before sign-in, could name one that is not
     // this account's. Fall back rather than opening something that will refuse.
-    if (which === "accounts" && me && !me.mayManageAccounts) {
-        which = "data";
+    const offered = Array.from($("tabs").children).filter((button) => !button.hidden)
+        .map((button) => button.dataset.panel);
+
+    if (!offered.includes(which)) {
+        which = offered.length ? offered[0] : null;
     }
+
+    $("nothingCard").hidden = which !== null;
 
     panel = which;
 
@@ -888,7 +909,7 @@ async function refresh(quietly) {
             await loadTables(!quietly);
         } else if (panel === "reps") {
             await loadRoll();
-        } else if (panel === "import") {
+        } else if (panel === "import" || panel === null) {
             // Nothing to poll: an import is something somebody does, and reloading the
             // panel under them would throw away a preview they are reading.
         } else {

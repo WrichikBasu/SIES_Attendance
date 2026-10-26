@@ -43,6 +43,7 @@ import java.util.stream.Stream;
 import in.basulabs.siesattendance.backend.AccountKind;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.StructuredId;
+import in.basulabs.siesattendance.backend.sync.SyncJson;
 import in.basulabs.siesattendance.server.SiesAttendanceServer;
 import in.basulabs.siesattendance.server.security.AccountDirectory;
 import in.basulabs.siesattendance.server.testing.TestPostgres;
@@ -181,7 +182,8 @@ class WireTest {
 				     'CHEMISTRY',        'FY', 1, 'MAJOR');
 
 				INSERT INTO course_instructor (course_id, prof_id) VALUES
-				    (3001, 1001), (3002, 1002);
+				    (3001, 1001), (3002, 1002)
+				    ON CONFLICT DO NOTHING;
 
 				INSERT INTO lectures
 				    (lecture_id, course_id, batch_id, start_at, start_zone, end_at, end_zone) VALUES
@@ -2250,6 +2252,32 @@ class WireTest {
 	}
 
 	@Test
+	void thePhoneIsToldWhichCoursesItMayAppointForAndReadsTheirRoll() throws Exception {
+
+		// Read with the phone's own reader, which is the only way to know the two agree.
+		String instructor = tokenFor("a.cs@sies.edu.in", "STAFF");
+
+		assertEquals(List.of(COURSE_CS), SyncJson.courseIdsIn(
+				get("/me", instructor, null).raw(), "appoints"), "the course they teach");
+		assertEquals(List.of(COURSE_CS), SyncJson.courseIdsIn(
+				get("/me", tokenFor("c.head@sies.edu.in", "STAFF"), null).raw(), "appoints"),
+				"the department's, for its head");
+		assertEquals(List.of(COURSE_CS, COURSE_CHEM), SyncJson.courseIdsIn(
+				get("/me", tokenFor("admin@sies.edu.in", "STAFF"), null).raw(), "appoints"));
+		assertEquals(List.of(), SyncJson.courseIdsIn(
+				get("/me", tokenFor("office@sies.edu.in", "STAFF"), null).raw(), "appoints"),
+				"the office reads every course and appoints for none");
+		assertEquals(List.of(), SyncJson.courseIdsIn(
+				get("/me", tokenFor("r.rao@sies.edu.in", "STUDENT"), null).raw(), "appoints"));
+
+		List<SyncJson.OnTheRoll> roll = SyncJson.parseRoll(get("/courses/" + COURSE_CS
+				+ "/roll?academicYear=" + SESSION, instructor, null).raw());
+
+		assertEquals(List.of(new SyncJson.OnTheRoll(STUDENT_CR, "R RAO", "CS-FY-001", true,
+				true)), roll);
+	}
+
+	@Test
 	void theHeadOfTheDepartmentMayAppointForItsCourses() throws Exception {
 
 		String head = tokenFor("c.head@sies.edu.in", "STAFF");
@@ -2374,6 +2402,19 @@ class WireTest {
 
 		assertEquals(1, mine.body().size(), mine::toString);
 		assertTrue(mine.raw().contains("CH-101"), mine.raw());
+
+		// The head, their department's.
+		Reply heads = get("/accounts/courses", tokenFor("c.head@sies.edu.in", "STAFF"), null);
+
+		assertEquals(1, heads.body().size(), heads::toString);
+		assertTrue(heads.raw().contains("CS-101"), heads.raw());
+
+		// And the office none: it reads every course and appoints for none, and a course
+		// offered here is a roll that refuses it.
+		Reply office = get("/accounts/courses", tokenFor("office@sies.edu.in", "STAFF"), null);
+
+		assertEquals(200, office.status(), office::toString);
+		assertEquals(0, office.body().size(), office::toString);
 
 		// And the sessions, which the representatives panel cannot work without and which
 		// are nobody's secret.

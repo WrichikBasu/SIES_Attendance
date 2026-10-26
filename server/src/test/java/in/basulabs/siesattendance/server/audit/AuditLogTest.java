@@ -87,7 +87,8 @@ class AuditLogTest {
 				    VALUES (3001, 1001, 'CS-101', 'Programming', 'BSc_unaided',
 				            'COMPUTER_SCIENCE', 'FY', 1, 'MAJOR');
 
-				INSERT INTO course_instructor (course_id, prof_id) VALUES (3001, 1001);
+				INSERT INTO course_instructor (course_id, prof_id) VALUES (3001, 1001)
+				    ON CONFLICT DO NOTHING;
 
 				INSERT INTO batch_desc (batch_id, batch_name, batch_desc, academic_year)
 				    VALUES (4001, 'Batch A', 'the whole class', 2025);

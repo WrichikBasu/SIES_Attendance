@@ -164,7 +164,8 @@ class SyncTest {
 				     'CHEMISTRY',        'FY', 1, 'MAJOR');
 
 				INSERT INTO course_instructor (course_id, prof_id) VALUES
-				    (3001, 1001), (3002, 1002);
+				    (3001, 1001), (3002, 1002)
+				    ON CONFLICT DO NOTHING;
 				""");
 
 		accountProfCs = account(AccountKind.PROFESSOR, PROF_CS, null, "a.cs@sies.edu.in");
@@ -494,6 +495,47 @@ class SyncTest {
 		assertEquals(3, pushed.body().get("accepted").intValue(), pushed::toString);
 		assertEquals(1, count("SELECT count(*) FROM batch_student_map WHERE batch_id = "
 				+ batchID));
+	}
+
+	@Test
+	void aCourseAHeadMakesForAnotherProfessorIsTaughtByThem() throws Exception {
+
+		Phone phone = signInWithAPhone("c.head@sies.edu.in");
+		long courseID = phone.key(640);
+
+		Map<String, Object> course = new LinkedHashMap<>();
+		course.put("courseID", courseID);
+		course.put("profID", PROF_CS);
+		course.put("courseCode", "CS-OE-1");
+		course.put("courseTopic", "Computing for all");
+		course.put("stream", "BSc");
+		course.put("offeringDepartment", "COMPUTER_SCIENCE");
+		course.put("year", "SY");
+		course.put("semester", 3);
+		course.put("courseType", "OE");
+
+		// The course alone, as when the phone's course_instructor intent never arrives: the
+		// coordinator teaches the course all the same (V37).
+		Reply pushed = push(phone, List.of(
+				intent("courses", List.of(courseID), "UPSERT", course)));
+
+		assertEquals(200, pushed.status(), pushed::toString);
+		assertEquals(1, pushed.body().get("accepted").intValue(), pushed::toString);
+
+		String coordinator = "SELECT count(*) FROM course_instructor WHERE course_id = "
+				+ courseID + " AND prof_id = " + PROF_CS;
+		assertEquals(1, count(coordinator));
+
+		// And the phone's own intent for that row, when it does arrive, finds it there.
+		Map<String, Object> instructor = new LinkedHashMap<>();
+		instructor.put("courseID", courseID);
+		instructor.put("profID", PROF_CS);
+
+		Reply again = push(phone, List.of(
+				intent("course_instructor", List.of(courseID, PROF_CS), "UPSERT", instructor)));
+
+		assertEquals(1, again.body().get("accepted").intValue(), again::toString);
+		assertEquals(1, count(coordinator));
 	}
 
 	@Test
