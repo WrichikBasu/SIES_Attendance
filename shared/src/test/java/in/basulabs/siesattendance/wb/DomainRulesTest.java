@@ -577,9 +577,7 @@ public class DomainRulesTest {
 	public void theTypesFollowingTheOfferingDepartmentAreTheOnesMatchedOnTheMajor() {
 
 		// Golden, and deliberately so: this list is what the server's
-		// courses -> department_stream foreign key applies to, and it has to be read against
-		// the roster query in DaoStudent, which is the only place that says which of a
-		// student's three departments each type is matched on. Changing it changes which
+		// courses -> department_stream foreign key applies to. Changing it changes which
 		// courses the server will accept.
 		assertEquals(Arrays.asList(CourseType.MAJOR, CourseType.MAJOR_PRACTICALS,
 						CourseType.DSE, CourseType.DSE_PRACTICALS),
@@ -590,7 +588,7 @@ public class DomainRulesTest {
 		assertFalse(CourseType.MINOR_PRACTICALS.followsOfferingDepartment());
 		assertFalse(CourseType.OE.followsOfferingDepartment());
 
-		// These carry no department condition at all, so their offering department records
+		// These are taken by a whole year and stream, so their offering department records
 		// only who teaches them.
 		for (CourseType type : Arrays.asList(CourseType.VSC, CourseType.VSC_PRACTICALS,
 				CourseType.SEC, CourseType.SEC_PRACTICALS, CourseType.AEC, CourseType.IKS,
@@ -629,7 +627,7 @@ public class DomainRulesTest {
 
 		// Mathematics is studied as BSc and MSc, never BSc_unaided. A Mathematics minor read
 		// to a BSc_unaided Computer Science class is nonetheless ordinary: the stream is the
-		// class being taught, and the roster query matches it against the student's own.
+		// class being taught.
 		assertNull(AcademicRules.validateCourse(Department.MATHEMATICS, Stream.BSc_unaided,
 				Year.FY, 1, CourseType.MINOR));
 		assertNull(AcademicRules.validateCourse(Department.MATHEMATICS, Stream.BSc_unaided,

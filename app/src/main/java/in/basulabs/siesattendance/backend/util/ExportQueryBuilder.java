@@ -34,8 +34,8 @@ public final class ExportQueryBuilder {
 	 * course they are on the roll for, with lectures held and lectures attended.
 	 * <p>
 	 * The join from students to courses repeats the roster condition from
-	 * {@code DaoStudent.getRollForCourseSync}: a course's linked batches for the session when it
-	 * has any, the course-type rules when it has none. The two have to agree, since a student
+	 * {@code DaoStudent.getRollForCourseSync}: the members of the course's linked batches for the
+	 * session, and nobody else. The two have to agree, since a student
 	 * who counts as taking a course in one and not the other would appear on a sheet without
 	 * appearing in the report, or the reverse.
 	 * <p>
@@ -84,30 +84,13 @@ public final class ExportQueryBuilder {
 				.append("INNER JOIN student_year y ON y.studentID = s.studentID ")
 				.append("   AND y.academicYear = ? ")
 				.append("INNER JOIN academic_years ay ON ay.academicYear = ? ")
-				.append("INNER JOIN courses c ON CASE ")
-				.append("   WHEN EXISTS (SELECT 1 FROM course_batch_map cb ")
-				.append("                INNER JOIN batch_desc b ON b.batchID = cb.batchID ")
-				.append("                WHERE cb.courseID = c.courseID ")
-				.append("                  AND b.academicYear = ?) ")
-				.append("   THEN EXISTS (SELECT 1 FROM course_batch_map cb ")
-				.append("                INNER JOIN batch_student_map m ON m.batchID = cb.batchID ")
-				.append("                WHERE cb.courseID = c.courseID ")
-				.append("                  AND m.studentID = y.studentID ")
-				.append("                  AND m.academicYear = ?) ")
-				.append("   ELSE (c.year = y.year AND c.stream = y.stream AND (")
-				.append("      (c.courseType IN ('MAJOR', 'MAJOR_PRACTICALS', ")
-				.append("                        'DSE', 'DSE_PRACTICALS') ")
-				.append("         AND y.majorDept = c.offeringDepartment) ")
-				.append("      OR (c.courseType IN ('MINOR', 'MINOR_PRACTICALS') ")
-				.append("         AND (y.minorDept = c.offeringDepartment ")
-				.append("              OR y.majorDept = c.offeringDepartment)) ")
-				.append("      OR (c.courseType = 'OE' AND y.oeDept = c.offeringDepartment) ")
-				.append("      OR c.courseType IN ('AEC', 'IKS', 'VEC', 'VSC', 'VSC_PRACTICALS', ")
-				.append("                          'SEC', 'SEC_PRACTICALS'))) ")
-				.append("END ");
-		// The two in student_year and academic_years, then the two in the roll condition,
-		// in the order the placeholders appear.
-		args.add(academicYear);
+				.append("INNER JOIN courses c ON EXISTS (SELECT 1 FROM course_batch_map cb ")
+				.append("   INNER JOIN batch_student_map m ON m.batchID = cb.batchID ")
+				.append("   WHERE cb.courseID = c.courseID ")
+				.append("     AND m.studentID = y.studentID ")
+				.append("     AND m.academicYear = ?) ");
+		// The two in student_year and academic_years, then the one in the roll condition, in
+		// the order the placeholders appear.
 		args.add(academicYear);
 		args.add(academicYear);
 		args.add(academicYear);

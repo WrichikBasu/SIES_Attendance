@@ -341,6 +341,11 @@ class AuditLogTest {
 	@Test
 	void aDelegatedChangeRecordsTheGrantThatAllowedIt() throws Exception {
 
+		// On the course's roll, which is its batch: nobody else can be its representative.
+		postgres.asSuperuser("INSERT INTO batch_student_map (batch_id, student_id, academic_year) "
+				+ "VALUES (4001, " + STUDENT + ", " + SESSION + "); "
+				+ "INSERT INTO course_batch_map (course_id, batch_id) VALUES (" + COURSE
+				+ ", 4001)");
 		postgres.asSuperuser(
 				"INSERT INTO attendance_delegate (student_id, course_id, academic_year, "
 						+ "granted_by, granted_as) VALUES (" + STUDENT + ", " + COURSE + ", "

@@ -8,23 +8,21 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * How a student is taking a course, which decides who is on its roll.
+ * How a student is taking a course. A course's roll is its batches, whatever its type; the
+ * type decides whether its stream has to be one its offering department runs (see
+ * {@link #followsOfferingDepartment()}), and what the reports group it under.
  * <p>
  * Constants are stored in the database by name, so a name may not be changed or removed once
- * courses exist that use it. The labels are display text and can change freely. New constants
- * are safe to add, but a constant that carries no department condition also has to be listed in
- * the roster query in {@code DaoStudent}, or courses of that type will find no students at all.
+ * courses exist that use it. The labels are display text and can change freely. A new constant
+ * is appended, never inserted, because the server's {@code course_type} enum can only grow at
+ * the end, and needs a migration adding it there.
  */
 public enum CourseType {
 
 	/** Taken by students majoring in the offering department. */
 	MAJOR("Major", true),
 
-	/**
-	 * Taken as a secondary subject. The roll for a minor course also admits students whose
-	 * major is the offering department, because the minor field on the student form is
-	 * optional and often left blank; see the roster query in {@code DaoStudent} for why.
-	 */
+	/** Taken as a secondary subject, usually taught by another department. */
 	MINOR("Minor", false),
 
 	/** The laboratory half of a major course, following the same department condition. */
@@ -35,22 +33,20 @@ public enum CourseType {
 
 	/**
 	 * Discipline specific elective. Chosen from the basket the student's own discipline offers,
-	 * so it carries the same department condition as a major course: the roll is the students
-	 * majoring in the offering department.
+	 * so its students are the offering department's own majors, as for a major course.
 	 */
 	DSE("DSE", true),
 
 	/** The laboratory half of a DSE, following the same department condition. */
 	DSE_PRACTICALS("DSE practicals", true),
 
-	/** Open elective, matched against the student's declared OE department. */
+	/** Open elective, taken from another department's offering. */
 	OE("OE", false),
 
 	/*
-	 * The types below are taken by a whole year and stream regardless of department, so no
-	 * department condition applies to them at all. They are the ones that have to be listed
-	 * explicitly in the roster query. Their offering department records who teaches them and is
-	 * not the students' own, which is why none of them follows it.
+	 * The types below are taken by a whole year and stream regardless of department. Their
+	 * offering department records who teaches them and is not the students' own, which is why
+	 * none of them follows it.
 	 */
 
 	VSC("VSC", false),
@@ -122,15 +118,13 @@ public enum CourseType {
 	/**
 	 * Whether the offering department is necessarily the student's own major department.
 	 * <p>
-	 * True for a major, a DSE and the laboratory halves of both: the roster query in
-	 * {@code DaoStudent} admits a student only when {@code majorDept = offeringDepartment}, so
-	 * the department teaching the course is by definition one the student's own stream is
-	 * studied under.
+	 * True for a major, a DSE and the laboratory halves of both: they are taken by the offering
+	 * department's own majors, so the department teaching the course is by definition one the
+	 * student's own stream is studied under.
 	 * <p>
 	 * False for everything else, for two different reasons. A minor and an open elective are
-	 * deliberately taught by another department, matched on {@code minorDept} and
-	 * {@code oeDept}. AEC, IKS, VEC, VSC and SEC carry no department condition at all, the whole
-	 * year and stream taking them, so their offering department only records who teaches them.
+	 * deliberately taught by another department. AEC, IKS, VEC, VSC and SEC are taken by the
+	 * whole year and stream, so their offering department only records who teaches them.
 	 * <p>
 	 * What this decides is whether a course's stream has to be one its offering department
 	 * offers. For a type that follows the department it does, and the server enforces that as a

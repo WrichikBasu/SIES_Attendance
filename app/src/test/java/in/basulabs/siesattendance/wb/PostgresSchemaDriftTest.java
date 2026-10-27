@@ -203,25 +203,18 @@ public class PostgresSchemaDriftTest {
 		}
 	}
 
-	// ── The roll, defined once in V23 ────────────────────────────────────
+	// ── The roll, defined once ───────────────────────────────────────────
 
 	/*
-	 * course_admits() is the one definition of a course's roll on the server: the members of
-	 * the batches linked to the course for the session when it has any, and the course-type
-	 * rules -- a translation of DaoStudent.getRollForCourseSync -- when it has none. Until V23
-	 * the rules were written twice, in roll_for_course() and actor_reaches_enrolment(), and
-	 * held together by these tests. Now both of those call course_admits(), and the tests check
-	 * that they do as well as what it says.
-	 *
-	 * The thing that can still go wrong is a course type the rules never mention: it matches
-	 * nobody, so a course of that type with no batch has an empty roll, no CR can be designated
-	 * for it, and nothing fails loudly.
+	 * course_admits() is the one definition of a course's roll on the server: the members of the
+	 * batches linked to the course for the session, a translation of
+	 * DaoStudent.getRollForCourseSync. V23 wrote it, with a fallback onto course-type rules for a
+	 * course with no batch; V41 removed the fallback. roll_for_course() and
+	 * actor_reaches_enrolment() both call it, and the tests check that they do as well as what
+	 * it says.
 	 */
 
-	/**
-	 * course_admits() as the last migration to define it left it: V23 wrote it, and a later one
-	 * replaces it whenever a course type is added (V40).
-	 */
+	/** course_admits() as the last migration to define it left it. */
 	private static String courseAdmits() throws IOException {
 
 		String latest = null;
@@ -238,57 +231,17 @@ public class PostgresSchemaDriftTest {
 	}
 
 	@Test
-	public void theRollAccountsForEveryCourseType() throws IOException {
+	public void aCourseTakesItsRollFromItsBatchesAlone() throws IOException {
 
 		String body = courseAdmits();
 
-		for (CourseType type : CourseType.values()) {
-			assertTrue("the latest course_admits never mentions "
-							+ type.name() + ", so a course of that type with no batch would "
-							+ "have an empty roll and no CR could be designated for it",
-					body.contains("'" + type.name() + "'"));
-		}
-	}
-
-	@Test
-	public void theRollMatchesTheDepartmentTheAppDoes() throws IOException {
-
-		String body = courseAdmits();
-
-		// The types that follow the offering department are matched on the student's major,
-		// and V4's exemption list is the same list. If these ever disagree, one of the two is
-		// describing a college that does not exist.
-		List<String> quoted = new ArrayList<>();
-		for (CourseType type : CourseType.followingOfferingDepartment()) {
-			quoted.add("'" + type.name() + "'");
-		}
-
-		assertTrue("the major-department branch of course_admits should match "
-						+ "CourseType.followingOfferingDepartment(), which reads "
-						+ String.join(", ", quoted) + "\nThe function reads: " + body,
-				body.contains("c.course_type IN (" + String.join(", ", quoted) + ")"));
-
-		// The minor branch deliberately admits the major as well -- see the roster query's
-		// javadoc.
-		assertTrue("the minor branch must admit the student's major department too, because "
-						+ "the minor field on the student form is optional and often blank",
-				body.contains("e_minor = c.offering_department")
-						&& body.contains("e_major = c.offering_department"));
-		assertTrue("the open-elective branch must match the enrolment's oe department",
-				body.contains("e_oe = c.offering_department"));
-	}
-
-	@Test
-	public void aCourseWithBatchesTakesItsRollFromThem() throws IOException {
-
-		String body = courseAdmits();
-
-		assertTrue("course_admits must ask whether the course has batches for the session "
-						+ "before falling back to the rules",
-				body.contains("WHEN course_has_batches(for_course, session_year)"));
-		assertTrue("and, when it does, admit exactly their members in that session",
+		assertTrue("course_admits must admit exactly the members of the course's batches in "
+						+ "that session: " + body,
 				body.contains("m.student_id = e_student")
 						&& body.contains("m.academic_year = session_year"));
+		assertFalse("course_admits must not fall back on the course type, which the app's roll "
+						+ "no longer does: " + body,
+				body.contains("course_type"));
 	}
 
 	@Test

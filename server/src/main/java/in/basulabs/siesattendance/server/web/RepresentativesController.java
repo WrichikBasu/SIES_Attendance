@@ -161,7 +161,7 @@ public final class RepresentativesController {
 				throw new ApiException(409, "not_on_the_roll",
 						"That student is not on this course's roll for " + academicYear
 								+ ", so they cannot be its class representative. The roll "
-								+ "comes from their enrolment, which is the office's.");
+								+ "is the students in the batches linked to the course.");
 			}
 
 			Delegates.grant(connection, studentId, courseId, academicYear, capacity,

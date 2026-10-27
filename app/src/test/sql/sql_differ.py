@@ -97,8 +97,8 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 # minor and an English open elective to a BSc_unaided class, which the schema now rejects
 # and which FragmentAddCourse would never have let anyone create: a course's stream must be
 # one its offering department actually runs. The minor and the open elective here come from
-# Information Technology and Environmental Science, which do run BSc_unaided, so the roster
-# join's MINOR and OE branches are still exercised with data the app would accept.
+# Information Technology and Environmental Science, which do run BSc_unaided, so the
+# courses are ones the app would accept.
 #
 # Second, it carries five extra lectures around the turn of the year and one just after
 # midnight, because those are the dates where the two dialects' date arithmetic could
@@ -198,8 +198,8 @@ class Fixture:
     enrolments: list[Enrolment] = field(default_factory=list)
     courses: list[Course] = field(default_factory=list)
     batches: list[Batch] = field(default_factory=list)
-    # (course_id, batch_id): a course with a batch linked for the session takes its roll
-    # from the batch (V23), and one without falls back to the course-type rules.
+    # (course_id, batch_id): a course's roll is the members of the batches linked to it
+    # for the session (V41), and a course with none has nobody on it.
     course_batches: list[tuple[int, int]] = field(default_factory=list)
     lectures: list[Lecture] = field(default_factory=list)
     marks: list[Mark] = field(default_factory=list)
@@ -265,14 +265,23 @@ FIXTURE = Fixture(
         Batch(2, "Batch B", None, 2025, (2,)),
         # A batch inside a batch, with no lecture of its own. Its student sits Batch A's.
         Batch(3, "Batch A1", None, 2025, (1,)),
-        # The students who chose the Ecology elective: one the rules would also have put
-        # there, and a Physics BSc student no rule could have, being in another stream.
+        # The students who chose the Ecology elective, one of them a Physics BSc student
+        # from another stream.
         Batch(4, "Ecology takers", None, 2025, (1, 4)),
+        # A course's roll is its batches (V41), so every course here has the ones it is
+        # taught to.
+        Batch(5, "SY CS", None, 2025, (1, 2, 3)),
+        Batch(6, "IT minor", None, 2025, (1,)),
+        Batch(7, "SY Physics", None, 2025, (4, 5)),
     ],
     course_batches=[
-        # EV201 takes its roll from the batch, so Sneha (OE ENVIRONMENTAL_SCIENCE, not in
-        # the batch) leaves its roll and Meera (Physics, BSc) joins it.
+        (1, 5), (5, 5), (6, 5),
+        (2, 1), (2, 2),
+        (3, 6),
+        # Sneha (OE ENVIRONMENTAL_SCIENCE, not in the batch) is not on EV201's roll, and
+        # Meera (Physics, BSc) is.
         (4, 4),
+        (7, 7),
     ],
     lectures=[
         Lecture(1, 1, None, (2025, 7, 10, 10, 0), (2025, 7, 10, 11, 0)),
@@ -412,7 +421,7 @@ def build_sqlite() -> sqlite3.Connection:
         ))
 
     for batch in FIXTURE.batches:
-        c.execute("INSERT INTO batch_desc VALUES (?,?,?,?)", (
+        c.execute("INSERT INTO batch_desc (batchID, batchName, batchDesc, academicYear) VALUES (?,?,?,?)", (
             batch.batch_id, batch.name, batch.description, batch.academic_year,
         ))
         for student_id in batch.members:

@@ -197,7 +197,7 @@
 
     <string name="title_take_attendance">Take attendance</string>
     <string name="roll_header_for">Students · %1$s</string>
-    <string name="empty_roll_for_course">No students are on this course\'s roll for this session.</string>
+    <string name="empty_roll_for_course">No students are on this course\'s roll for this session. A course\'s roll is the students in its batches.</string>
     <string name="label_whole_class">Whole class</string>
 
 

@@ -105,9 +105,9 @@ public class SqlBuilderTest {
 
 		assertEquals("argument count must match placeholder count",
 				placeholders(query.getSql()), argsOf(query).size());
-		// Five each for held and attended, two for the session joins, and two for the roll: a
-		// course's batches for the session, and the student's membership of them.
-		assertEquals(14, argsOf(query).size());
+		// Five each for held and attended, two for the session joins, and one for the roll:
+		// the student's membership, that session, of the course's batches.
+		assertEquals(13, argsOf(query).size());
 	}
 
 	@Test
@@ -232,16 +232,14 @@ public class SqlBuilderTest {
 	}
 
 	@Test
-	public void theExportRosterConditionCoversEveryCourseType() {
-		// A course type missing from the condition matches nobody, which shows up in the app
-		// as a course with no students at all.
+	public void theExportRosterIsTheCoursesBatchesAlone() {
+		// A course's roll is its batches (V41). The course type used to be a fallback for a
+		// course with none, and DaoStudent.getRollForCourseSync no longer has it.
 		String sql = ExportQueryBuilder.build(2025, new ExportFilter()).getSql();
 
-		for (CourseType type : CourseType.values()) {
-			assertTrue("CourseType." + type.name()
-							+ " is not accounted for in the export roster condition",
-					sql.contains("'" + type.name() + "'"));
-		}
+		assertTrue(sql.contains("course_batch_map"));
+		assertFalse("the roll must not fall back on the course type",
+				sql.contains("courseType"));
 	}
 
 	@Test

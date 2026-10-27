@@ -45,8 +45,8 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * <p>
  * The academic fields are linked through {@link DropdownBinder}, so choosing a department
  * narrows the streams and choosing a stream narrows the years. The course type is independent of
- * all of them, and is what decides who ends up on the course's roll; see the roster query in
- * {@code DaoStudent}.
+ * all of them. None of these decides who is on the course's roll: that is the batches linked
+ * to it.
  * <p>
  * A course cannot be saved without a coordinator, which is why the form warns up front when no
  * professors have been entered yet rather than failing at save time.

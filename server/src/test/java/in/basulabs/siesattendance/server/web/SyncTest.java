@@ -894,6 +894,15 @@ class SyncTest {
 		// for a delete held down by a child.
 		long student = newStudentOnTheCsRoll("R REPRESENTS", "r.represents@sies.edu.in");
 
+		// On CS-101's roll, which is its batch: only a student on it can represent it.
+		postgres.asSuperuser("""
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year, department)
+				    VALUES (5901, 'FY CS', %d, 'COMPUTER_SCIENCE');
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year)
+				    VALUES (5901, %d, %d);
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES (%d, 5901);
+				""".formatted(SESSION, student, SESSION, COURSE_CS));
+
 		// Designated by the head, in the capacity they actually hold: the BEFORE trigger on
 		// attendance_delegate checks that, whoever runs the statement.
 		postgres.asSuperuser("INSERT INTO attendance_delegate (student_id, course_id, "

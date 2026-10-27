@@ -185,6 +185,18 @@ class WireTest {
 				    (3001, 1001), (3002, 1002)
 				    ON CONFLICT DO NOTHING;
 
+				-- A course's roll is its batches (V41): each course's class, for 2025.
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year, department) VALUES
+				    (5901, 'FY CS',   2025, 'COMPUTER_SCIENCE'),
+				    (5902, 'FY CHEM', 2025, 'CHEMISTRY');
+
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year) VALUES
+				    (5901, 2001, 2025),
+				    (5902, 2002, 2025);
+
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES
+				    (3001, 5901), (3002, 5902);
+
 				INSERT INTO lectures
 				    (lecture_id, course_id, batch_id, start_at, start_zone, end_at, end_zone) VALUES
 				    (4001, 3001, NULL, '2025-07-14 09:00:00+05:30', 'Asia/Kolkata',
@@ -818,14 +830,8 @@ class WireTest {
 	@Test
 	void anAttendanceSheetIsPreviewedAndThenImported() throws Exception {
 
-		// A batch for the class, which every imported lecture is filed against.
-		postgres.asSuperuser("""
-				INSERT INTO batch_desc (batch_id, batch_name, academic_year, department)
-				    VALUES (5101, 'CS-101 class', 2025, 'COMPUTER_SCIENCE');
-				INSERT INTO batch_student_map (batch_id, student_id, academic_year)
-				    VALUES (5101, 2001, 2025);
-				""");
-
+		// Every imported lecture is filed against a batch of the class: the fixture's FY CS,
+		// which is also CS-101's roll.
 		String sheet = """
 				Course code,CS-101
 				Date,21/07/2025
@@ -841,7 +847,7 @@ class WireTest {
 
 		assertEquals(200, preview.status(), preview::toString);
 		assertTrue(preview.body().get("canImport").booleanValue(), preview::toString);
-		assertEquals("CS-101 class",
+		assertEquals("FY CS",
 				preview.body().get("lectures").get(0).get("batchName").stringValue());
 		assertEquals(lectures, count("SELECT count(*) FROM lectures"), "a preview writes nothing");
 
@@ -2376,15 +2382,17 @@ class WireTest {
 		// a head appointed for 2025-26 alone may not designate for 2026-27.
 		String admin = tokenFor("admin@sies.edu.in", "STAFF");
 
-		// An enrolment in the other session, so the roll check cannot refuse first and mask
-		// the authority check. In the course's own year, not the next one: roll_for_course
-		// matches the enrolment's year against the course's, so a second-year enrolment is
-		// not on a first-year course's roll and the test would have been asking the wrong
-		// question with a right-looking answer.
+		// On the course's roll in the other session too, which is a batch of that session
+		// linked to it, so the roll check cannot refuse first and mask the authority check.
 		postgres.asSuperuser("""
 				INSERT INTO student_year
 				    (student_id, academic_year, roll_no, year, stream, major_dept, semester)
 				VALUES (2001, 2026, 'CS-FY-002', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 1);
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year, department)
+				    VALUES (5904, 'FY CS', 2026, 'COMPUTER_SCIENCE');
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year)
+				    VALUES (5904, 2001, 2026);
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3001, 5904);
 				""");
 
 		Reply refused = post("/courses/" + COURSE_CS + "/representatives", json(
@@ -2411,7 +2419,7 @@ class WireTest {
 
 		assertEquals(409, refused.status(), refused::toString);
 		assertEquals("not_on_the_roll", refused.body().get("code").stringValue());
-		assertTrue(refused.body().get("message").stringValue().contains("enrolment"),
+		assertTrue(refused.body().get("message").stringValue().contains("batches"),
 				"and it says where a roll comes from: " + refused.raw());
 	}
 

@@ -1769,8 +1769,8 @@ async function loadRoll() {
     });
 
     $("rollNote").textContent = roll.length === 0
-        ? "Nobody is on this roll for that session. The roll comes from enrolments, which "
-            + "are the office's."
+        ? "Nobody is on this roll for that session. The roll is the students in the batches "
+            + "linked to the course."
         : roll.length + " on the roll · "
             + roll.filter((s) => s.represents).length + " appointed · "
             + roll.filter((s) => !s.hasAccount).length + " without an account";

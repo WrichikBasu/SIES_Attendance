@@ -132,6 +132,18 @@ class RowLevelSecurityTest {
 				    (3001, 1001), (3002, 1002)
 				    ON CONFLICT DO NOTHING;
 
+				-- A course's roll is its batches (V41): each course's class, for 2025.
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year, department) VALUES
+				    (5901, 'FY CS',   2025, 'COMPUTER_SCIENCE'),
+				    (5902, 'FY CHEM', 2025, 'CHEMISTRY');
+
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year) VALUES
+				    (5901, 2001, 2025),
+				    (5902, 2002, 2025);
+
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES
+				    (3001, 5901), (3002, 5902);
+
 				INSERT INTO lectures
 				    (lecture_id, course_id, batch_id, start_at, start_zone, end_at, end_zone) VALUES
 				    (4001, 3001, NULL, '2025-07-14 09:00:00+05:30', 'Asia/Kolkata',
@@ -472,7 +484,8 @@ class RowLevelSecurityTest {
 	void theRosterFunctionPutsACrossDepartmentMinorOnTheRoll() throws Exception {
 
 		// V4's case, now load-bearing for the grant trigger: a Mathematics minor read to a
-		// BSc_unaided class. If roll_for_course got this wrong, no CR could be designated for
+		// BSc_unaided class. Its roll is its batch (V41), whichever department the batch's
+		// students major in. If roll_for_course got this wrong, no CR could be designated for
 		// a minor at all.
 		postgres.asSuperuser("""
 				INSERT INTO professors (prof_id, name, email, department, designation)
@@ -486,6 +499,12 @@ class RowLevelSecurityTest {
 				     offering_department, year, semester, course_type)
 				    VALUES (3003, 1004, 'MATH-MIN-1', 'Discrete', 'BSc_unaided',
 				            'MATHEMATICS', 'FY', 1, 'MINOR');
+
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year, department)
+				    VALUES (5903, 'Maths minor', 2025, 'MATHEMATICS');
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year)
+				    VALUES (5903, 2001, 2025);
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3003, 5903);
 				""");
 
 		try (Connection as = postgres.connection()) {
@@ -545,6 +564,12 @@ class RowLevelSecurityTest {
 
 				INSERT INTO course_instructor (course_id, prof_id) VALUES (3003, 1004)
 				    ON CONFLICT DO NOTHING;
+
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year, department)
+				    VALUES (5903, 'Maths minor', 2025, 'MATHEMATICS');
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year)
+				    VALUES (5903, 2001, 2025);
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3003, 5903);
 				""");
 
 		long accountMath = createAccount("PROFESSOR", 1004L, null, "d.math@sies.edu.in");
@@ -574,6 +599,9 @@ class RowLevelSecurityTest {
 				    (student_id, academic_year, roll_no, year, stream, major_dept, semester)
 				    VALUES (2003, 2025, 'CS-FY-002', 'FY', 'BSc_unaided',
 				            'COMPUTER_SCIENCE', 1);
+
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year)
+				    VALUES (5901, 2003, 2025);
 				""");
 
 		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
@@ -1005,21 +1033,25 @@ class RowLevelSecurityTest {
 	}
 
 	/*
-	 * V23: where a course has a batch linked for the session, its roll is the batch. The
-	 * fixture's CS-101 is a first-year major course, so by the rules its roll is R RAO, the one
-	 * Computer Science major; S SHAH is a Chemistry major and on nobody's CS roll.
+	 * V41: a course's roll is the batches linked to it for the session, and nothing else. The
+	 * fixture links CS-101 to FY CS, which holds R RAO.
 	 */
 
 	@Test
-	void aCourseWithABatchTakesItsRollFromTheBatch() throws Exception {
+	void aCourseTakesItsRollFromItsBatchesAlone() throws Exception {
 
-		String roll = "SELECT string_agg(student_id::text, ',' ORDER BY student_id) "
-				+ "FROM roll_for_course(" + COURSE_CS + ", " + SESSION + ")";
+		String roll = "SELECT coalesce(string_agg(student_id::text, ',' ORDER BY student_id), "
+				+ "'none') FROM roll_for_course(" + COURSE_CS + ", " + SESSION + ")";
 
-		assertEquals("2001", text(roll), "by the rules, before any batch");
+		assertEquals("2001", text(roll), "the members of the course's batch");
+
+		// Unlinked, the course has nobody: there is no falling back on its type, although
+		// R RAO is still a first-year Computer Science major.
+		postgres.asSuperuser("DELETE FROM course_batch_map WHERE course_id = 3001");
+		assertEquals("none", text(roll), "a course with no batch has nobody on its roll");
 
 		// The batch holds the Chemistry major alone -- somebody from another department and
-		// another stream, which is exactly what no rule could have put on this roll.
+		// another stream, whom the batch alone puts on this roll.
 		postgres.asSuperuser("""
 				INSERT INTO batch_desc (batch_id, batch_name, academic_year)
 				    VALUES (5001, 'Chosen it', 2025);
@@ -1028,7 +1060,7 @@ class RowLevelSecurityTest {
 				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3001, 5001);
 				""");
 
-		assertEquals("2002", text(roll), "the batch is the roll now, and only the batch");
+		assertEquals("2002", text(roll), "the batch is the roll, and only the batch");
 
 		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
 			assertEquals(1, count(as, "SELECT count(*) FROM student_year "
@@ -1041,13 +1073,11 @@ class RowLevelSecurityTest {
 					"and so does the course's representative");
 		}
 
-		// A batch from another session says nothing about this one's roll: next session has
-		// no batch for the course, so the rules decide it -- and by them a first-year course
-		// has nobody, because R RAO is enrolled in second year by then. Had the 2025 batch
+		// A batch from another session says nothing about this one's roll. Had the 2025 batch
 		// leaked across, S SHAH would be here.
 		assertEquals("none", text("SELECT coalesce(string_agg(student_id::text, ','), 'none') "
 						+ "FROM roll_for_course(" + COURSE_CS + ", " + NEXT_SESSION + ")"),
-				"next session has no batch for the course, so the rules decide it");
+				"next session has no batch for the course, so nobody is on its roll");
 	}
 
 	@Test
@@ -1085,8 +1115,8 @@ class RowLevelSecurityTest {
 		}
 
 		try (Connection as = postgres.actingAs(accountOffice, null, null)) {
-			assertEquals(3, count(as, "SELECT count(*) FROM batch_desc"),
-					"the office still reads every batch");
+			assertEquals(5, count(as, "SELECT count(*) FROM batch_desc"),
+					"the office still reads every batch, the fixture's two among them");
 		}
 	}
 

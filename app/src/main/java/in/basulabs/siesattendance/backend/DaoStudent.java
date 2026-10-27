@@ -443,75 +443,31 @@ public abstract class DaoStudent {
 	// ── The roll for a course ────────────────────────────────────────────
 
 	/**
-	 * Every student who takes this course in the given academic year.
+	 * Every student who takes this course in the given academic year: the members, that year, of
+	 * the batches linked to it.
 	 * <p>
-	 * <b>A course with batches linked for the session</b> takes its roll from them: the members
-	 * of those batches, from whatever department, year or stream. A batch is somebody's actual
-	 * list of who sits the course, and it is the only way to say an open elective is taken
-	 * across streams, or that a practical course is two halves. Only a course with no batch
-	 * linked for the session falls back to the rules below. The server's {@code course_admits()}
-	 * (V23) is the same decision, and the two export builders repeat it; all three have to
-	 * change together.
+	 * A batch is somebody's actual list of who sits the course, and attendance is taken against
+	 * one, so it is the only answer to who takes a course. A course with no batch linked for the
+	 * session has nobody on its roll. There used to be a fallback that guessed the roll from the
+	 * course type, the year, the stream and one of the student's departments; it was removed,
+	 * because it described a class nobody could mark. The server's {@code course_admits()} (V41)
+	 * is the same decision, and the two export builders repeat it; all three have to change
+	 * together.
 	 * <p>
-	 * A course states the year, stream and offering department it belongs to. Which of a
-	 * student's three departments has to match depends on how they are taking it: a major
-	 * course matches their major department, an open elective their OE choice. A discipline
-	 * specific elective is chosen from the basket the student's own discipline offers, so it
-	 * follows the major department as well. AEC, IKS, VEC, VSC and SEC courses, and the practicals
-	 * belonging to the latter two, are taken by the whole year and stream regardless of
-	 * department, so no department condition applies to them. Note that this is the opposite of
-	 * how major, minor and DSE practicals behave, which follow the same department as the
-	 * course they belong to.
-	 * <p>
-	 * A course type missing from every branch below matches nobody, which reads in the app as
-	 * a course with no students and no batches. Any type added to {@link CourseType} has to be
-	 * accounted for here.
-	 * <p>
-	 * A minor course matches either the student's minor department or their major. Matching
-	 * the minor alone left minor courses with an empty roll, because the minor field on the
-	 * student form is optional and is frequently blank, and an empty roll means attendance
-	 * cannot be taken at all, which is worse than a roll that is slightly too wide. The
-	 * department still has to match, so this never reaches across departments.
-	 * <p>
-	 * Note what the stream join does and does not say. {@code y.stream = c.stream} compares the
-	 * course's stream to the STUDENT'S, not to anything about the offering department, which is
-	 * what lets a department teach a class in a stream it does not itself run: a Mathematics
-	 * minor read to a BSc_unaided Computer Science class carries stream BSc_unaided, although
-	 * Mathematics is studied only as BSc. That is correct, and it is only the types matching
-	 * {@code majorDept} that can be sure the offering department runs the stream. The server
-	 * constrained all of them to begin with and had to be corrected; see
-	 * {@link CourseType#followsOfferingDepartment()}.
-	 * <p>
-	 * Enum columns are stored as their constant names, which is why the course type is compared
-	 * against string literals here.
+	 * A lecture taken with no batch, which only older lectures are, is rebuilt against this, so
+	 * its roll is everybody in any of the course's batches.
 	 */
 	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
 			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
 			"s.apaarId, y.joinDate, y.leaveDate " +
-			"FROM courses c " +
-			"INNER JOIN student_year y ON y.academicYear = :academicYear " +
+			"FROM student_year y " +
 			"INNER JOIN students s ON s.studentID = y.studentID " +
-			"WHERE c.courseID = :courseID AND y.leaveDate IS NULL AND CASE " +
-			"   WHEN EXISTS (SELECT 1 FROM course_batch_map cb " +
-			"                INNER JOIN batch_desc b ON b.batchID = cb.batchID " +
-			"                WHERE cb.courseID = c.courseID " +
-			"                  AND b.academicYear = :academicYear) " +
-			"   THEN EXISTS (SELECT 1 FROM course_batch_map cb " +
-			"                INNER JOIN batch_student_map m ON m.batchID = cb.batchID " +
-			"                WHERE cb.courseID = c.courseID " +
-			"                  AND m.studentID = y.studentID " +
-			"                  AND m.academicYear = :academicYear) " +
-			"   ELSE (y.year = c.year AND y.stream = c.stream AND (" +
-			"      (c.courseType IN ('MAJOR', 'MAJOR_PRACTICALS', " +
-			"                        'DSE', 'DSE_PRACTICALS') " +
-			"         AND y.majorDept = c.offeringDepartment) " +
-			"      OR (c.courseType IN ('MINOR', 'MINOR_PRACTICALS') " +
-			"         AND (y.minorDept = c.offeringDepartment " +
-			"              OR y.majorDept = c.offeringDepartment)) " +
-			"      OR (c.courseType = 'OE' AND y.oeDept = c.offeringDepartment) " +
-			"      OR c.courseType IN ('AEC', 'IKS', 'VEC', 'VSC', 'VSC_PRACTICALS', " +
-			"                           'SEC', 'SEC_PRACTICALS'))) " +
-			"END " +
+			"WHERE y.academicYear = :academicYear AND y.leaveDate IS NULL " +
+			"AND EXISTS (SELECT 1 FROM course_batch_map cb " +
+			"            INNER JOIN batch_student_map m ON m.batchID = cb.batchID " +
+			"            WHERE cb.courseID = :courseID " +
+			"              AND m.studentID = y.studentID " +
+			"              AND m.academicYear = :academicYear) " +
 			"ORDER BY y.rollNo ASC")
 	public abstract List<StudentWithYear> getRollForCourseSync(long courseID, int academicYear);
 

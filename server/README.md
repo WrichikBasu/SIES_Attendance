@@ -210,15 +210,11 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 
 ### A course's roll
 
-`course_admits()` (V23) is the single definition, and both `roll_for_course()` and visibility use
-it:
-
-- **A course with batches linked for the session:** its roll is the members of those batches, from
-  any department, year or stream.
-- **A course with no batch linked for that session:** the course-type rules. Major, DSE and
-  their practicals take the offering department's majors in that year and stream. Minors take
-  its minors or majors. An OE takes students whose OE department it is. AEC, IKS, VSC and SEC take
-  the whole year and stream.
+`course_admits()` is the single definition, and both `roll_for_course()` and visibility use it.
+A course's roll is the members of the batches linked to it for the session, from any department,
+year or stream. A course with no batch linked for that session has nobody on its roll. Until V41
+such a course fell back on rules about its type; attendance is taken only against a batch, so the
+fallback was removed.
 
 The app uses the same rule in `DaoStudent.getRollForCourseSync` and both export builders. Change
 all of them together; `PostgresSchemaDriftTest` and the SQL differ check that they agree.

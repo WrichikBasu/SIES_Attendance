@@ -37,9 +37,7 @@ public final class PgExportQueryBuilder {
 	 * The join from students to courses repeats the roster condition the app's
 	 * {@code DaoStudent.getRollForCourseSync} applies. The two have to agree, since a student
 	 * who counts as taking a course in one and not the other would appear on a sheet without
-	 * appearing in the report, or the reverse. The course types are written as literals rather
-	 * than bound, so they need no cast: an unquoted literal is untyped and resolves to the
-	 * column's enum type. A <em>parameter</em> would not.
+	 * appearing in the report, or the reverse.
 	 * <p>
 	 * Argument order is the thing to be careful about here. The arguments are positional and
 	 * the subqueries are appended ahead of the FROM clause they refer to, so each block adds its
@@ -91,34 +89,16 @@ public final class PgExportQueryBuilder {
 				.append("INNER JOIN student_year y ON y.student_id = s.student_id ")
 				.append("   AND y.academic_year = ? ")
 				.append("INNER JOIN academic_years ay ON ay.academic_year = ? ")
-				// The roll: the course's linked batches for the session when it has any, the
-				// course-type rules when it has none. course_admits() in V23 is the same
-				// decision, written inline because the differ runs on V1 and V2 alone.
-				.append("INNER JOIN courses c ON CASE ")
-				.append("   WHEN EXISTS (SELECT 1 FROM course_batch_map cb ")
-				.append("                INNER JOIN batch_desc b ON b.batch_id = cb.batch_id ")
-				.append("                WHERE cb.course_id = c.course_id ")
-				.append("                  AND b.academic_year = ?) ")
-				.append("   THEN EXISTS (SELECT 1 FROM course_batch_map cb ")
-				.append("                INNER JOIN batch_student_map m ")
-				.append("                        ON m.batch_id = cb.batch_id ")
-				.append("                WHERE cb.course_id = c.course_id ")
-				.append("                  AND m.student_id = y.student_id ")
-				.append("                  AND m.academic_year = ?) ")
-				.append("   ELSE (c.year = y.year AND c.stream = y.stream AND (")
-				.append("      (c.course_type IN ('MAJOR', 'MAJOR_PRACTICALS', ")
-				.append("                         'DSE', 'DSE_PRACTICALS') ")
-				.append("         AND y.major_dept = c.offering_department) ")
-				.append("      OR (c.course_type IN ('MINOR', 'MINOR_PRACTICALS') ")
-				.append("         AND (y.minor_dept = c.offering_department ")
-				.append("              OR y.major_dept = c.offering_department)) ")
-				.append("      OR (c.course_type = 'OE' AND y.oe_dept = c.offering_department) ")
-				.append("      OR c.course_type IN ('AEC', 'IKS', 'VEC', 'VSC', 'VSC_PRACTICALS', ")
-				.append("                           'SEC', 'SEC_PRACTICALS'))) ")
-				.append("END ");
-		// The two in student_year and academic_years, then the two in the roll condition,
-		// in the order the placeholders appear.
-		args.add(academicYear);
+				// The roll: the members of the course's linked batches for the session.
+				// course_admits() in V41 is the same decision, written inline because the
+				// differ runs on V1 and V2 alone.
+				.append("INNER JOIN courses c ON EXISTS (SELECT 1 FROM course_batch_map cb ")
+				.append("   INNER JOIN batch_student_map m ON m.batch_id = cb.batch_id ")
+				.append("   WHERE cb.course_id = c.course_id ")
+				.append("     AND m.student_id = y.student_id ")
+				.append("     AND m.academic_year = ?) ");
+		// The two in student_year and academic_years, then the one in the roll condition, in
+		// the order the placeholders appear.
 		args.add(academicYear);
 		args.add(academicYear);
 		args.add(academicYear);

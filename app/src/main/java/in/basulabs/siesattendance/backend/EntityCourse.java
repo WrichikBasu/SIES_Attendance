@@ -68,11 +68,8 @@ public class EntityCourse {
 	public String courseTopic;
 
 	/*
-	 * The four fields below decide who is on the course's roll. A student is on it when their
-	 * year and stream match, and when whichever of their three departments the course type
-	 * calls for matches the offering department. The whole condition is spelled out in
-	 * DaoStudent.getRollForCourseSync; changing any of these fields changes who can have
-	 * attendance taken for the course.
+	 * The four fields below describe the class the course is taught to. They do not decide who
+	 * is on its roll: that is the batches linked to it (DaoStudent.getRollForCourseSync).
 	 */
 
 	@NonNull

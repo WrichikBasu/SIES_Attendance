@@ -61,10 +61,9 @@ public class EntityStudentYear {
 	public Stream stream;
 
 	/*
-	 * A student carries up to three departments at once, and which one matters depends on the
-	 * course being looked at. A major course matches majorDept, an open elective matches
-	 * oeDept, and the courses taken by a whole year and stream match none of them. See the
-	 * roster query in DaoStudent for the full rule.
+	 * A student carries up to three departments at once: what they major in, their minor and
+	 * their open elective. None of them puts the student on a course's roll; the batches they
+	 * are in do.
 	 */
 
 	/** The subject they are majoring in. Always present. */
@@ -72,8 +71,7 @@ public class EntityStudentYear {
 	public Department majorDept;
 
 	/**
-	 * Their secondary subject. Optional, and in practice frequently left blank, which is why
-	 * the roll for a minor course also admits students whose major is the offering department.
+	 * Their secondary subject. Optional, and in practice frequently left blank.
 	 */
 	@Nullable
 	public Department minorDept;
