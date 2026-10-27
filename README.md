@@ -71,12 +71,20 @@ other JDKs it needs. The server's database and tests also need Docker.
 
 ### Connecting the app to a server
 
-- **Release builds** have an empty `sync_base_url` in `app/src/main/res/values/strings.xml`.
-  With no server configured, the app runs locally and schedules no sync. A production server also
-  needs real certificate pins in `app/src/main/res/xml/network_security_config.xml`.
-- **Debug builds** read `sync_base_url` from `app/src/debug/res/values/strings.xml` and allow
-  plain HTTP. Set it to `http://<this machine's Wi-Fi address>:8080/api/v1`, or use
-  `http://10.0.2.2:8080/api/v1` from the emulator. Then start a local server:
+The server address is set when the app is built, from `local.properties`, which is never
+committed. `-P` on the command line overrides either address for one build.
+
+```properties
+sies.releaseSyncUrl=https://<production host>/api/v1
+sies.debugSyncUrl=http://<this machine's Wi-Fi address>:8080/api/v1
+```
+
+- **Release builds** use `sies.releaseSyncUrl`, which is empty unless set. With no server
+  configured, the app runs locally and schedules no sync. A production server also needs real
+  certificate pins in `app/src/main/res/xml/network_security_config.xml`.
+- **Debug builds** use `sies.debugSyncUrl` and allow plain HTTP. Unset, it is
+  `http://10.0.2.2:8080/api/v1`, the emulator's address for this machine. Then start a local
+  server:
 
 ```sh
 ./server/tools/dev-database.sh

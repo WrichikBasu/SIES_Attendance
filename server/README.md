@@ -309,16 +309,17 @@ The audit trail shows each entry as a sentence ("Marked R RAO absent in CS-101 o
 
 ### Pointing a phone at a dev server
 
-The debug build uses `app/src/debug/res/values/strings.xml`, where `sync_base_url` is
-`http://10.0.2.2:8080/api/v1` (the emulator's address for the host) and cleartext is allowed. For a
-real phone, put this machine's Wi-Fi address there instead:
+The debug build syncs to `sies.debugSyncUrl`, which defaults to `http://10.0.2.2:8080/api/v1`
+(the emulator's address for the host), and cleartext is allowed. For a real phone, set it in
+`local.properties` to this machine's Wi-Fi address instead:
 
 ```sh
 ip route get <phone's IP> | grep -oP 'src \K\S+'
 ```
 
-Don't use `ip route get 1`: with a VPN connected it returns the VPN's address. Release builds have
-an empty `sync_base_url`, so the app runs entirely locally until a server is configured.
+Don't use `ip route get 1`: with a VPN connected it returns the VPN's address. Release builds use
+`sies.releaseSyncUrl` from `local.properties`, empty unless set, so the app runs entirely locally until a server is
+configured.
 
 To test the phone's path by hand, use `-sS --fail-with-body`. With `-s` alone, a server that isn't
 running prints nothing, and the next command fails with a confusing JSON error.
