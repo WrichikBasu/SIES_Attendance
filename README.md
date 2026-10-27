@@ -2,11 +2,8 @@
 _An attendance system for SIES College of Arts, Science & Commerce, Mumbai, 
 developed by students from the Dept. of Computer Science._
 
----
-
-The app works fully offline. Attendance is marked and stored on the phone, and changes are queued
-and synced when there's a connection. Without a server configured, the app runs on its own as a
-local attendance register.
+The app worked offline till v1.3.0; thereafter, a server is necessary to start the process. Attendance is marked and stored on the phone, and changes are queued
+and synced when there's a connection.
 
 ## Modules
 
