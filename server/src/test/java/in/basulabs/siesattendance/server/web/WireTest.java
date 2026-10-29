@@ -1806,20 +1806,6 @@ class WireTest {
 	}
 
 	@Test
-	void theOldTwoPagesPointAtTheConsole() throws Exception {
-
-		// Both URLs are in the README, in bookmarks and in somebody's notes.
-		for (String was : List.of("/accounts.html", "/data.html")) {
-
-			Reply page = send(HttpRequest.newBuilder(
-					URI.create("http://localhost:" + port + was)).GET(), null, null);
-
-			assertEquals(200, page.status(), was);
-			assertTrue(page.raw().contains("/console.html"), was + " has to lead there");
-		}
-	}
-
-	@Test
 	void aHeadMayBeAppointedWithNoSessionAtAll() throws Exception {
 
 		// V18, from the caller's side: the session is optional and its absence means "until
@@ -2857,18 +2843,6 @@ class WireTest {
 
 		assertEquals(401, refused.status(), refused::toString);
 		assertEquals("unauthenticated", refused.body().get("code").stringValue());
-	}
-
-	@Test
-	void theDataPageIsServedWithoutAToken() throws Exception {
-
-		Reply page = send(HttpRequest.newBuilder(
-				URI.create("http://localhost:" + port + "/data.html")).GET(), null, null);
-
-		assertEquals(200, page.status());
-		assertTrue(page.raw().contains("SIES Attendance"));
-		assertFalse(page.raw().contains("localStorage.setItem")
-				|| page.raw().contains("document.cookie"));
 	}
 
 	// ── The shape of the thing ───────────────────────────────────────────

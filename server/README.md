@@ -283,8 +283,7 @@ has a student import (pick the session, choose the file) and an attendance impor
 import), each with its CSV format written out; for an admin, it also imports a `.siesbak`
 (preview, then import) and exports one. Only the staff
 sign-in is accepted, so students cannot use it. The page shows only the panels `/me` says the
-account can use, and refreshes the visible panel every ten seconds. The old URLs
-`/accounts.html` and `/data.html` redirect to it.
+account can use, and refreshes the visible panel every ten seconds.
 
 The audit trail shows each entry as a sentence ("Marked R RAO absent in CS-101 on Tue 14 Jul 2025,
 09:00"), built by `AuditMessages` from the entry's row images. Names are looked up by
