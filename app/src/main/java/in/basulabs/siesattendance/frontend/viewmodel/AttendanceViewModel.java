@@ -9,6 +9,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.lifecycle.AndroidViewModel;
 import androidx.lifecycle.LiveData;
+import androidx.lifecycle.MediatorLiveData;
 import androidx.lifecycle.MutableLiveData;
 import androidx.lifecycle.Transformations;
 
@@ -544,6 +545,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				DeviceIdentity.recordImportDepartments(getApplication(), null);
 				DeviceIdentity.recordBatchDepartments(getApplication(), null);
 				DeviceIdentity.recordAppoints(getApplication(), null);
+				DeviceIdentity.recordCoordinatedBatches(getApplication(), null);
 
 				// What the server will let this account change, and which courses a class
 				// representative may mark. Asked here rather than guessed from the account
@@ -734,6 +736,18 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
+	 * Whether the signed-in account may rename that batch and change its members; see
+	 * {@link Permissions#mayEditBatch}. Wider than {@link #mayKeepBatchesOf} by the batches its
+	 * courses' coordinator arranges.
+	 */
+	public boolean mayEditBatch(@NonNull EntityBatchDesc batch) {
+		return may(Permissions.Capability.BATCHES)
+				&& Permissions.mayEditBatch(DeviceIdentity.accountKind(getApplication()),
+				DeviceIdentity.batchDepartments(getApplication()),
+				DeviceIdentity.coordinatedBatches(getApplication()), batch);
+	}
+
+	/**
 	 * Whether to offer that course's class representatives; see
 	 * {@link Permissions#mayAppointFor}. Only with a server signed in to, since that is where
 	 * an appointment is made.
@@ -852,6 +866,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/** Why a batch opened read-only, for a professor who expected to change it. */
+	/** Why a batch its coordinator arranges is not theirs to remove. */
+	public void sayDepartmentRemovesBatch(@NonNull EntityBatchDesc batch) {
+		toastMessage.setValue(getApplication().getString(R.string.not_permitted_batch_removal,
+				String.valueOf(batch.department)));
+	}
+
 	public void sayNotYourBatch(@NonNull EntityBatchDesc batch) {
 		toastMessage.setValue(batch.department == null
 				? getApplication().getString(R.string.not_permitted_batch_unplaced)
@@ -1317,7 +1337,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void loadBatchesForStudentFilter(
 			@NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
 		final int acadYear = studentFilter().academicYear;
-		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(ownDepartmentsBatches(
+		MainDatabase.DB_EXECUTOR.execute(() -> cb.accept(browsedBatches(
 				visibleBatches(repository.batchesForYearSync(acadYear)))));
 	}
 
@@ -1670,18 +1690,42 @@ public class AttendanceViewModel extends AndroidViewModel {
 						courses == null ? new ArrayList<>() : new ArrayList<>(courses));
 			}
 
-			// A professor's, narrowed to their own department's: a plain filter over rows
-			// already read, so it can run here.
-			return Transformations.map(repository.observeBatchesForYear(year),
-					this::ownDepartmentsBatches);
+			// A professor's, narrowed to their own department's and those of the courses they
+			// teach. Two queries rather than one, both live, so that a link synced down later
+			// brings its batch onto the list as surely as a new batch does; combining them is
+			// a plain filter over rows already read, so it can run here.
+			Set<Long> courses = DeviceIdentity.appoints(getApplication());
+			LiveData<List<EntityBatchDesc>> batches = repository.observeBatchesForYear(year);
+			LiveData<List<Long>> linked = repository.observeBatchIdsLinkedTo(
+					courses == null ? new ArrayList<>() : new ArrayList<>(courses));
+
+			MediatorLiveData<List<EntityBatchDesc>> browsed = new MediatorLiveData<>();
+			Runnable combine = () -> {
+				if (batches.getValue() != null && linked.getValue() != null) {
+					browsed.setValue(browsedBatches(batches.getValue(),
+							courses == null ? null : new HashSet<>(linked.getValue())));
+				}
+			};
+			browsed.addSource(batches, rows -> combine.run());
+			browsed.addSource(linked, rows -> combine.run());
+			return browsed;
 		});
 	}
 
-	/** That list as a professor browses it; see {@link Permissions#ownDepartmentsBatches}. */
+	/** That list as a professor browses it; see {@link Permissions#browsedBatches}. */
 	@NonNull
-	private List<EntityBatchDesc> ownDepartmentsBatches(@NonNull List<EntityBatchDesc> batches) {
-		return Permissions.ownDepartmentsBatches(DeviceIdentity.accountKind(getApplication()),
-				DeviceIdentity.batchDepartments(getApplication()), batches);
+	private List<EntityBatchDesc> browsedBatches(@NonNull List<EntityBatchDesc> batches,
+	                                            @Nullable Set<Long> linked) {
+		return Permissions.browsedBatches(DeviceIdentity.accountKind(getApplication()),
+				DeviceIdentity.batchDepartments(getApplication()), linked, batches);
+	}
+
+	/** The same, reading which batches are linked. Off the main thread only. */
+	@NonNull
+	private List<EntityBatchDesc> browsedBatches(@NonNull List<EntityBatchDesc> batches) {
+		Set<Long> courses = DeviceIdentity.appoints(getApplication());
+		return browsedBatches(batches, courses == null ? null
+				: new HashSet<>(repository.batchIdsLinkedToSync(new ArrayList<>(courses))));
 	}
 
 	/**
@@ -3075,7 +3119,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void loadStatsFilterOptions(@NonNull StatsOptionsCallback cb) {
 		MainDatabase.DB_EXECUTOR.execute(() -> cb.onLoaded(
 				visible(repository.coursesSync()),
-				ownDepartmentsBatches(visibleBatches(repository.batchesSync())),
+				browsedBatches(visibleBatches(repository.batchesSync())),
 				repository.professorsSync()));
 	}
 

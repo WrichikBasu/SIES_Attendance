@@ -109,6 +109,16 @@ public class FragmentEditBatch extends Fragment {
 	@Nullable
 	private Department batchDept;
 
+	/**
+	 * True when this account edits the batch as the coordinator of its courses rather than as
+	 * one of its department's: the courses it serves are then not this account's to change.
+	 */
+	private boolean linksFixed;
+
+	/** The header's "choose courses" button, or null before the header exists. */
+	@Nullable
+	private View chooseCourses;
+
 	/** Every course on the phone. The picker offers the ones of {@link #batchDept}. */
 	private final List<EntityCourse> courses = new ArrayList<>();
 
@@ -214,7 +224,9 @@ public class FragmentEditBatch extends Fragment {
 		filtersActive = header.findViewById(R.id.tvFiltersActive);
 
 		linkedCourses = header.findViewById(R.id.tvLinkedCourses);
-		header.findViewById(R.id.btnChooseCourses).setOnClickListener(v -> chooseCourses());
+		chooseCourses = header.findViewById(R.id.btnChooseCourses);
+		chooseCourses.setOnClickListener(v -> chooseCourses());
+		showCourseChooser();
 
 		selectedCount = header.findViewById(R.id.tvSelectedCount);
 		emptyMessage = header.findViewById(R.id.tvNoMatches);
@@ -241,6 +253,13 @@ public class FragmentEditBatch extends Fragment {
 
 	private boolean isCreating() {
 		return batchID <= 0;
+	}
+
+	/** Hides the course picker once {@link #linksFixed} is known and the header exists. */
+	private void showCourseChooser() {
+		if (chooseCourses != null) {
+			chooseCourses.setVisibility(linksFixed ? View.GONE : View.VISIBLE);
+		}
 	}
 
 	// ── Department ───────────────────────────────────────────────────────
@@ -364,11 +383,16 @@ public class FragmentEditBatch extends Fragment {
 
 				// The list sends somebody who may not change the batch to its read-only view.
 				// This is for every other way in.
-				if (batch != null && !viewModel.mayKeepBatchesOf(batch.department)) {
+				if (batch != null && !viewModel.mayEditBatch(batch)) {
 					viewModel.sayNotYourBatch(batch);
 					Navigation.findNavController(requireView()).popBackStack();
 					return;
 				}
+
+				// Its courses' coordinator, not its department: the members and the name are
+				// theirs, the links are not (V42), so the links are shown and not offered.
+				linksFixed = batch != null && !viewModel.mayKeepBatchesOf(batch.department);
+				showCourseChooser();
 
 				if (batch != null && etName != null) {
 					etName.setText(batch.batchName);

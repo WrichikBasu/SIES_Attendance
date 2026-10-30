@@ -201,6 +201,25 @@ public final class Permissions {
 	}
 
 	/**
+	 * Whether this account may rename that batch and change who is in it.
+	 * <p>
+	 * Whoever keeps its department's batches, by {@link #mayKeepBatchesOf}; and a professor who
+	 * coordinates every course the batch serves, as {@code /me} last listed those batches (V42),
+	 * which is how a value education course's coordinator from another department arranges its
+	 * batches. Making, removing and linking a batch stay with its department.
+	 *
+	 * @param coordinated the batches {@code /me} last said this account coordinates, or null
+	 *                    when it never said
+	 */
+	public static boolean mayEditBatch(@Nullable AccountKind who, @Nullable Set<String> keeps,
+	                                   @Nullable Set<Long> coordinated,
+	                                   @NonNull EntityBatchDesc batch) {
+		return mayKeepBatchesOf(who, keeps, batch.department)
+				|| (who == AccountKind.PROFESSOR && batch.department != null
+				    && coordinated != null && coordinated.contains(batch.batchID));
+	}
+
+	/**
 	 * Whether this account may appoint that course's class representatives: its instructor,
 	 * the head of the department offering it, or an administrator, as {@code /me} last listed
 	 * the courses. Never a student. Refused when nothing was ever recorded, unlike the rest of
@@ -269,34 +288,42 @@ public final class Permissions {
 	}
 
 	/**
-	 * The batches out of that list a professor browses: their own department's. Everybody else's list is returned as it is, as is a professor's when
-	 * {@code /me} never said which departments are theirs.
+	 * The batches out of that list a professor browses: their own department's, and the ones
+	 * linked to a course they teach or head, whoever's department made them -- a value education
+	 * course's batches are its offering department's, and every professor teaching it marks
+	 * them. The same two arms as the server's (V32). Everybody else's list is returned as it is,
+	 * as is a professor's when {@code /me} never said which departments are theirs.
 	 * <p>
 	 * For the lists a professor looks through -- the batches tab, the filters -- and not for
 	 * the register. A professor who teaches another department's course takes its attendance
 	 * from that department's batches, which the server sends for exactly that, and the register
 	 * narrows to the course's department itself.
 	 *
-	 * @param keeps the departments {@code /me} last said this account keeps batches for
+	 * @param keeps  the departments {@code /me} last said this account keeps batches for
+	 * @param linked the batches linked to the courses {@code /me} last said this account may
+	 *               appoint a class representative for, which are the ones it teaches or heads;
+	 *               null when that was never said
 	 */
 	@NonNull
-	public static List<EntityBatchDesc> ownDepartmentsBatches(@Nullable AccountKind who,
-	                                                          @Nullable Set<String> keeps,
-	                                                          @NonNull List<EntityBatchDesc> batches) {
+	public static List<EntityBatchDesc> browsedBatches(@Nullable AccountKind who,
+	                                                   @Nullable Set<String> keeps,
+	                                                   @Nullable Set<Long> linked,
+	                                                   @NonNull List<EntityBatchDesc> batches) {
 
 		if (who != AccountKind.PROFESSOR || keeps == null
 				|| keeps.contains(SyncClient.ANY_DEPARTMENT)) {
 			return batches;
 		}
 
-		List<EntityBatchDesc> own = new ArrayList<>();
+		List<EntityBatchDesc> browsed = new ArrayList<>();
 
 		for (EntityBatchDesc batch : batches) {
-			if (batch.department != null && keeps.contains(batch.department.name())) {
-				own.add(batch);
+			if ((batch.department != null && keeps.contains(batch.department.name()))
+					|| (linked != null && linked.contains(batch.batchID))) {
+				browsed.add(batch);
 			}
 		}
-		return own;
+		return browsed;
 	}
 
 	/**

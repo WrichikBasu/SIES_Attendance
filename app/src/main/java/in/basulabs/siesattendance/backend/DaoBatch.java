@@ -64,6 +64,10 @@ public abstract class DaoBatch {
 	@Query("SELECT DISTINCT batchID FROM course_batch_map WHERE courseID IN (:courseIDs)")
 	public abstract List<Long> getIdsLinkedToSync(List<Long> courseIDs);
 
+	/** {@link #getIdsLinkedToSync}, kept live: a link made or undone changes it. */
+	@Query("SELECT DISTINCT batchID FROM course_batch_map WHERE courseID IN (:courseIDs)")
+	public abstract LiveData<List<Long>> observeIdsLinkedTo(List<Long> courseIDs);
+
 	/**
 	 * Every batch in one session. This backs the batch picker when attendance is being taken,
 	 * which lists them all rather than only those linked to the selected course; the reasoning

@@ -15,8 +15,8 @@ val localProperties = Properties().apply {
 android {
     namespace = "in.basulabs.siesattendance"
     compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
+        version = release(37) {
+            minorApiLevel = 2
         }
     }
 
@@ -24,8 +24,8 @@ android {
         applicationId = "in.basulabs.siesattendance"
         minSdk = 26
         targetSdk = 37
-        versionCode = 4
-        versionName = "1.3.0"
+        versionCode = 5
+        versionName = "2.0.0-alpha"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

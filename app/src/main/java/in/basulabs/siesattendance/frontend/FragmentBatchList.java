@@ -75,6 +75,12 @@ public class FragmentBatchList extends Fragment {
 					return;
 				}
 
+				// Its courses' coordinator arranges it; removing it is its department's.
+				if (!viewModel.mayKeepBatchesOf(batch.department)) {
+					viewModel.sayDepartmentRemovesBatch(batch);
+					return;
+				}
+
 				confirmDelete(batch);
 			}
 		});
@@ -100,13 +106,14 @@ public class FragmentBatchList extends Fragment {
 	}
 
 	/**
-	 * Whether this account may change that batch: one of its department's professors, its head,
-	 * or an administrator. A professor who may keep batches but not this one is told whose it
-	 * is, since the editor they expected is not opening.
+	 * Whether this account may change that batch: one of its department's professors, an
+	 * administrator, or the coordinator of every course it serves. A professor who may keep
+	 * batches but not this one is told whose it is, since the editor they expected is not
+	 * opening.
 	 */
 	private boolean mayChange(@NonNull EntityBatchDesc batch) {
 
-		if (viewModel.mayKeepBatchesOf(batch.department)) {
+		if (viewModel.mayEditBatch(batch)) {
 			return true;
 		}
 		if (viewModel.may(Permissions.Capability.BATCHES)) {

@@ -204,12 +204,57 @@ public class PermissionsTest {
 
 		List<EntityBatchDesc> all = List.of(cs, chem, nobody);
 
-		assertEquals(List.of("CS A"), names(Permissions.ownDepartmentsBatches(
-				AccountKind.PROFESSOR, Set.of("COMPUTER_SCIENCE"), all)));
+		assertEquals(List.of("CS A"), names(Permissions.browsedBatches(
+				AccountKind.PROFESSOR, Set.of("COMPUTER_SCIENCE"), Set.of(), all)));
 		assertEquals("an administrator browses them all", List.of("CS A", "CH A", "Unplaced"),
-				names(Permissions.ownDepartmentsBatches(AccountKind.STAFF, Set.of("*"), all)));
+				names(Permissions.browsedBatches(AccountKind.STAFF, Set.of("*"), null, all)));
 		assertEquals("and so does an install that never asked", 3,
-				Permissions.ownDepartmentsBatches(AccountKind.PROFESSOR, null, all).size());
+				Permissions.browsedBatches(AccountKind.PROFESSOR, null, null, all).size());
+	}
+
+	@Test
+	public void aCoordinatorEditsTheBatchesTheServerListedAndNoOthers() {
+
+		EntityBatchDesc own = batch(5001, "CS A");
+		own.department = Department.COMPUTER_SCIENCE;
+		EntityBatchDesc vec = batch(5002, "VEC B1");
+		vec.department = Department.COMMERCE;
+		EntityBatchDesc other = batch(5003, "COM A");
+		other.department = Department.COMMERCE;
+
+		Set<String> cs = Set.of("COMPUTER_SCIENCE");
+
+		assertTrue(Permissions.mayEditBatch(AccountKind.PROFESSOR, cs, Set.of(5002L), own));
+		assertTrue("a batch of a course they coordinate",
+				Permissions.mayEditBatch(AccountKind.PROFESSOR, cs, Set.of(5002L), vec));
+		assertFalse("and not the rest of that department's",
+				Permissions.mayEditBatch(AccountKind.PROFESSOR, cs, Set.of(5002L), other));
+		assertFalse("nor when /me never said",
+				Permissions.mayEditBatch(AccountKind.PROFESSOR, cs, null, vec));
+		assertFalse("never a student",
+				Permissions.mayEditBatch(AccountKind.STUDENT, Set.of(), Set.of(5002L), vec));
+		assertFalse("and removing it is still its department's",
+				Permissions.mayKeepBatchesOf(AccountKind.PROFESSOR, cs, vec.department));
+	}
+
+	@Test
+	public void aProfessorAlsoBrowsesTheBatchesOfTheCoursesTheyTeach() {
+
+		EntityBatchDesc cs = batch(5001, "CS A");
+		cs.department = Department.COMPUTER_SCIENCE;
+		EntityBatchDesc vec = batch(5002, "VEC B1");
+		vec.department = Department.COMMERCE;
+		EntityBatchDesc other = batch(5003, "COM A");
+		other.department = Department.COMMERCE;
+
+		List<EntityBatchDesc> all = List.of(cs, vec, other);
+
+		assertEquals("another department's batch, linked to a course they teach",
+				List.of("CS A", "VEC B1"), names(Permissions.browsedBatches(
+						AccountKind.PROFESSOR, Set.of("COMPUTER_SCIENCE"), Set.of(5002L), all)));
+		assertEquals("and only their own when /me never named their courses", List.of("CS A"),
+				names(Permissions.browsedBatches(
+						AccountKind.PROFESSOR, Set.of("COMPUTER_SCIENCE"), null, all)));
 	}
 
 	@Test
