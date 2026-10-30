@@ -262,7 +262,7 @@ public class FragmentImportAttendance extends Fragment {
 		new MaterialAlertDialogBuilder(requireContext())
 				.setTitle(R.string.dialog_attendance_format_title)
 				.setMessage(getString(R.string.dialog_attendance_format_message,
-						AttendanceCsvParser.templateCsv()))
+						AttendanceCsvParser.formatHelp(), AttendanceCsvParser.templateCsv()))
 				.setPositiveButton(android.R.string.ok, null)
 				.show();
 	}

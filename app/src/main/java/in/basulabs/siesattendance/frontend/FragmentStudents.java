@@ -43,6 +43,7 @@ import in.basulabs.siesattendance.frontend.adapter.AdapterHeader;
 import in.basulabs.siesattendance.frontend.adapter.AdapterStudent;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
+import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel.StudentFilter;
 
@@ -144,6 +145,14 @@ public class FragmentStudents extends Fragment {
 
 			@Override
 			public void onStudentLongPressed(StudentWithYear student) {
+
+				// A long press is the way into the editor. A class representative reads this
+				// list to mark a roll and does not correct it; the office does.
+				if (!viewModel.may(Permissions.Capability.STUDENTS)) {
+					viewModel.sayNotPermitted();
+					return;
+				}
+
 				Bundle args = new Bundle();
 				args.putLong("studentID", student.studentID);
 				Navigation.findNavController(view)
@@ -162,8 +171,16 @@ public class FragmentStudents extends Fragment {
 		headerAdapter = new AdapterHeader(header);
 		recyclerView.setAdapter(new ConcatAdapter(headerAdapter, adapter));
 
-		view.findViewById(R.id.fabAddStudent).setOnClickListener(v ->
-				Navigation.findNavController(v).navigate(R.id.action_students_to_addStudent));
+		View add = view.findViewById(R.id.fabAddStudent);
+
+		// Gone rather than disabled: a greyed-out button is a promise that something could be
+		// pressed, and nothing a class representative does will ever make this pressable.
+		if (viewModel.may(Permissions.Capability.STUDENTS)) {
+			add.setOnClickListener(v ->
+					Navigation.findNavController(v).navigate(R.id.action_students_to_addStudent));
+		} else {
+			add.setVisibility(View.GONE);
+		}
 
 		observe();
 		viewModel.refreshStudents();
@@ -176,6 +193,14 @@ public class FragmentStudents extends Fragment {
 		emptyState = header.findViewById(R.id.layoutEmptyState);
 		emptySubtitle = header.findViewById(R.id.tvEmptySubtitle);
 		classChips = header.findViewById(R.id.chipGroupClasses);
+
+		// Students who have left are off the list unless asked for.
+		com.google.android.material.chip.Chip showLeft = header.findViewById(R.id.chipShowLeft);
+		showLeft.setChecked(viewModel.studentFilter().includeLeft);
+		showLeft.setOnCheckedChangeListener((chip, checked) -> {
+			viewModel.studentFilter().includeLeft = checked;
+			viewModel.refreshStudents();
+		});
 		resultCount = header.findViewById(R.id.tvResultCount);
 		pastSessionNotice = header.findViewById(R.id.tvPastSessionNotice);
 
@@ -401,13 +426,29 @@ public class FragmentStudents extends Fragment {
 	 */
 	private void setupButtonsIn(@NonNull View view) {
 
-		view.findViewById(R.id.btnImportCsv).setOnClickListener(v ->
+		// The CSV adds and updates students wholesale, so it belongs to whoever may do that
+		// one at a time.
+		View importCsv = view.findViewById(R.id.btnImportCsv);
+
+		// A professor and up; see Permissions.Capability.IMPORT_STUDENTS.
+		if (!viewModel.may(Permissions.Capability.IMPORT_STUDENTS)) {
+			importCsv.setVisibility(View.GONE);
+		}
+
+		importCsv.setOnClickListener(v ->
 				csvPicker.launch(new String[]{"text/csv", "text/comma-separated-values",
 						"text/plain", "application/vnd.ms-excel"}));
 
 		view.findViewById(R.id.btnCsvFormat).setOnClickListener(v -> showFormatHelp());
 
-		view.findViewById(R.id.btnMakeBatch).setOnClickListener(v -> seedBatchFromFilter());
+		// Making a batch is a professor's, whoever else may read the roll.
+		View makeBatch = view.findViewById(R.id.btnMakeBatch);
+
+		if (viewModel.may(Permissions.Capability.BATCHES)) {
+			makeBatch.setOnClickListener(v -> seedBatchFromFilter());
+		} else {
+			makeBatch.setVisibility(View.GONE);
+		}
 
 		toggleFilters.setOnClickListener(v -> {
 			boolean showing = filterPanel.getVisibility() == View.VISIBLE;
@@ -650,6 +691,7 @@ public class FragmentStudents extends Fragment {
 		new AlertDialog.Builder(requireContext())
 				.setTitle(R.string.dialog_csv_format_title)
 				.setMessage(getString(R.string.dialog_csv_format_message,
+						in.basulabs.siesattendance.backend.util.RosterCsv.formatHelp(),
 						in.basulabs.siesattendance.backend.util.CsvImporter.templateCsv()))
 				.setPositiveButton(android.R.string.ok, null)
 				.show();

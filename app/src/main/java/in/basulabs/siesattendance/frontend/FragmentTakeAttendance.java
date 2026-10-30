@@ -7,6 +7,7 @@ import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -38,6 +39,7 @@ import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.pojo.AttendanceRow;
 import in.basulabs.siesattendance.frontend.adapter.AdapterAttendance;
+import in.basulabs.siesattendance.frontend.util.SignInGuard;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -161,6 +163,18 @@ public class FragmentTakeAttendance extends Fragment {
 		super.onViewCreated(view, savedInstanceState);
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
+
+		if (SignInGuard.mustSignIn(viewModel.hasServer(), viewModel.isSignedIn())) {
+			// The one screen that still asks for itself. ActivityHome.onStart deliberately
+			// does NOT eject somebody from a half-marked register -- the sheet is in memory
+			// until it is saved, and throwing away attendance already taken is the outcome
+			// this design refuses -- so the check happens here instead, on the way in, where
+			// there is nothing yet to lose.
+			Toast.makeText(requireContext(), R.string.title_sign_in_required,
+					Toast.LENGTH_LONG).show();
+			Navigation.findNavController(view).navigate(R.id.action_global_signIn);
+			return;
+		}
 
 		actvCourse = view.findViewById(R.id.actvCourse);
 		actvBatch = view.findViewById(R.id.actvBatch);
@@ -365,10 +379,20 @@ public class FragmentTakeAttendance extends Fragment {
 	 * of merely noting the absence.
 	 */
 	private void loadBatchOptions(@NonNull EntityCourse course) {
-		viewModel.loadBatchesForSession(list -> {
+		viewModel.loadBatchesForSession(all -> {
 			if (!isAdded()) {
 				return;
 			}
+
+			// The course's own department's batches (V31), and any nobody has placed yet,
+			// which could be anybody's.
+			List<EntityBatchDesc> list = new ArrayList<>();
+			for (EntityBatchDesc batch : all) {
+				if (batch.department == null || batch.department == course.offeringDepartment) {
+					list.add(batch);
+				}
+			}
+
 			Ui.onMain(this, () -> {
 				batches = list;
 
@@ -399,7 +423,7 @@ public class FragmentTakeAttendance extends Fragment {
 				});
 
 				tilBatch.setHelperText(list.isEmpty()
-						? getString(R.string.helper_no_batches_for_session)
+						? getString(viewModel.noBatchesHelper())
 						: null);
 
 				// Restores the group after a rotation. Deliberately not onGroupChosen(),

@@ -176,12 +176,51 @@ public final class DropdownBinder {
 	                                      @Nullable Integer semester,
 	                                      @NonNull LinkedFull onChanged) {
 
+		linkAcademicFields(departmentField, streamField, yearField, semesterField, departments,
+				anyLabel, department, stream, year, semester, () -> true, onChanged);
+	}
+
+	/**
+	 * The same linkage, with the department's hold over the stream list made conditional.
+	 * <p>
+	 * Every screen but one wants the narrowing described above: the record being edited belongs
+	 * to a department, and a stream that department does not run is not a stream the record can
+	 * have. The course screen is the exception, because a course's offering department is only
+	 * the students' own department for some course types. A minor, an open elective, and the
+	 * types a whole year takes regardless of department are all taught by somebody else, while
+	 * the course still carries the stream of the class being taught — so the English department
+	 * really can read an AEC to a BSc_unaided class, and narrowing the list would make that
+	 * unrecordable. See {@link in.basulabs.siesattendance.backend.CourseType}.
+	 * <p>
+	 * When the scope stops narrowing, the stream list widens to every stream and the field is
+	 * always editable. The stream already chosen is kept either way; widening can invalidate
+	 * nothing, and the reconciliation that narrowing needs happens on the next
+	 * {@link Rebuildable#rebuild()}.
+	 *
+	 * @param scope consulted on every rebuild, so a screen whose answer changes can call
+	 * 		{@link Rebuildable#rebuild()} and have the lists redrawn
+	 * @return a handle for exactly that
+	 */
+	@NonNull
+	public static Rebuildable linkAcademicFields(@NonNull AutoCompleteTextView departmentField,
+	                                             @NonNull AutoCompleteTextView streamField,
+	                                             @Nullable AutoCompleteTextView yearField,
+	                                             @Nullable AutoCompleteTextView semesterField,
+	                                             @NonNull List<Department> departments,
+	                                             @Nullable String anyLabel,
+	                                             @Nullable Department department,
+	                                             @Nullable Stream stream,
+	                                             @Nullable Year year,
+	                                             @Nullable Integer semester,
+	                                             @NonNull StreamScope scope,
+	                                             @NonNull LinkedFull onChanged) {
+
 		final Holder state = new Holder(department, stream, year, semester);
 
 		// Every field rebuilds all three lists, because a change to any one of them can alter
 		// what the other two may contain.
 		Runnable rebuild = () -> rebuildAll(departmentField, streamField, yearField,
-				semesterField, departments, anyLabel, state);
+				semesterField, departments, anyLabel, state, scope);
 
 		departmentField.setOnItemClickListener((parent, view, position, id) -> {
 
@@ -190,8 +229,12 @@ public final class DropdownBinder {
 			state.department = position < offset ? null : departments.get(position - offset);
 
 			// The stream already chosen may not exist for this department, so it is kept,
-			// replaced by the sole option, or reduced to the equivalent level.
-			state.stream = AcademicRules.reconcile(state.department, state.stream);
+			// replaced by the sole option, or reduced to the equivalent level. Not where the
+			// department does not govern the stream at all: there is nothing to reconcile
+			// against, and reconciling anyway would overwrite a deliberate choice.
+			if (scope.narrowToDepartment()) {
+				state.stream = AcademicRules.reconcile(state.department, state.stream);
+			}
 			state.year = reconcileYear(state);
 			state.semester = AcademicRules.reconcileSemester(state.year, state.stream,
 					state.semester);
@@ -202,7 +245,7 @@ public final class DropdownBinder {
 
 		streamField.setOnItemClickListener((parent, view, position, id) -> {
 
-			List<Stream> allowed = AcademicRules.streamsFor(state.department);
+			List<Stream> allowed = streamsFor(state, scope);
 			int offset = anyLabel == null ? 0 : 1;
 			state.stream = position < offset ? null : allowed.get(position - offset);
 
@@ -248,6 +291,30 @@ public final class DropdownBinder {
 		}
 
 		rebuild.run();
+
+		// Re-narrowing is the case that needs the reconciliation: a stream chosen while the
+		// scope was open can be one the department does not offer, and the screen has to be
+		// told that its value changed rather than finding out at save time.
+		return () -> {
+			if (scope.narrowToDepartment()) {
+				state.stream = AcademicRules.reconcile(state.department, state.stream);
+				state.year = reconcileYear(state);
+				state.semester = AcademicRules.reconcileSemester(state.year, state.stream,
+						state.semester);
+			}
+			rebuild.run();
+			notifyChanged(state, onChanged);
+		};
+	}
+
+	/**
+	 * The streams on offer: the department's own, or every stream when the department does not
+	 * govern the choice. Passing a null department to {@link AcademicRules#streamsFor} is how
+	 * the latter is spelled, which is also what the filter screens rely on.
+	 */
+	@NonNull
+	private static List<Stream> streamsFor(@NonNull Holder state, @NonNull StreamScope scope) {
+		return AcademicRules.streamsFor(scope.narrowToDepartment() ? state.department : null);
 	}
 
 	/** Hands the whole reconciled state back, since a change to one field can alter three. */
@@ -279,18 +346,22 @@ public final class DropdownBinder {
 	                               @Nullable AutoCompleteTextView semesterField,
 	                               @NonNull List<Department> departments,
 	                               @Nullable String anyLabel,
-	                               @NonNull Holder state) {
+	                               @NonNull Holder state,
+	                               @NonNull StreamScope scope) {
 
 		Context context = streamField.getContext();
 
 		setItems(departmentField, departments, anyLabel, state.department, context);
 
-		List<Stream> streams = AcademicRules.streamsFor(state.department);
+		List<Stream> streams = streamsFor(state, scope);
 		setItems(streamField, streams, anyLabel, state.stream, context);
 
 		// A single-stream department leaves nothing to choose, so the field is shown filled in
-		// but not editable rather than inviting a selection that cannot vary.
-		streamField.setEnabled(!(state.department != null && streams.size() == 1));
+		// but not editable rather than inviting a selection that cannot vary. Only when the
+		// department is what decides the list; otherwise every stream is on offer and the
+		// field has to stay editable however few streams the department itself runs.
+		streamField.setEnabled(!(scope.narrowToDepartment()
+				&& state.department != null && streams.size() == 1));
 
 		if (yearField != null) {
 			setItems(yearField, AcademicRules.yearsFor(state.department, state.stream),
@@ -346,6 +417,25 @@ public final class DropdownBinder {
 	public interface Linked {
 		void onChanged(@Nullable Department department, @Nullable Stream stream,
 		               @Nullable Year year);
+	}
+
+	/**
+	 * Whether the stream list should be restricted to what the chosen department offers.
+	 * <p>
+	 * Consulted on every rebuild rather than read once, so a screen can change its mind — which
+	 * the course screen does, each time the course type changes.
+	 */
+	public interface StreamScope {
+		boolean narrowToDepartment();
+	}
+
+	/**
+	 * A handle on a linkage whose {@link StreamScope} can change, returned so the screen can say
+	 * that it has. Rebuilding reconciles, redraws and reports, exactly as a change to the
+	 * department field would.
+	 */
+	public interface Rebuildable {
+		void rebuild();
 	}
 
 	/** Result of {@link #linkAcademicFields}, including the semester. Any value may be null. */

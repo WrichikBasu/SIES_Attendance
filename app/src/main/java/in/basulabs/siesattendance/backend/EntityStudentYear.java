@@ -7,6 +7,8 @@ import androidx.room.ForeignKey;
 import androidx.room.Ignore;
 import androidx.room.Index;
 
+import java.time.LocalDate;
+
 /**
  * Represents a student in a particular academic year.
  * <p>
@@ -59,10 +61,9 @@ public class EntityStudentYear {
 	public Stream stream;
 
 	/*
-	 * A student carries up to three departments at once, and which one matters depends on the
-	 * course being looked at. A major course matches majorDept, an open elective matches
-	 * oeDept, and the courses taken by a whole year and stream match none of them. See the
-	 * roster query in DaoStudent for the full rule.
+	 * A student carries up to three departments at once: what they major in, their minor and
+	 * their open elective. None of them puts the student on a course's roll; the batches they
+	 * are in do.
 	 */
 
 	/** The subject they are majoring in. Always present. */
@@ -70,8 +71,7 @@ public class EntityStudentYear {
 	public Department majorDept;
 
 	/**
-	 * Their secondary subject. Optional, and in practice frequently left blank, which is why
-	 * the roll for a minor course also admits students whose major is the offering department.
+	 * Their secondary subject. Optional, and in practice frequently left blank.
 	 */
 	@Nullable
 	public Department minorDept;
@@ -90,6 +90,22 @@ public class EntityStudentYear {
 	 */
 	@Nullable
 	public Integer semester;
+
+	/**
+	 * The day the student joined this session's class, or null for the start of the session,
+	 * which is what it means for nearly everybody. A late joiner's attendance is counted only
+	 * from here: lectures held before it are not held for them.
+	 */
+	@Nullable
+	public LocalDate joinDate;
+
+	/**
+	 * The day the student left, or null while they are enrolled. Once set, they come off this
+	 * session's rolls, its batch lists, the exports and, unless asked for, the students list.
+	 * Their attendance before it is kept.
+	 */
+	@Nullable
+	public LocalDate leaveDate;
 
 	/**
 	 * The division of the class the student sits in, or null when their class is not divided

@@ -8,6 +8,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AutoCompleteTextView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -20,6 +21,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
@@ -32,6 +34,7 @@ import java.util.Set;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
@@ -39,6 +42,7 @@ import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.frontend.adapter.AdapterHeader;
 import in.basulabs.siesattendance.frontend.adapter.AdapterSelectableStudent;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
+import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -55,6 +59,16 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * the user can tick some FY BSc students, switch the filters to TY BCom, tick more, and keep
  * both. Tying selection to the visible rows would silently drop anyone scrolled or filtered out
  * of view, and that loss would only surface weeks later as missing attendance.
+ * <p>
+ * The courses a batch is for are chosen here too. That is what a course's roll will be read
+ * from — the practical half of a class, the students who chose an open elective — so it belongs
+ * beside the students rather than on the course.
+ * <p>
+ * A batch belongs to a department (V31). Its students come from anywhere, but only that
+ * department's professors and an administrator keep it (V33), and it is linked only to that
+ * department's courses. A professor's batch is their own department's, so they are not asked:
+ * the department field is shown to an administrator alone, and changing it unlinks any course
+ * of the department it left.
  */
 public class FragmentEditBatch extends Fragment {
 
@@ -64,11 +78,11 @@ public class FragmentEditBatch extends Fragment {
 
 	private TextInputEditText etName, etDescription, etSearch;
 
-	private TextInputLayout tilName;
+	private TextInputLayout tilName, tilBatchDept;
 
-	private AutoCompleteTextView actvYear, actvStream, actvDept, actvDivision;
+	private AutoCompleteTextView actvBatchDept, actvYear, actvStream, actvDept, actvDivision;
 
-	private TextView selectedCount, emptyMessage, filtersActive;
+	private TextView selectedCount, emptyMessage, filtersActive, linkedCourses;
 
 	private Chip chipShowSelected;
 
@@ -87,6 +101,19 @@ public class FragmentEditBatch extends Fragment {
 
 	/** Insertion-ordered so repeated saves write membership in a stable order. */
 	private final Set<Long> selected = new LinkedHashSet<>();
+
+	/** The departments this account may make a batch for, in the order they are offered. */
+	private final List<Department> departments = new ArrayList<>();
+
+	/** Whose batch this is. Null until chosen, or for a batch nobody has placed yet. */
+	@Nullable
+	private Department batchDept;
+
+	/** Every course on the phone. The picker offers the ones of {@link #batchDept}. */
+	private final List<EntityCourse> courses = new ArrayList<>();
+
+	/** The courses this batch is for, by ID. */
+	private final Set<Long> linked = new LinkedHashSet<>();
 
 	private Year filterYear;
 
@@ -111,8 +138,31 @@ public class FragmentEditBatch extends Fragment {
 		super.onViewCreated(view, savedInstanceState);
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
+
+		// The list and the students screen both ask before coming here; this is for every
+		// other way in, including the ones not written yet.
+		if (!viewModel.may(Permissions.Capability.BATCHES)) {
+			viewModel.sayNotPermitted();
+			Navigation.findNavController(view).popBackStack();
+			return;
+		}
+
 		batchID = getArguments() == null ? -1L : getArguments().getLong("batchID", -1L);
 		anyLabel = getString(R.string.filter_any);
+
+		departments.addAll(viewModel.batchDepartments());
+
+		if (departments.isEmpty()) {
+			viewModel.sayNotPermitted();
+			Navigation.findNavController(view).popBackStack();
+			return;
+		}
+
+		// One department to choose from is no choice: a professor's batch is their department's,
+		// and the field is not shown.
+		if (departments.size() == 1) {
+			batchDept = departments.get(0);
+		}
 
 		RecyclerView recyclerView = view.findViewById(R.id.rvStudents);
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
@@ -152,12 +202,19 @@ public class FragmentEditBatch extends Fragment {
 		etDescription = header.findViewById(R.id.etBatchDesc);
 		etSearch = header.findViewById(R.id.etSearch);
 		tilName = header.findViewById(R.id.tilBatchName);
+		tilBatchDept = header.findViewById(R.id.tilBatchDepartment);
+		actvBatchDept = header.findViewById(R.id.actvBatchDepartment);
+		tilBatchDept.setVisibility(departments.size() == 1 ? View.GONE : View.VISIBLE);
+		bindBatchDepartment();
 
 		actvYear = header.findViewById(R.id.actvFilterYear);
 		actvStream = header.findViewById(R.id.actvFilterStream);
 		actvDept = header.findViewById(R.id.actvFilterDept);
 		actvDivision = header.findViewById(R.id.actvFilterDivision);
 		filtersActive = header.findViewById(R.id.tvFiltersActive);
+
+		linkedCourses = header.findViewById(R.id.tvLinkedCourses);
+		header.findViewById(R.id.btnChooseCourses).setOnClickListener(v -> chooseCourses());
 
 		selectedCount = header.findViewById(R.id.tvSelectedCount);
 		emptyMessage = header.findViewById(R.id.tvNoMatches);
@@ -179,10 +236,56 @@ public class FragmentEditBatch extends Fragment {
 		// The data may already have loaded before the header existed.
 		applyFilter();
 		updateCount();
+		updateLinkedCourses();
 	}
 
 	private boolean isCreating() {
 		return batchID <= 0;
+	}
+
+	// ── Department ───────────────────────────────────────────────────────
+
+	/** Fills the department field with the departments on offer and the current choice. */
+	private void bindBatchDepartment() {
+
+		List<Department> offered = new ArrayList<>(departments);
+
+		// A batch being edited keeps its own department on the list, so the field never reads
+		// blank for a batch whose department this account still keeps under another heading.
+		if (batchDept != null && !offered.contains(batchDept)) {
+			offered.add(0, batchDept);
+		}
+
+		DropdownBinder.bind(actvBatchDept, offered, null, batchDept, this::onDepartmentChosen);
+	}
+
+	/**
+	 * Moves the batch to that department, unlinking the courses of the one it left: the server
+	 * links a batch only to its own department's courses, and would refuse the rest.
+	 */
+	private void onDepartmentChosen(@Nullable Department department) {
+
+		batchDept = department;
+
+		if (tilBatchDept != null) {
+			tilBatchDept.setError(null);
+		}
+
+		List<String> dropped = new ArrayList<>();
+
+		for (EntityCourse course : courses) {
+			if (linked.contains(course.courseID) && course.offeringDepartment != department) {
+				linked.remove(course.courseID);
+				dropped.add(course.courseCode);
+			}
+		}
+
+		if (!dropped.isEmpty()) {
+			Toast.makeText(requireContext(), getString(R.string.message_batch_courses_dropped,
+					String.join(", ", dropped)), Toast.LENGTH_LONG).show();
+		}
+
+		updateLinkedCourses();
 	}
 
 	// ── Filters ──────────────────────────────────────────────────────────
@@ -258,11 +361,27 @@ public class FragmentEditBatch extends Fragment {
 				return;
 			}
 			Ui.onMain(this, () -> {
+
+				// The list sends somebody who may not change the batch to its read-only view.
+				// This is for every other way in.
+				if (batch != null && !viewModel.mayKeepBatchesOf(batch.department)) {
+					viewModel.sayNotYourBatch(batch);
+					Navigation.findNavController(requireView()).popBackStack();
+					return;
+				}
+
 				if (batch != null && etName != null) {
 					etName.setText(batch.batchName);
 					etDescription.setText(batch.batchDesc);
 				}
 				loadedBatch = batch;
+
+				if (batch != null) {
+					batchDept = batch.department;
+					if (actvBatchDept != null) {
+						bindBatchDepartment();
+					}
+				}
 
 				allStudents.clear();
 				allStudents.addAll(students);
@@ -274,6 +393,100 @@ public class FragmentEditBatch extends Fragment {
 				updateCount();
 			});
 		});
+
+		viewModel.loadBatchCourseLinks(batchID, (all, current) -> {
+			if (!isAdded()) {
+				return;
+			}
+			Ui.onMain(this, () -> {
+				courses.clear();
+				courses.addAll(all);
+
+				linked.clear();
+				linked.addAll(current);
+
+				updateLinkedCourses();
+			});
+		});
+	}
+
+	// ── Courses ──────────────────────────────────────────────────────────
+
+	/**
+	 * Picks the courses this batch is for, out of its department's. Nothing is written until
+	 * the batch is saved.
+	 */
+	private void chooseCourses() {
+
+		if (batchDept == null) {
+			tilBatchDept.setError(getString(R.string.error_required));
+			return;
+		}
+
+		List<EntityCourse> offered = new ArrayList<>();
+		for (EntityCourse course : courses) {
+			if (course.offeringDepartment == batchDept) {
+				offered.add(course);
+			}
+		}
+
+		if (offered.isEmpty()) {
+			Toast.makeText(requireContext(), courses.isEmpty()
+							? R.string.helper_no_courses_to_link
+							: R.string.helper_no_department_courses,
+					Toast.LENGTH_SHORT).show();
+			return;
+		}
+
+		String[] labels = new String[offered.size()];
+		boolean[] checked = new boolean[offered.size()];
+
+		for (int at = 0; at < offered.size(); at++) {
+			labels[at] = describe(offered.get(at));
+			checked[at] = linked.contains(offered.get(at).courseID);
+		}
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_batch_courses_title)
+				.setMultiChoiceItems(labels, checked, (d, at, on) -> checked[at] = on)
+				.setPositiveButton(R.string.action_done, (d, w) -> {
+					for (int at = 0; at < offered.size(); at++) {
+						if (checked[at]) {
+							linked.add(offered.get(at).courseID);
+						} else {
+							linked.remove(offered.get(at).courseID);
+						}
+					}
+					updateLinkedCourses();
+				})
+				.setNegativeButton(R.string.action_cancel, null)
+				.show();
+	}
+
+	/** The line under the heading: which courses, or that there are none yet. */
+	private void updateLinkedCourses() {
+
+		if (linkedCourses == null) {
+			return;
+		}
+
+		List<String> names = new ArrayList<>();
+
+		for (EntityCourse course : courses) {
+			if (linked.contains(course.courseID)) {
+				names.add(course.courseCode);
+			}
+		}
+
+		linkedCourses.setText(names.isEmpty()
+				? getString(R.string.label_no_linked_courses)
+				: String.join(", ", names));
+	}
+
+	@NonNull
+	private static String describe(@NonNull EntityCourse course) {
+		return course.courseCode + " · " + course.courseTopic
+				+ (course.dateDiscontinued != null ? " (discontinued)" : "");
 	}
 
 	// ── Selection ────────────────────────────────────────────────────────
@@ -427,6 +640,11 @@ public class FragmentEditBatch extends Fragment {
 			return;
 		}
 
+		if (batchDept == null) {
+			tilBatchDept.setError(getString(R.string.error_required));
+			return;
+		}
+
 		if (selected.isEmpty()) {
 			return;
 		}
@@ -436,15 +654,16 @@ public class FragmentEditBatch extends Fragment {
 		String desc = description.isEmpty() ? null : description;
 
 		List<Long> ids = new ArrayList<>(selected);
+		List<Long> courseIDs = new ArrayList<>(linked);
 
 		Runnable navigateBack = () -> Ui.onMain(this, () -> {
 			Navigation.findNavController(button).navigateUp();
 		});
 
 		if (isCreating()) {
-			viewModel.createBatch(name, desc, ids, navigateBack);
+			viewModel.createBatch(name, desc, batchDept, ids, courseIDs, navigateBack);
 		} else {
-			viewModel.updateBatch(batchID, name, desc, ids, navigateBack);
+			viewModel.updateBatch(batchID, name, desc, batchDept, ids, courseIDs, navigateBack);
 		}
 	}
 }

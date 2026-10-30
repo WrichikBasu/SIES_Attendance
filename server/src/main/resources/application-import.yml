@@ -1,0 +1,27 @@
+# The importer runs as a command, not as a service.
+#
+# Activated with --spring.profiles.active=import. Everything here is about
+# not being a web application: there is no endpoint to serve, the process
+# should do its work and exit, and a half-started Tomcat holding port 8080
+# would stop the service that is meant to have it.
+spring:
+  main:
+    web-application-type: none
+    # The report is the output. A banner in front of it is noise.
+    banner-mode: "off"
+    # The importer is a one-shot command, so the context closing is the
+    # process ending rather than something to keep alive.
+    register-shutdown-hook: true
+
+  # Flyway still runs: importing into a database that has not been migrated
+  # would fail on the first insert, and with a worse message than Flyway's.
+  flyway:
+    enabled: true
+
+logging:
+  level:
+    # The report is the output. Spring's startup banner and Hikari's pool
+    # chatter are noise in front of it.
+    root: WARN
+    in.basulabs.siesattendance: INFO
+    org.flywaydb: INFO

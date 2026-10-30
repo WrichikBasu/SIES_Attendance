@@ -161,6 +161,30 @@
 
         </com.google.android.material.textfield.TextInputLayout>
 
+        <!--
+            The batches that sit this course. Shown to professors only: batches are theirs
+            (V22), so the office edits a course without this field rather than with one whose
+            save would be refused.
+        -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilCourseBatches"
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:hint="@string/hint_course_batches">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etCourseBatches"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:cursorVisible="false"
+                android:focusable="false"
+                android:inputType="none" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/tilCourseType"
             android:layout_width="match_parent"
@@ -192,6 +216,15 @@
                 android:minLines="2" />
 
         </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnRepresentatives"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="@string/action_class_representatives"
+            android:visibility="gone" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSaveCourse"

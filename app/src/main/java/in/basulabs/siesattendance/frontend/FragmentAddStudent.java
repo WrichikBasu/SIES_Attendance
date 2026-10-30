@@ -14,10 +14,16 @@ import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
 
 import com.google.android.material.button.MaterialButton;
+import com.google.android.material.datepicker.MaterialDatePicker;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
+import java.util.Locale;
 
 import in.basulabs.siesattendance.R;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -30,6 +36,7 @@ import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
+import in.basulabs.siesattendance.frontend.util.Permissions;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -65,7 +72,22 @@ public class FragmentAddStudent extends Fragment {
 	private int academicYear;
 
 
-	private TextInputEditText etName, etPronouns, etEmail, etRollNo;
+	private TextInputEditText etName, etPronouns, etEmail, etRollNo, etApaarId;
+
+	private TextInputLayout tilApaarId;
+
+	private MaterialButton btnJoinDate, btnLeaveDate;
+
+	/** Null for the start of the session, which is what nearly everybody's is. */
+	@Nullable
+	private LocalDate joinDate;
+
+	/** Null while the student is still enrolled. */
+	@Nullable
+	private LocalDate leaveDate;
+
+	private static final DateTimeFormatter DATE_LABEL =
+			DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH);
 
 	private TextInputLayout tilName, tilRollNo;
 
@@ -109,6 +131,15 @@ public class FragmentAddStudent extends Fragment {
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
 
+		if (!viewModel.may(Permissions.Capability.STUDENTS)) {
+			// On the screen itself, as well as at the controls that lead here. The controls
+			// are the courtesy; this is the one check that cannot be forgotten when somebody
+			// adds a fourth way in -- which is exactly what happened to the sign-in gate.
+			viewModel.sayNotPermitted();
+			Navigation.findNavController(view).popBackStack();
+			return;
+		}
+
 		editingStudentID = getArguments() == null
 				? -1L
 				: getArguments().getLong("studentID", -1L);
@@ -122,6 +153,29 @@ public class FragmentAddStudent extends Fragment {
 		etPronouns = view.findViewById(R.id.etPronouns);
 		etEmail = view.findViewById(R.id.etEmail);
 		etRollNo = view.findViewById(R.id.etRollNo);
+		etApaarId = view.findViewById(R.id.etApaarId);
+		tilApaarId = view.findViewById(R.id.tilApaarId);
+
+		btnJoinDate = view.findViewById(R.id.btnJoinDate);
+		btnLeaveDate = view.findViewById(R.id.btnLeaveDate);
+
+		btnJoinDate.setOnClickListener(v -> pickDate(joinDate, picked -> {
+			joinDate = picked;
+			showDates();
+		}));
+		btnLeaveDate.setOnClickListener(v -> pickDate(leaveDate, picked -> {
+			leaveDate = picked;
+			showDates();
+		}));
+		view.findViewById(R.id.btnClearJoinDate).setOnClickListener(v -> {
+			joinDate = null;
+			showDates();
+		});
+		view.findViewById(R.id.btnClearLeaveDate).setOnClickListener(v -> {
+			leaveDate = null;
+			showDates();
+		});
+		showDates();
 
 		tilName = view.findViewById(R.id.tilName);
 		tilRollNo = view.findViewById(R.id.tilRollNo);
@@ -169,6 +223,11 @@ public class FragmentAddStudent extends Fragment {
 				etPronouns.setText(student.pronouns);
 				etEmail.setText(student.email);
 				etRollNo.setText(student.rollNo);
+				etApaarId.setText(student.apaarId == null ? "" : String.valueOf(student.apaarId));
+
+				joinDate = student.joinDate;
+				leaveDate = student.leaveDate;
+				showDates();
 
 				chosenMajor = student.majorDept;
 				chosenStream = student.stream;
@@ -360,8 +419,29 @@ public class FragmentAddStudent extends Fragment {
 
 		String email = text(etEmail);
 
+		tilApaarId.setError(null);
+		String apaar = text(etApaarId);
+		Long apaarId = null;
+
+		if (!apaar.isEmpty()) {
+			if (!apaar.matches("[0-9]{1,18}") || Long.parseLong(apaar) == 0) {
+				tilApaarId.setError(getString(R.string.error_apaar_id));
+				return;
+			}
+			apaarId = Long.parseLong(apaar);
+		}
+
+		if (joinDate != null && leaveDate != null && leaveDate.isBefore(joinDate)) {
+			new MaterialAlertDialogBuilder(requireContext())
+					.setMessage(R.string.error_leave_before_join)
+					.setPositiveButton(android.R.string.ok, null)
+					.show();
+			return;
+		}
+
 		EntityStudent student =
 				new EntityStudent(name, pronouns, email.isEmpty() ? null : email);
+		student.apaarId = apaarId;
 
 		Runnable navigateBack = () -> Ui.onMain(this, () -> {
 			Navigation.findNavController(button).navigateUp();
@@ -371,11 +451,40 @@ public class FragmentAddStudent extends Fragment {
 			student.studentID = editingStudentID;
 			viewModel.updateStudent(student, academicYear, rollNo, year, stream, major,
 					minor, oe,
-					chosenSemester, chosenDivision, navigateBack);
+					chosenSemester, chosenDivision, joinDate, leaveDate, navigateBack);
 		} else {
 			viewModel.addStudent(student, rollNo, year, stream, major, minor, oe,
-					chosenSemester, chosenDivision, navigateBack);
+					chosenSemester, chosenDivision, joinDate, leaveDate, navigateBack);
 		}
+	}
+
+	/** The two date buttons, saying what an empty date means rather than showing nothing. */
+	private void showDates() {
+
+		btnJoinDate.setText(joinDate == null ? getString(R.string.label_join_default)
+				: getString(R.string.label_join_date, joinDate.format(DATE_LABEL)));
+
+		btnLeaveDate.setText(leaveDate == null ? getString(R.string.label_leave_none)
+				: getString(R.string.label_leave_date, leaveDate.format(DATE_LABEL)));
+	}
+
+	private interface DatePicked {
+		void onPicked(@NonNull LocalDate date);
+	}
+
+	/** The same picker the sessions screen uses, opened on the date already set or today. */
+	private void pickDate(@Nullable LocalDate initial, @NonNull DatePicked callback) {
+
+		LocalDate start = initial != null ? initial : LocalDate.now();
+
+		MaterialDatePicker<Long> picker = MaterialDatePicker.Builder.datePicker()
+				.setSelection(start.atStartOfDay(ZoneId.of("UTC")).toInstant().toEpochMilli())
+				.build();
+
+		picker.addOnPositiveButtonClickListener(selection -> callback.onPicked(
+				Instant.ofEpochMilli(selection).atZone(ZoneId.of("UTC")).toLocalDate()));
+
+		picker.show(getParentFragmentManager(), "enrolmentDate");
 	}
 
 	@NonNull

@@ -1,6 +1,6 @@
 <resources>
 
-    <string name="app_name">SIES Attendance</string>
+    <string name="app_name">SIES Attendance Unofficial</string>
     <string name="title_activity_home">SIES Attendance</string>
     <string name="title_mark_attendance">Mark attendance</string>
     <string name="title_statistics">Statistics</string>
@@ -72,6 +72,16 @@
     <string name="hint_notes">Notes (optional)</string>
     <string name="hint_batch_name">Batch name</string>
     <string name="hint_batch_description">Description (optional)</string>
+    <string name="hint_batch_department">Department</string>
+    <string name="section_professor_courses">Courses</string>
+    <string name="helper_designation_hod">HOD makes them head of their department once this is synced.</string>
+    <string name="label_no_courses_taught">No course on this phone</string>
+    <string name="helper_batch_department">Whose batch this is. Its students may come from any department.</string>
+    <string name="helper_no_department_courses">No course of this department to link.</string>
+    <string name="message_batch_courses_dropped">Unlinked %1$s: a batch is linked only to its own department\'s courses.</string>
+    <string name="label_batch_no_department">No department yet</string>
+    <string name="not_permitted_batch">This is %1$s\'s batch. Only its professors and head can change it.</string>
+    <string name="not_permitted_batch_unplaced">This batch has no department yet. An administrator sets it on the web console; until then it cannot be changed.</string>
     <string name="hint_filter_date">Pick a date</string>
 
     <!-- Actions -->
@@ -122,17 +132,10 @@
 
     <!-- Dialogs -->
     <string name="dialog_import_title">Import students</string>
-    <string name="dialog_import_message">Students will be imported into the %1$d-%2$02d academic
-        year.\n\nRows whose roll number already exists for that year update the existing
-        student instead of creating a duplicate, so you can correct the file and upload it
-        again. Students missing from this file are left untouched — importing never removes
-        anyone.</string>
+    <string name="dialog_import_message">Students will be imported into %1$d-%2$02d. Existing roll numbers are updated; nobody is removed.</string>
     <string name="dialog_import_result_title">Import finished</string>
     <string name="dialog_csv_format_title">CSV format</string>
-    <string name="dialog_csv_format_message">The first row must be a header. Column order does
-        not matter.\n\nRequired: rollNo, name, year, stream, majorDept\nOptional: pronouns,
-        email, minorDept, oeDept, semester, division\n\nDivision applies only to BSc and BA
-        (A to D); leave it blank for every other stream.\n\nExample:\n\n%1$s</string>
+    <string name="dialog_csv_format_message">%1$s\n\nEXAMPLE\n%2$s</string>
 
     <!-- Warnings and errors -->
     <string name="error_required">Required</string>
@@ -189,30 +192,69 @@
     <string name="dialog_delete_generic_message">%1$s will be permanently removed.</string>
 
     <string name="dialog_no_professors_title">Add a professor first</string>
-    <string name="dialog_no_professors_message">Every course must be assigned to a professor,
-        and there are none yet. Add one, then come back to create the course.</string>
+    <string name="dialog_no_professors_message">Add a professor first. Every course needs one.</string>
 
 
     <string name="title_take_attendance">Take attendance</string>
     <string name="roll_header_for">Students · %1$s</string>
-    <string name="empty_roll_for_course">No students are enrolled in this course for the
-        selected academic year. Check that students have been imported with a matching year,
-        stream and department.</string>
+    <string name="empty_roll_for_course">No students are on this course\'s roll for this session. A course\'s roll is the students in its batches.</string>
     <string name="label_whole_class">Whole class</string>
 
 
-    <string name="helper_no_batches_for_session">No batches in this session yet. Attendance is always recorded against a batch, so create the one that sits this class first.</string>
+    <string name="helper_no_batches_for_session">No batches in this session yet. Create one first.</string>
 
 
     <string name="title_edit_batch">Edit batch</string>
     <string name="section_batch_members">Members</string>
+    <string name="section_batch_courses">Courses</string>
+    <string name="section_course_instructors">Taught by</string>
+    <string name="label_no_linked_batches">No batch linked yet</string>
+    <string name="hint_apaar_id">APAAR ID (optional)</string>
+    <string name="error_apaar_id">Digits only</string>
+    <string name="section_enrolment">Enrolment</string>
+    <string name="label_join_default">Joined at the start of the session</string>
+    <string name="label_join_date">Joined %1$s</string>
+    <string name="label_leave_none">Still enrolled</string>
+    <string name="label_leave_date">Left %1$s</string>
+    <string name="action_clear">Clear</string>
+    <string name="error_leave_before_join">The leave date is before the join date.</string>
+    <string name="filter_show_left">Show students who have left</string>
+    <string name="label_apaar">APAAR ID</string>
+    <string name="label_not_recorded">Not recorded</string>
+    <string name="label_sessions">Sessions</string>
+    <string name="message_sync_before_import">Sync once first, so the app knows which departments you may import into.</string>
+    <string name="dialog_sign_out_unsent_title">Changes not sent yet</string>
+    <plurals name="dialog_sign_out_unsent_message">
+        <item quantity="one">%1$d change hasn\'t reached the server and will be lost if you sign out.</item>
+        <item quantity="other">%1$d changes haven\'t reached the server and will be lost if you sign out.</item>
+    </plurals>
+    <string name="action_sign_out_anyway">Sign out anyway</string>
+    <plurals name="dialog_sign_in_unsent_message">
+        <item quantity="one">%1$d change made by %2$s hasn\'t reached the server. Signing in as someone else deletes it. To keep it, sign in as %2$s instead.</item>
+        <item quantity="other">%1$d changes made by %2$s haven\'t reached the server. Signing in as someone else deletes them. To keep them, sign in as %2$s instead.</item>
+    </plurals>
+    <string name="the_previous_account">the previous account</string>
+    <string name="action_sign_in_anyway">Sign in anyway</string>
+    <string name="message_sign_in_again">You\'ve been signed out. Sign in again to keep syncing.</string>
+    <string name="helper_no_linked_batches_cr">No batch is linked to your courses yet. Ask a professor to link one.</string>
+    <string name="hint_course_batches">Batches</string>
+    <string name="action_assign_batches">Assign batches</string>
+    <string name="dialog_course_batches_title">Batches for this course</string>
+    <string name="action_representatives">Representatives</string>
+    <string name="action_class_representatives">Class representatives</string>
+    <string name="dialog_representatives_title">%1$s representatives, %2$s</string>
+    <string name="label_representative_no_account">%1$s (no account yet)</string>
+    <string name="helper_no_batches_to_link">No batches in this session yet.</string>
+    <string name="label_semester_number">Semester %1$d</string>
+    <string name="action_close">Close</string>
+    <string name="label_no_linked_courses">Not linked to any course yet</string>
+    <string name="dialog_batch_courses_title">Courses this batch is for</string>
+    <string name="helper_no_courses_to_link">There are no courses on this phone to link to.</string>
     <string name="action_discontinue">Mark discontinued</string>
     <string name="label_discontinued">Discontinued</string>
 
     <string name="dialog_discontinue_course_title">Mark this course discontinued?</string>
-    <string name="dialog_discontinue_course_message">%1$s will stop appearing as a current
-        offering, but its lectures and attendance records are kept. Courses are never deleted,
-        because every attendance record is filed under one.</string>
+    <string name="dialog_discontinue_course_message">%1$s will no longer be offered. Its lectures and attendance are kept.</string>
 
     <string name="import_nothing">Nothing was imported.</string>
 
@@ -233,9 +275,7 @@
     <!-- Ticks the lecture half of every split subject: major, minor, DSE, VSC and SEC. -->
     <string name="filter_all_theory">Theory</string>
     <string name="section_choose_students">Choose students</string>
-    <string name="hint_batch_cross_class">A batch can mix years, streams and departments. Use
-        the filters to find students, then tick them — switching filters keeps what you have
-        already selected.</string>
+    <string name="hint_batch_cross_class">Filters only change what is shown; your selection is kept.</string>
     <string name="action_select_shown">Select shown</string>
     <string name="action_clear_shown">Clear shown</string>
     <string name="action_show_selected_only">Selected only</string>
@@ -277,8 +317,7 @@
     <string name="label_highlight_absentees">Highlight absentees</string>
     <string name="hint_highlight_absentees">Absent students get a red AB and present ones a green
         P.</string>
-    <string name="hint_highlight_csv">A CSV file cannot carry colour, so the marks are written as
-        plain P and AB.</string>
+    <string name="hint_highlight_csv">CSV files can\'t show colour.</string>
     <string name="message_no_lectures_on_day">There are no lectures on this day to export.</string>
     <string name="message_day_not_marked">None of this day\'s lectures has been marked yet, so
         there is nothing to export.</string>
@@ -286,8 +325,7 @@
     <string name="message_lecture_not_saved">This lecture\'s sheet has not been saved, so there
         is nothing to export. Save the sheet first.</string>
     <string name="dialog_unsaved_marks_title">Unsaved changes</string>
-    <string name="message_unsaved_marks">The export is made from the saved sheet, so the changes
-        on screen will not be in it. Save the sheet first to include them.</string>
+    <string name="message_unsaved_marks">Unsaved changes won\'t be in the export. Save first to include them.</string>
     <string name="action_export_saved_sheet">Export saved sheet</string>
     <string name="message_marks_exported">Exported %1$s across %2$s (%3$s).</string>
     <string name="error_marks_export_lost">The export was interrupted before it could be written.
@@ -330,18 +368,12 @@
     <string name="filter_all_sessions">All sessions</string>
     <string name="hint_starting_year">Starting year</string>
     <string name="helper_starting_year">2025 means the 2025-26 session</string>
-    <string name="hint_sessions_explainer">A lecture belongs to whichever session its date falls
-        in, so these dates decide how every report is grouped. Tap a session to change its
-        dates; long-press to remove it.</string>
+    <string name="hint_sessions_explainer">Tap a session to edit it, long-press to remove it.</string>
     <string name="dialog_delete_session_title">Remove this session?</string>
-    <string name="dialog_delete_session_message">%1$s will be removed. No attendance is deleted,
-        but lectures held during these dates will not appear in any report until another session
-        covers them.</string>
+    <string name="dialog_delete_session_message">%1$s will be removed. Lectures in these dates won\'t appear in reports until another session covers them.</string>
     <string name="dialog_delete_session_empty">Nothing is filed under it yet, so removing it
         costs nothing.</string>
-    <string name="dialog_delete_session_impact">%1$s and %2$s are filed under it. The lectures
-        drop out of every report, and an export for this session comes back empty, until
-        another session covers these dates.</string>
+    <string name="dialog_delete_session_impact">%1$s and %2$s are filed under it.</string>
     <plurals name="count_lectures_plain">
         <item quantity="one">1 lecture</item>
         <item quantity="other">%1$d lectures</item>
@@ -364,10 +396,8 @@
     <string name="empty_lectures_in_period">No lectures in this period.</string>
 
     <plurals name="warn_orphan_lectures">
-        <item quantity="one">%d lecture falls outside every defined session and is missing from
-            all reports.</item>
-        <item quantity="other">%d lectures fall outside every defined session and are missing
-            from all reports.</item>
+        <item quantity="one">%d lecture is outside every session and missing from reports.</item>
+        <item quantity="other">%d lectures are outside every session and missing from reports.</item>
     </plurals>
 
 
@@ -397,25 +427,19 @@
     <string name="action_clear_selection">Clear selection</string>
 
     <string name="title_export">Export data</string>
-    <string name="hint_export_intro">Everything left untouched exports the whole session.
-        Narrow whichever parts you need.</string>
 
     <string name="section_dates">Date range</string>
 
     <string name="section_courses">Courses to include</string>
-    <string name="hint_section_courses">These become the columns, and whoever is on their roll
-        becomes the rows. Select none to include every course. Courses from any department or
-        stream can be mixed freely.</string>
+    <string name="hint_section_courses">Leave empty to include every course.</string>
     <string name="hint_search_courses">Search by code, topic, department or stream</string>
     <string name="label_no_courses_match">No courses match that search.</string>
 
     <string name="section_divisions">Divisions</string>
-    <string name="hint_section_divisions">Optional. Only BSc and BA classes are split
-        into divisions; choosing one leaves out every student who has none.</string>
+    <string name="hint_section_divisions">Optional. Only BSc and BA have divisions.</string>
     <string name="section_defaulters">Defaulter threshold</string>
     <string name="section_groups">Course groups</string>
-    <string name="hint_section_groups">Optional. Each group gets its own sheet with a combined
-        percentage and its own defaulter list.</string>
+    <string name="hint_section_groups">Optional. Each group gets its own sheet.</string>
     <string name="hint_group_pick_courses">Tap the courses that belong to this group</string>
     <string name="hint_group_no_courses">Select some courses above first.</string>
 
@@ -436,8 +460,6 @@
     <!-- Editing a recorded lecture -->
     <string name="title_edit_lecture">Edit lecture</string>
     <string name="action_edit_lecture">Edit lecture details</string>
-    <string name="hint_edit_lecture_explainer">Correct the course, batch, date or time this
-        attendance was recorded against. The marks themselves are kept.</string>
 
     <plurals name="warn_stranded_marks">
         <item quantity="one">1 student marked here is not on the new roll.</item>
@@ -446,21 +468,15 @@
 
     <string name="dialog_stranded_title">The roll is changing</string>
     <plurals name="dialog_stranded_message">
-        <item quantity="one">1 student marked on this lecture is not on the new roll. Keeping
-            their mark counts it towards a course they do not take, and no sheet will show it
-            again.</item>
-        <item quantity="other">%1$d students marked on this lecture are not on the new roll.
-            Keeping their marks counts them towards a course they do not take, and no sheet
-            will show them again.</item>
+        <item quantity="one">1 student marked on this lecture is not on the new roll. Their mark would count towards a course they don\'t take.</item>
+        <item quantity="other">%1$d students marked on this lecture are not on the new roll. Their marks would count towards a course they don\'t take.</item>
     </plurals>
     <string name="option_drop_stranded">Remove those marks</string>
     <string name="option_keep_stranded">Keep them anyway</string>
 
     <!-- Guarding a part-marked roll -->
     <string name="dialog_discard_roll_title">Discard the marks you have made?</string>
-    <string name="dialog_discard_roll_message">Switching to another course clears this roll.
-        The attendance you have marked so far has not been saved and cannot be recovered.
-        </string>
+    <string name="dialog_discard_roll_message">Switching courses discards the marks you haven\'t saved.</string>
     <string name="action_keep_marking">Keep marking</string>
     <string name="action_discard_and_switch">Discard and switch</string>
 
@@ -468,9 +484,7 @@
     <string name="action_duplicate_attendance">Duplicate this attendance</string>
     <string name="action_duplicate">Duplicate</string>
     <string name="dialog_duplicate_title">Duplicate to another slot</string>
-    <string name="hint_duplicate_explainer">A copy of this sheet for %1$s (%2$s) will be made
-        with the same marks. Set when it took place, then correct whoever differs and save.
-        </string>
+    <string name="hint_duplicate_explainer">Copies this sheet for %1$s (%2$s). Set the time, adjust the marks, then save.</string>
 
     <!-- Deleting an attendance record -->
     <string name="action_delete_attendance">Delete this attendance record</string>
@@ -484,17 +498,14 @@
     <string name="dialog_clear_marks_message">Who was present and absent will be erased. The
         lecture stays on the timetable and can be marked again.</string>
 
-    <string name="dialog_delete_lecture_and_marks">The lecture and everything recorded against
-        it will be removed. Attendance percentages for this course will change, because the
-        lecture will no longer count as a session that was held.</string>
+    <string name="dialog_delete_lecture_and_marks">The lecture and its marks will be deleted. This course\'s percentages will change.</string>
 
     <!-- Taking attendance -->
     <string name="action_save_and_next">Save and take the next period</string>
 
 
     <string name="dialog_next_period_title">Saved. Ready for the next period</string>
-    <string name="dialog_next_period_message">The marks have been kept and the time moved on
-        to %1$s–%2$s. Change whatever differs for this hour, then save again.</string>
+    <string name="dialog_next_period_message">Marks kept; time moved to %1$s–%2$s. Adjust and save.</string>
 
     <!-- Removing a student -->
     <string name="action_delete_student">Delete student</string>
@@ -508,21 +519,15 @@
         record naming them</string>
 
     <string name="dialog_withdraw_title">Remove from this session?</string>
-    <string name="dialog_withdraw_message">They will come off this session\'s roster and out
-        of its batches. Their %1$d attendance record(s) for this session are kept, so past
-        percentages stay correct, and their other sessions are untouched.</string>
+    <string name="dialog_withdraw_message">They will be removed from this session\'s roll and batches. Their %1$d attendance record(s) are kept.</string>
 
     <string name="dialog_delete_student_title">Delete this student?</string>
     <string name="dialog_delete_student_message_clean">There is no attendance recorded for
         this student yet, so nothing else is lost.</string>
-    <string name="dialog_delete_student_message_with_history">This erases %1$d attendance
-        record(s) across %2$d session(s), along with the student. Attendance percentages for
-        the classes they were in will change.</string>
+    <string name="dialog_delete_student_message_with_history">This also deletes %1$d attendance record(s) across %2$d session(s).</string>
 
     <string name="dialog_delete_student_confirm_title">This cannot be undone</string>
-    <string name="dialog_delete_student_confirm_message">%1$d attendance record(s) will be
-        destroyed. There is no undo. If you might want this data back, cancel and export a
-        backup first.</string>
+    <string name="dialog_delete_student_confirm_message">%1$d attendance record(s) will be permanently deleted.</string>
 
     <!-- Manual student entry cross-checks -->
     <string name="error_minor_same_as_major">The minor department cannot be the same as the
@@ -533,140 +538,38 @@
         minor department</string>
 
     <!-- Backup and restore -->
-    <string name="title_backup">Backup and restore</string>
-    <string name="action_backup">Backup and restore</string>
 
-    <string name="title_export_backup">Export a backup</string>
-    <string name="hint_export_explainer">Saves everything — students, courses, batches,
-        lectures and every attendance record — into a single file you can keep somewhere
-        safe or move to another device.</string>
-    <string name="label_encrypt_backup">Protect with a password</string>
-    <string name="hint_encrypt_explainer">The file is scrambled so nobody can read it without
-        the password. The password is not stored anywhere, so it cannot be recovered if you
-        forget it.</string>
-    <string name="action_export_backup">Export backup</string>
-    <string name="action_export_anyway">Export without a password</string>
 
-    <string name="title_import_backup">Restore from a backup</string>
-    <string name="hint_import_explainer">Loads a backup file made by this app. A backup from
-        an older version is upgraded automatically. You can either merge it into what is
-        already here or replace everything with it.</string>
-    <string name="warn_import_replaces">Replacing discards everything currently in the app.
-        Merging keeps it, and only overwrites records the backup also has.</string>
-    <string name="action_import_backup">Restore backup</string>
     <string name="action_choose_file">Choose file</string>
-    <string name="action_restore">Restore</string>
-    <string name="action_restart">Restart</string>
-    <string name="action_try_again">Try again</string>
 
-    <string name="hint_backup_storage_note">Backups are written wherever you choose in the
-        file picker. Keeping one in a cloud folder means a lost or broken phone does not cost
-        you the term\'s attendance.</string>
 
-    <string name="progress_exporting">Exporting…</string>
-    <string name="progress_restoring">Restoring…</string>
 
-    <string name="dialog_set_password_title">Set a password</string>
-    <string name="hint_set_backup_password">You will need this exact password to restore the
-        backup. There is no way to recover it, so keep it somewhere you trust.</string>
     <string name="hint_backup_password">Password</string>
     <string name="hint_backup_password_confirm">Repeat password</string>
-    <string name="error_password_too_short">Use at least %1$d characters</string>
-    <string name="error_passwords_differ">The two passwords do not match</string>
-    <string name="error_password_required">Enter the password for this backup</string>
 
-    <string name="dialog_enter_password_title">Password needed</string>
-    <string name="hint_enter_backup_password">This backup, made on %1$s, is password
-        protected.</string>
 
-    <string name="dialog_plain_backup_title">Export without a password?</string>
-    <string name="dialog_plain_backup_message">The file will contain every student\'s name,
-        email address and attendance record in readable form. Anyone who gets hold of it can
-        read all of it.</string>
 
-    <string name="dialog_restore_title">Before you restore</string>
-    <string name="dialog_restore_message">Restoring replaces all current data with the
-        contents of the backup. If there is anything in the app you want to keep, export a
-        backup of it first.</string>
 
-    <string name="dialog_restore_confirm_title">Restore this backup?</string>
-    <string name="dialog_restore_confirm_message">This backup was made on %1$s. Everything
-        currently in the app will be replaced.</string>
 
-    <string name="dialog_export_done_title">Backup saved</string>
-    <string name="message_export_done">Your data has been exported.</string>
-    <string name="message_export_done_encrypted">Your data has been exported and encrypted.
-        You will need the password to restore it.</string>
 
-    <string name="dialog_export_failed_title">Export failed</string>
-    <string name="error_export_generic">The backup could not be written. Check there is enough
-        free space and try again.</string>
 
-    <string name="dialog_restore_done_title">Restore complete</string>
-    <string name="dialog_restore_done_message">Your data has been restored. The app needs to
-        restart to finish.</string>
 
-    <string name="dialog_restore_failed_title">Restore failed</string>
-    <string name="dialog_wrong_password_title">Wrong password</string>
-    <string name="dialog_wrong_password_message">That password did not open the backup. Your
-        current data has not been touched.</string>
 
-    <string name="error_not_a_backup">That file is not a backup made by this app.</string>
-    <string name="error_backup_too_new">That backup was made by a newer version of the app.
-        Update the app and try again.</string>
-    <string name="error_backup_damaged">That backup is damaged and could not be read. Your
-        current data has not been touched.</string>
-    <string name="error_restore_generic">The backup could not be restored. Your current data
-        has not been touched.</string>
 
-    <string name="label_unknown_date">an unknown date</string>
 
     <!-- Merge restore -->
-    <string name="dialog_restore_mode_title">How should the backup be applied?</string>
-    <string name="option_restore_merge">Add to what is here — keep everything, and let the
-        backup win where they disagree</string>
-    <string name="option_restore_replace">Replace everything — discard current data and use
-        the backup alone</string>
-    <string name="action_merge">Merge</string>
-    <string name="progress_merging">Merging…</string>
 
-    <string name="dialog_merge_confirm_title">Merge this backup?</string>
-    <string name="dialog_merge_confirm_message">This backup was made on %1$s. Records that
-        exist in both will be updated from the backup; anything only in the backup will be
-        added. Nothing currently in the app will be deleted.</string>
 
-    <string name="dialog_merge_done_title">Merge complete</string>
-    <string name="message_merge_summary">Added %1$d records and updated %2$d.</string>
-    <string name="message_merge_row">%1$d added, %2$d updated</string>
-    <string name="message_merge_no_changes">The backup held nothing that was not already
-        here, so nothing changed.</string>
-    <string name="message_merge_notes">Some rows needed care:</string>
 
-    <string name="label_merge_enrolments">Enrolments</string>
-    <string name="label_merge_courses">Courses</string>
-    <string name="label_merge_batches">Batches</string>
-    <string name="label_merge_course_batches">Course batches</string>
-    <string name="label_merge_lectures">Lectures</string>
-    <string name="label_merge_attendance">Attendance records</string>
 
     <!-- Importing an attendance register -->
     <string name="title_import_attendance">Import attendance</string>
     <string name="action_import_attendance">Import a register…</string>
 
-    <string name="hint_import_attendance_intro">Reads a register kept in a spreadsheet: one
-        column for each class, one row for each student. Choosing a file only reads it — you
-        see every session it would create, and which batch it worked out for each, before
-        anything is saved.</string>
+    <string name="hint_import_attendance_intro">Nothing is saved until you confirm.</string>
 
     <string name="dialog_attendance_format_title">Attendance file format</string>
-    <string name="dialog_attendance_format_message">The first column holds the roll numbers.
-        Every column after it is one class, named by four heading lines: course code, date,
-        start time and end time.\n\nIn a student\'s cell, P means present and AB means absent.
-        Leave it empty if the student was not in that class at all — that is how the app works
-        out which batch the class was held for, and it is not the same as an absence.\n\nEvery
-        imported class is saved against a batch, so the batch that was in the room has to exist
-        in the app before you import. A class taught to everybody needs a batch holding
-        everybody.\n\nExample:\n\n%1$s</string>
+    <string name="dialog_attendance_format_message">%1$s\n\nEXAMPLE\n%2$s</string>
 
     <string name="label_import_batch">%1$s · %2$d marked, %3$d not in this class</string>
     <string name="label_import_batch_all">%1$s · %2$d marked</string>
@@ -696,10 +599,7 @@
     </plurals>
 
     <string name="dialog_import_attendance_title">Save these records?</string>
-    <string name="dialog_import_attendance_message">Each class is saved with the batch shown
-        against it. A class saved against the wrong batch changes the attendance percentage of
-        everyone in that batch, so check them before saving.\n\nA class already on record has
-        its marks replaced.</string>
+    <string name="dialog_import_attendance_message">Check each class\'s batch before saving. Classes already on record have their marks replaced.</string>
 
     <string name="message_import_attendance_failed">Nothing was saved: %1$s</string>
 
@@ -717,5 +617,125 @@
         <item quantity="one">%d attendance mark saved</item>
         <item quantity="other">%d attendance marks saved</item>
     </plurals>
+
+
+    <!-- ── Syncing ───────────────────────────────────────────────── -->
+
+    <string name="action_sync">Account and sync</string>
+    <string name="title_sync">Account and sync</string>
+    <string name="hint_password">Password</string>
+    <string name="hint_sync_door">Signing in as</string>
+    <string name="hint_sync_door_explained">Professors and staff sign in as staff; class representatives as students.</string>
+    <string name="door_staff">Staff</string>
+    <string name="door_student">Student</string>
+    <string name="action_sign_in">Sign in</string>
+    <string name="action_sign_out">Sign out</string>
+    <string name="action_sync_now">Sync now</string>
+    <string name="error_email_required">Enter your email address</string>
+    <string name="error_sync_password_required">Enter your password</string>
+    <string name="sync_no_server">This build has no server</string>
+    <string name="sync_not_signed_in">Not signed in</string>
+    <string name="sync_signed_in">Signed in</string>
+    <string name="sync_signed_in_as">Signed in as %1$s</string>
+
+    <!--
+        Both directions, because "everything has reached the server" answers half of "is this
+        phone in step" and the other half is the half somebody is usually asking about: has
+        this phone got what the office and the other phones have put there.
+    -->
+    <string name="sync_up_nothing">Everything here has reached the server</string>
+    <plurals name="sync_changes_waiting">
+        <item quantity="one">%d change waiting to be sent</item>
+        <item quantity="other">%d changes waiting to be sent</item>
+    </plurals>
+    <string name="sync_down_never">Nothing received from the server yet</string>
+    <plurals name="sync_down_received">
+        <item quantity="one">%1$d row received from the server %2$s</item>
+        <item quantity="other">%1$d rows received from the server %2$s</item>
+    </plurals>
+    <string name="sync_down_nothing_new">Nothing new from the server %1$s</string>
+    <string name="sync_running">Syncing now\u2026</string>
+
+    <!--
+        What the server would not accept, kept until somebody says they have read it. The
+        plural counts them because "3 things could not be sent" is the part that decides
+        whether to read on.
+    -->
+    <plurals name="sync_refused_title">
+        <item quantity="one">The server would not accept one change</item>
+        <item quantity="other">The server would not accept %d changes</item>
+    </plurals>
+    <string name="action_dismiss">Dismiss</string>
+
+    <!-- The buckets SyncAge sorts a moment into. -->
+    <string name="age_moments">a moment ago</string>
+    <plurals name="age_minutes">
+        <item quantity="one">%d minute ago</item>
+        <item quantity="other">%d minutes ago</item>
+    </plurals>
+    <plurals name="age_hours">
+        <item quantity="one">%d hour ago</item>
+        <item quantity="other">%d hours ago</item>
+    </plurals>
+    <plurals name="age_days">
+        <item quantity="one">%d day ago</item>
+        <item quantity="other">%d days ago</item>
+    </plurals>
+
+    <!--
+        Shown when a student account taps something that changes the college's records.
+        Says what they can do rather than only what they cannot, because a class
+        representative's account exists for the first half of that sentence.
+    -->
+    <string name="not_permitted_records">You don\'t have permission to change this.</string>
+
+    <!-- ── The door ──────────────────────────────────────────────── -->
+
+    <string name="title_sign_in">Sign in</string>
+    <string name="sign_in_headline">Sign in to use this phone</string>
+    <string name="sign_in_headline_no_server">This build has no server</string>
+    <!--
+        Said plainly, because the honest reason is the useful one: a register is signed
+        work, and the server records which account recorded it.
+    -->
+    <string name="sign_in_explained">Sign in to take attendance.</string>
+    <string name="sign_in_no_server">No server is configured. The app works on this phone only.</string>
+    <string name="action_continue_locally">Use this phone on its own</string>
+
+    <!-- ── Changing the password ─────────────────────────────────── -->
+
+    <string name="action_change_password">Change password</string>
+    <string name="dialog_change_password_title">Change password</string>
+    <!--
+        Said plainly, because both halves surprise people: a new account's password was
+        chosen by whoever created it, and changing it signs out every other phone or
+        browser that holds this account's session.
+    -->
+    <string name="change_password_required">This account\'s password has to be changed before you can continue.</string>
+    <string name="change_password_explained">At least %1$d characters. Your other sign-ins will end.</string>
+    <string name="hint_current_password">Current password</string>
+    <string name="hint_new_password">New password</string>
+    <string name="hint_new_password_confirm">New password again</string>
+    <string name="error_current_password_required">Enter the current password</string>
+    <string name="error_new_password_required">Enter the new password</string>
+    <string name="error_new_password_short">At least %1$d characters</string>
+    <string name="error_new_password_blank">A password cannot be only spaces</string>
+    <string name="error_new_password_same">This is the password already in use</string>
+    <string name="error_new_password_mismatch">The two do not match</string>
+    <!--
+        The account was created by somebody else, who therefore knows the password that was
+        typed into it. Until it is changed the server refuses everything but this, so the
+        screen says what will happen rather than letting a sync fail to explain it.
+    -->
+    <string name="sync_must_change_password">Change your password before this account can sync.</string>
+
+    <!--
+        The toast on the one screen that still checks for itself: a session that ended while
+        a register was open behind another screen. The dialog that used to go with this is
+        gone, along with the sentence explaining why a sign-in was being asked for mid-app —
+        the app does not open without one now, so the explanation belongs on the door. See
+        sign_in_explained.
+    -->
+    <string name="title_sign_in_required">Sign in to take attendance</string>
 
 </resources>

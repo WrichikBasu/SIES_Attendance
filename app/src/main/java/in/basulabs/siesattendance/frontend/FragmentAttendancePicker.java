@@ -101,6 +101,7 @@ public class FragmentAttendancePicker extends Fragment {
 		// a time, so a sheet started from it means that day, not today; read at click time
 		// rather than captured, since the arrows and the calendar move it.
 		view.findViewById(R.id.fabTakeAttendance).setOnClickListener(v -> {
+
 			Bundle args = new Bundle();
 			args.putLong(FragmentTakeAttendance.ARG_DATE, selectedDate.toEpochDay());
 			Navigation.findNavController(v)

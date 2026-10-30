@@ -1,0 +1,32 @@
+# Applying the migrations, as a command rather than as a side effect of starting.
+#
+#   DB_OWNER_PASSWORD=... java -jar sies-attendance.jar \
+#       --spring.profiles.active=migrate
+#
+# Why this exists at all: with Flyway enabled the service migrates on startup, which is
+# convenient in development and two unwanted things in production. It means every service
+# process holds a password that can run DDL on every attendance record in the college, and
+# it means a schema change happens at whatever moment somebody restarts something. Split
+# apart, the migration is a step with a person behind it and the service runs with the app
+# role's password alone -- set SPRING_FLYWAY_ENABLED=false on the service; see
+# deploy/sies-attendance.service.
+spring:
+  main:
+    web-application-type: none
+    banner-mode: "off"
+
+  flyway:
+    enabled: true
+
+  datasource:
+    # The owner, as the bootstrap command does: this process is Flyway and nothing else, so
+    # asking it for the app role's password too would be asking for a secret it has no use
+    # for. SiesAttendanceServer.missingCredentials knows about this profile for that reason.
+    username: ${DB_OWNER_USER:sies_owner}
+    password: ${DB_OWNER_PASSWORD}
+
+logging:
+  level:
+    root: WARN
+    in.basulabs.siesattendance: INFO
+    org.flywaydb: INFO

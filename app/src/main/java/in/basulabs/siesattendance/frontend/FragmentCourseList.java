@@ -19,6 +19,11 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.frontend.adapter.AdapterCourse;
+import in.basulabs.siesattendance.frontend.util.BatchPicker;
+import in.basulabs.siesattendance.frontend.util.Permissions;
+import in.basulabs.siesattendance.frontend.util.ReadOnlyDetails;
+import in.basulabs.siesattendance.frontend.util.RepresentativePicker;
+import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -49,6 +54,14 @@ public class FragmentCourseList extends Fragment {
 
 			@Override
 			public void onEdit(EntityCourse course) {
+
+				// Read rather than refused: a class representative needs to see who teaches
+				// the course they mark and which batches sit it.
+				if (!viewModel.may(Permissions.Capability.COURSES)) {
+					showReadOnly(course);
+					return;
+				}
+
 				Bundle args = new Bundle();
 				args.putLong("courseID", course.courseID);
 				Navigation.findNavController(requireParentFragment().requireView())
@@ -57,6 +70,14 @@ public class FragmentCourseList extends Fragment {
 
 			@Override
 			public void onLongPress(EntityCourse course) {
+
+				// Discontinuing is an edit, and the gentlest-looking one: it changes what
+				// every later register offers without changing anything already recorded.
+				if (!viewModel.may(Permissions.Capability.COURSES)) {
+					showReadOnly(course);
+					return;
+				}
+
 				confirmDiscontinue(course);
 			}
 		});
@@ -64,13 +85,48 @@ public class FragmentCourseList extends Fragment {
 		recyclerView.setAdapter(adapter);
 
 		FloatingActionButton fab = view.findViewById(R.id.fabAddCourse);
-		// The FAB lives inside a ViewPager2 page, so navigation must go through the parent
-		// fragment's NavController rather than this view's.
-		fab.setOnClickListener(v -> Navigation.findNavController(
-						requireParentFragment().requireView())
-				.navigate(R.id.action_coursesHub_to_addCourse));
+
+		if (viewModel.may(Permissions.Capability.COURSES)) {
+			// The FAB lives inside a ViewPager2 page, so navigation must go through the parent
+			// fragment's NavController rather than this view's.
+			fab.setOnClickListener(v -> Navigation.findNavController(
+							requireParentFragment().requireView())
+					.navigate(R.id.action_coursesHub_to_addCourse));
+		} else {
+			fab.setVisibility(View.GONE);
+		}
 
 		viewModel.getCourses().observe(getViewLifecycleOwner(), adapter::submitList);
+	}
+
+	/**
+	 * The course, who teaches it and its batches. Nothing to change, except that a professor of
+	 * its department may assign the department's batches to it, and its instructor may appoint
+	 * its class representatives, whether or not they may edit the course itself.
+	 */
+	private void showReadOnly(@NonNull EntityCourse course) {
+
+		Runnable assign = viewModel.mayKeepBatchesOf(course.offeringDepartment)
+				? () -> assignBatches(course) : null;
+
+		viewModel.checkMayAppointFor(course.courseID, may -> {
+
+			Runnable representatives = may
+					? () -> RepresentativePicker.open(this, viewModel, course) : null;
+
+			viewModel.loadCourseDetails(course.courseID, (loaded, instructors, batches) ->
+					Ui.onMain(this, () -> ReadOnlyDetails.showCourse(requireContext(), loaded,
+							instructors, batches, assign, representatives)));
+		});
+	}
+
+	private void assignBatches(@NonNull EntityCourse course) {
+		viewModel.loadCourseBatchOptions(course.courseID, course.offeringDepartment,
+				(options, linked) ->
+				Ui.onMain(this, () -> BatchPicker.show(requireContext(), options,
+						new java.util.LinkedHashSet<>(linked), picked ->
+								viewModel.setCourseBatches(course.courseID,
+										new java.util.ArrayList<>(picked)))));
 	}
 
 	/**

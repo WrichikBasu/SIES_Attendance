@@ -28,12 +28,16 @@ import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
+import in.basulabs.siesattendance.frontend.util.BatchPicker;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
+import in.basulabs.siesattendance.frontend.util.Permissions;
+import in.basulabs.siesattendance.frontend.util.RepresentativePicker;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -41,8 +45,8 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * <p>
  * The academic fields are linked through {@link DropdownBinder}, so choosing a department
  * narrows the streams and choosing a stream narrows the years. The course type is independent of
- * all of them, and is what decides who ends up on the course's roll; see the roster query in
- * {@code DaoStudent}.
+ * all of them. None of these decides who is on the course's roll: that is the batches linked
+ * to it.
  * <p>
  * A course cannot be saved without a coordinator, which is why the form warns up front when no
  * professors have been entered yet rather than failing at save time.
@@ -87,6 +91,23 @@ public class FragmentAddCourse extends Fragment {
 	 */
 	private final Set<Long> otherInstructorIDs = new LinkedHashSet<>();
 
+	/** Whether this account may say which batches sit the course: professors only. */
+	private boolean mayAssignBatches;
+
+	private TextInputEditText etBatches;
+
+	/** The batches the field offers, and the ones ticked, by ID. */
+	private final List<EntityBatchDesc> batchOptions = new ArrayList<>();
+
+	private final Set<Long> batchIDs = new LinkedHashSet<>();
+
+	/**
+	 * Whether the course's current links have arrived. Until they have, {@link #batchIDs} is
+	 * empty because nothing is known, not because nothing is linked, and saving it would remove
+	 * every link the course has.
+	 */
+	private boolean batchesLoaded;
+
 	// Tracked as values because the stream list depends on the department and "BSc" alone
 	// cannot say whether the aided or unaided constant is meant.
 	@Nullable
@@ -120,6 +141,15 @@ public class FragmentAddCourse extends Fragment {
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
 
+		if (!viewModel.may(Permissions.Capability.COURSES)) {
+			// On the screen itself, as well as at the controls that lead here. The controls
+			// are the courtesy; this is the one check that cannot be forgotten when somebody
+			// adds a fourth way in -- which is exactly what happened to the sign-in gate.
+			viewModel.sayNotPermitted();
+			Navigation.findNavController(view).popBackStack();
+			return;
+		}
+
 		editingCourseID = getArguments() == null ? -1L : getArguments().getLong("courseID", -1L);
 
 		etCode = view.findViewById(R.id.etCourseCode);
@@ -136,6 +166,21 @@ public class FragmentAddCourse extends Fragment {
 		actvProfessor = view.findViewById(R.id.actvProfessor);
 		etOtherInstructors = view.findViewById(R.id.etOtherInstructors);
 		etOtherInstructors.setOnClickListener(v -> showInstructorPicker());
+
+		mayAssignBatches = viewModel.may(Permissions.Capability.BATCHES);
+		etBatches = view.findViewById(R.id.etCourseBatches);
+
+		if (mayAssignBatches) {
+			etBatches.setOnClickListener(v -> BatchPicker.show(requireContext(), offeredBatches(),
+					batchIDs, picked -> {
+						batchIDs.clear();
+						batchIDs.addAll(picked);
+						showBatchSummary();
+					}));
+			loadBatches();
+		} else {
+			view.findViewById(R.id.tilCourseBatches).setVisibility(View.GONE);
+		}
 
 		bindDropdowns();
 
@@ -186,6 +231,18 @@ public class FragmentAddCourse extends Fragment {
 				return;
 			}
 			Ui.onMain(this, () -> {
+				// Appointed on the server, with the roll it keeps, so not part of the save:
+				// only for a course the server has and lists as this account's to appoint for.
+				viewModel.checkMayAppointFor(course.courseID, may -> Ui.onMain(this, () -> {
+					if (may) {
+						View representatives =
+								requireView().findViewById(R.id.btnRepresentatives);
+						representatives.setVisibility(View.VISIBLE);
+						representatives.setOnClickListener(v ->
+								RepresentativePicker.open(this, viewModel, course));
+					}
+				}));
+
 				etCode.setText(course.courseCode);
 				etTopic.setText(course.courseTopic);
 				etRemarks.setText(course.remarks);
@@ -218,6 +275,54 @@ public class FragmentAddCourse extends Fragment {
 				showInstructorSummary();
 			});
 		});
+	}
+
+	/** The batches this course may be linked to and is linked to, for the Batches field. */
+	private void loadBatches() {
+		viewModel.loadCourseBatchOptions(editingCourseID, null, (options, linked) ->
+				Ui.onMain(this, () -> {
+					batchOptions.clear();
+					batchOptions.addAll(options);
+
+					batchIDs.clear();
+					batchIDs.addAll(linked);
+					batchesLoaded = true;
+
+					showBatchSummary();
+				}));
+	}
+
+	/**
+	 * What the Batches field offers: the session's batches of the department chosen above,
+	 * when this account keeps that department's batches, and whatever is linked already so it
+	 * can be unticked. A batch is linked only to its own department's courses (V31).
+	 */
+	@NonNull
+	private List<EntityBatchDesc> offeredBatches() {
+
+		boolean keeps = chosenDept != null && viewModel.mayKeepBatchesOf(chosenDept);
+		List<EntityBatchDesc> offered = new ArrayList<>();
+
+		for (EntityBatchDesc batch : batchOptions) {
+			if ((keeps && batch.department == chosenDept) || batchIDs.contains(batch.batchID)) {
+				offered.add(batch);
+			}
+		}
+		return offered;
+	}
+
+	private void showBatchSummary() {
+
+		List<String> names = new ArrayList<>();
+
+		for (EntityBatchDesc batch : batchOptions) {
+			if (batchIDs.contains(batch.batchID)) {
+				names.add(BatchPicker.describe(batch));
+			}
+		}
+
+		etBatches.setText(names.isEmpty()
+				? getString(R.string.label_no_linked_batches) : String.join(", ", names));
 	}
 
 	/**
@@ -333,14 +438,28 @@ public class FragmentAddCourse extends Fragment {
 	}
 
 	/**
-	 * The offering department decides the stream, so the two are linked here exactly as they
-	 * are on the student form: a Mass Media course can only be BAMMC.
+	 * Links the academic fields, with one difference from the student form: whether the offering
+	 * department decides the stream depends on the course type.
+	 * <p>
+	 * For a major or a DSE it does, exactly as on the student form — a Mass Media course can
+	 * only be BAMMC, because the roll is the students majoring in Mass Media and BAMMC is the
+	 * only stream they can be in. For a minor, an open elective, or any of the types a whole
+	 * year takes regardless of department, the offering department is somebody else's and the
+	 * stream is the class being taught, so every stream stays on offer. Mathematics is studied
+	 * as BSc; narrowing on it would make a Mathematics minor read to a BSc_unaided Computer
+	 * Science class impossible to enter. See
+	 * {@link CourseType#followsOfferingDepartment()}.
+	 * <p>
+	 * Because the answer hangs on a field of its own, the type dropdown has to rebuild the
+	 * linkage when it changes, which also reconciles a now-impossible stream back out.
 	 */
 	private void bindDropdowns() {
 
-		DropdownBinder.linkAcademicFields(actvDept, actvStream, actvYear, actvSemester,
+		DropdownBinder.Rebuildable academicFields = DropdownBinder.linkAcademicFields(
+				actvDept, actvStream, actvYear, actvSemester,
 				Arrays.asList(Department.values()), null,
 				chosenDept, chosenStream, chosenYear, chosenSemester,
+				() -> chosenType == null || chosenType.followsOfferingDepartment(),
 				(department, stream, year, semester) -> {
 					chosenDept = department;
 					chosenStream = stream;
@@ -349,7 +468,10 @@ public class FragmentAddCourse extends Fragment {
 				});
 
 		DropdownBinder.bind(actvType, Arrays.asList(CourseType.values()), null,
-				chosenType, value -> chosenType = value);
+				chosenType, value -> {
+					chosenType = value;
+					academicFields.rebuild();
+				});
 
 		// Professors are loaded off the main thread, then the dropdown is populated back on it.
 		viewModel.loadProfessorsSync(list -> Ui.onMain(this, () -> {
@@ -373,9 +495,11 @@ public class FragmentAddCourse extends Fragment {
 	/**
 	 * Validates and saves.
 	 * <p>
-	 * {@link AcademicRules#validate} runs here even though the dropdowns already steer towards
-	 * valid combinations. Narrowing is one-directional, so a value chosen before the field above
-	 * it was changed can survive as a contradiction, and this is the only place that catches it.
+	 * {@link AcademicRules#validateCourse} runs here even though the dropdowns already steer
+	 * towards valid combinations. Narrowing is one-directional, so a value chosen before the
+	 * field above it was changed can survive as a contradiction, and this is the only place that
+	 * catches it. The course form uses the course-type-aware check rather than the plain
+	 * {@link AcademicRules#validate}, for the reason given on {@link #bindDropdowns()}.
 	 */
 	private void onSave(@NonNull View button) {
 
@@ -412,7 +536,7 @@ public class FragmentAddCourse extends Fragment {
 
 		int semester = chosenSemester;
 
-		String problem = AcademicRules.validate(dept, stream, year, semester);
+		String problem = AcademicRules.validateCourse(dept, stream, year, semester, type);
 		if (problem != null) {
 			new MaterialAlertDialogBuilder(requireContext())
 					.setTitle(R.string.dialog_invalid_combination)
@@ -442,16 +566,48 @@ public class FragmentAddCourse extends Fragment {
 		// arrived from.
 		List<Long> instructorIDs = new ArrayList<>(otherInstructorIDs);
 
+		// Null leaves the links alone: the office edits a course without touching batches, and
+		// a save made before the links have loaded must not write an empty set over them.
+		List<Long> chosenBatches = null;
+
+		if (mayAssignBatches && batchesLoaded) {
+
+			// A batch of another department cannot stay linked once the department above
+			// has changed: the server would refuse the link. One with no department yet
+			// is left as it was.
+			chosenBatches = new ArrayList<>();
+			for (EntityBatchDesc batch : batchOptions) {
+				if (batchIDs.contains(batch.batchID)
+						&& (batch.department == null || batch.department == chosenDept)) {
+					chosenBatches.add(batch.batchID);
+				}
+			}
+			for (long batchID : batchIDs) {
+				if (!chosenBatches.contains(batchID) && !isListed(batchID)) {
+					chosenBatches.add(batchID);
+				}
+			}
+		}
+
 		Runnable navigateBack = () -> Ui.onMain(this, () -> {
 			Navigation.findNavController(button).navigateUp();
 		});
 
 		if (editingCourseID > 0) {
 			course.courseID = editingCourseID;
-			viewModel.updateCourse(course, instructorIDs, navigateBack);
+			viewModel.updateCourse(course, instructorIDs, chosenBatches, navigateBack);
 		} else {
-			viewModel.addCourse(course, instructorIDs, navigateBack);
+			viewModel.addCourse(course, instructorIDs, chosenBatches, navigateBack);
 		}
+	}
+
+	private boolean isListed(long batchID) {
+		for (EntityBatchDesc batch : batchOptions) {
+			if (batch.batchID == batchID) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**

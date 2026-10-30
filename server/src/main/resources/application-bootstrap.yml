@@ -1,0 +1,29 @@
+# Creating the first administrator. A command, not a service.
+#
+#   SIES_ADMIN_PASSWORD=... ./gradlew :server:bootRun \
+#       --args='--spring.profiles.active=bootstrap \
+#               --bootstrap.email=admin@sies.edu.in \
+#               --bootstrap.name="A Administrator"'
+#
+# Connects as the migration role rather than as the service. That is the one
+# legitimate use of that connection: user_role's policies let only an ADMIN
+# grant the ADMIN role, and the first grant has nobody to make it.
+spring:
+  main:
+    web-application-type: none
+    banner-mode: "off"
+
+  flyway:
+    enabled: true
+
+  datasource:
+    # Overridden here so the command does not have to be told. sies_app is
+    # subject to V6's policies and could not write the first role row.
+    username: ${DB_OWNER_USER:sies_owner}
+    password: ${DB_OWNER_PASSWORD}
+
+logging:
+  level:
+    root: WARN
+    in.basulabs.siesattendance: INFO
+    org.flywaydb: INFO

@@ -61,6 +61,18 @@ public class StudentWithYear {
 	@Nullable
 	public Division division;
 
+	/** See {@code EntityStudent.apaarId}. Filled by the queries that show or edit one student. */
+	@Nullable
+	public Long apaarId;
+
+	/** See {@code EntityStudentYear.joinDate}. */
+	@Nullable
+	public java.time.LocalDate joinDate;
+
+	/** See {@code EntityStudentYear.leaveDate}. */
+	@Nullable
+	public java.time.LocalDate leaveDate;
+
 	public StudentWithYear(long studentID, @NonNull String name, @NonNull String pronouns,
 	                       @Nullable String email, @NonNull String rollNo, int academicYear,
 	                       @NonNull Year year, @NonNull Stream stream,

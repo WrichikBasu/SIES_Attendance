@@ -23,8 +23,10 @@ import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
 import in.basulabs.siesattendance.backend.Stream;
+import in.basulabs.siesattendance.backend.testing.QueryCases;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.stats.SqlBits;
+import in.basulabs.siesattendance.backend.stats.SqliteStatsDialect;
 import in.basulabs.siesattendance.backend.stats.StatsFilter;
 import in.basulabs.siesattendance.backend.stats.StatsGroupBy;
 import in.basulabs.siesattendance.backend.stats.StatsQueryBuilder;
@@ -41,6 +43,15 @@ import in.basulabs.siesattendance.backend.util.ExportQueryBuilder;
  * {@code build/wb-sql/} for the SQLite harness to execute.
  */
 public class SqlBuilderTest {
+
+	/**
+	 * The SQLite expressions for one grouping. They used to be fields on StatsGroupBy; they
+	 * moved to the dialect when the enum itself became shared with the server, which has its
+	 * own expressions for the same dimensions.
+	 */
+	private static SqliteStatsDialect.Fragments fragments(StatsGroupBy groupBy) {
+		return SqliteStatsDialect.of(groupBy);
+	}
 
 	/** Placeholders in a statement, ignoring any inside string literals (there are none). */
 	private static int placeholders(String sql) {
@@ -94,7 +105,9 @@ public class SqlBuilderTest {
 
 		assertEquals("argument count must match placeholder count",
 				placeholders(query.getSql()), argsOf(query).size());
-		assertEquals(12, argsOf(query).size());
+		// Five each for held and attended, two for the session joins, and one for the roll:
+		// the student's membership, that session, of the course's batches.
+		assertEquals(13, argsOf(query).size());
 	}
 
 	@Test
@@ -219,16 +232,14 @@ public class SqlBuilderTest {
 	}
 
 	@Test
-	public void theExportRosterConditionCoversEveryCourseType() {
-		// A course type missing from the condition matches nobody, which shows up in the app
-		// as a course with no students at all.
+	public void theExportRosterIsTheCoursesBatchesAlone() {
+		// A course's roll is its batches (V41). The course type used to be a fallback for a
+		// course with none, and DaoStudent.getRollForCourseSync no longer has it.
 		String sql = ExportQueryBuilder.build(2025, new ExportFilter()).getSql();
 
-		for (CourseType type : CourseType.values()) {
-			assertTrue("CourseType." + type.name()
-							+ " is not accounted for in the export roster condition",
-					sql.contains("'" + type.name() + "'"));
-		}
+		assertTrue(sql.contains("course_batch_map"));
+		assertFalse("the roll must not fall back on the course type",
+				sql.contains("courseType"));
 	}
 
 	@Test
@@ -532,16 +543,16 @@ public class SqlBuilderTest {
 	@Test
 	public void theEnumGroupingsLabelTheirRowsRatherThanShowTheStoredName() {
 
-		assertTrue(StatsGroupBy.DEPARTMENT.primaryExpr.contains(
+		assertTrue(fragments(StatsGroupBy.DEPARTMENT).primaryExpr.contains(
 				"WHEN 'COMPUTER_SCIENCE' THEN 'CS'"));
-		assertTrue(StatsGroupBy.COURSE_TYPE.primaryExpr.contains(
+		assertTrue(fragments(StatsGroupBy.COURSE_TYPE).primaryExpr.contains(
 				"WHEN 'MAJOR_PRACTICALS' THEN 'Major practicals'"));
-		assertTrue(StatsGroupBy.PROFESSOR.secondaryExpr.contains(
+		assertTrue(fragments(StatsGroupBy.PROFESSOR).secondaryExpr.contains(
 				"WHEN 'POLITICAL_SCIENCE' THEN 'Pol. Sc.'"));
 
 		// The class label is built by the same rule as ClassKey.label, which drops the
 		// unaided qualifier and writes the division out as "Div B".
-		String klass = StatsGroupBy.CLASS.primaryExpr;
+		String klass = fragments(StatsGroupBy.CLASS).primaryExpr;
 		assertTrue(klass.contains("WHEN 'BSc_unaided' THEN 'BSc'"));
 		assertTrue(klass.contains("WHEN 'Masters_P1' THEN 'Masters Part 1'"));
 		assertTrue(klass.contains("WHEN 'B' THEN 'Div B'"));
@@ -551,10 +562,10 @@ public class SqlBuilderTest {
 	public void theEnumGroupingsStillGroupByTheStoredColumn() {
 		// Grouping on the label would merge two constants that happened to share one; the
 		// stored value is the identity, the label only how it is shown.
-		assertEquals("c.offeringDepartment", StatsGroupBy.DEPARTMENT.groupByExpr);
-		assertEquals("c.courseType", StatsGroupBy.COURSE_TYPE.groupByExpr);
+		assertEquals("c.offeringDepartment", fragments(StatsGroupBy.DEPARTMENT).groupByExpr);
+		assertEquals("c.courseType", fragments(StatsGroupBy.COURSE_TYPE).groupByExpr);
 		assertEquals("y.year, y.stream, y.majorDept, y.division",
-				StatsGroupBy.CLASS.groupByExpr);
+				fragments(StatsGroupBy.CLASS).groupByExpr);
 	}
 
 	@Test
@@ -564,13 +575,13 @@ public class SqlBuilderTest {
 		// numbers.
 		for (StatsGroupBy groupBy : StatsGroupBy.values()) {
 
-			String groupByClause = groupBy.groupByExpr;
+			SqliteStatsDialect.Fragments group = fragments(groupBy);
 
-			if (groupBy.idExpr.equals("0") || groupBy.idExpr.startsWith("COALESCE")) {
+			if (group.idExpr.equals("0") || group.idExpr.startsWith("COALESCE")) {
 				continue;
 			}
-			assertTrue(groupBy + ": id expression " + groupBy.idExpr + " is not grouped",
-					groupByClause.contains(groupBy.idExpr));
+			assertTrue(groupBy + ": id expression " + group.idExpr + " is not grouped",
+					group.groupByExpr.contains(group.idExpr));
 		}
 	}
 
@@ -640,60 +651,24 @@ public class SqlBuilderTest {
 
 	@Test
 	public void writeGeneratedStatementsForExecution() throws IOException {
-		dump("export_unrestricted", ExportQueryBuilder.build(2025, new ExportFilter()));
 
-		ExportFilter windowed = new ExportFilter();
-		windowed.from = LocalDate.of(2025, 7, 1);
-		windowed.to = LocalDate.of(2025, 7, 31);
-		dump("export_windowed", ExportQueryBuilder.build(2025, windowed));
-
-		ExportFilter courseOnly = new ExportFilter();
-		courseOnly.courseIDs.add(1L);
-		courseOnly.courseIDs.add(3L);
-		dump("export_course_only", ExportQueryBuilder.build(2025, courseOnly));
-
-		ExportFilter deptOnly = new ExportFilter();
-		deptOnly.departments.add(Department.COMPUTER_SCIENCE);
-		dump("export_dept_only", ExportQueryBuilder.build(2025, deptOnly));
-
-		ExportFilter narrowed = new ExportFilter();
-		narrowed.courseIDs.add(1L);
-		narrowed.departments.add(Department.PHYSICS);
-		narrowed.years.add(Year.SY);
-		narrowed.streams.add(Stream.BSc);
-		dump("export_narrowed", ExportQueryBuilder.build(2025, narrowed));
-
-		ExportFilter oneDivision = new ExportFilter();
-		oneDivision.divisions.add(Division.B);
-		dump("export_division_only", ExportQueryBuilder.build(2025, oneDivision));
-
-		for (StatsGroupBy groupBy : StatsGroupBy.values()) {
-			StatsFilter filter = new StatsFilter(2025);
-			filter.groupBy = groupBy;
-			dump("stats_grouped_" + groupBy.name(), StatsQueryBuilder.grouped(filter));
+		// One case list, in the shared module's test fixtures, read by this test and by the
+		// server's SqlDumpTest. The differ compares the two dumps file by file, which is only
+		// meaningful if both sides were handed the same filter — so neither side writes its
+		// own copy of the filters.
+		for (QueryCases.ExportCase export : QueryCases.exports()) {
+			dump(export.name,
+					ExportQueryBuilder.build(export.academicYear, export.filter));
 		}
 
-		// Batch on its own, for the harness to run against nested batches. Two arguments in
-		// this order: the session, then the batch.
-		StatsFilter batchOnly = new StatsFilter(2025);
-		batchOnly.batchID = 1L;
-		dump("stats_batch_only", StatsQueryBuilder.grouped(batchOnly));
-
-		StatsFilter batchAndCourse = new StatsFilter(2025);
-		batchAndCourse.courseIDs.add(2L);
-		batchAndCourse.batchID = 1L;
-		dump("stats_batch_and_course", StatsQueryBuilder.grouped(batchAndCourse));
-
-		dump("stats_summary", StatsQueryBuilder.summary(new StatsFilter(2025)));
-		dump("stats_all_sessions", StatsQueryBuilder.grouped(new StatsFilter(null)));
-		dump("stats_full_filter", StatsQueryBuilder.grouped(fullyPopulatedFilter()));
-
-		for (StatsFilter.SortOrder order : StatsFilter.SortOrder.values()) {
-			StatsFilter filter = new StatsFilter(2025);
-			filter.sortOrder = order;
-			dump("stats_sort_" + order.name(), StatsQueryBuilder.grouped(filter));
+		for (QueryCases.StatsCase stats : QueryCases.stats()) {
+			dump(stats.name, stats.summary
+					? StatsQueryBuilder.summary(stats.filter)
+					: StatsQueryBuilder.grouped(stats.filter));
 		}
 
+		// The two probes are about the dump format itself rather than about a query, so they
+		// have no counterpart on the server side and stay here.
 		dump("probe_null_argument",
 				new SimpleSQLiteQuery("SELECT ? AS value", new Object[]{null}));
 
@@ -726,21 +701,12 @@ public class SqlBuilderTest {
 				' ', args.charAt(0));
 	}
 
+	/**
+	 * Every field set at once. Taken from the shared case list, so that the statement this test
+	 * inspects is the same one the differ runs on both engines.
+	 */
 	private static StatsFilter fullyPopulatedFilter() {
-		StatsFilter filter = new StatsFilter(2025);
-		filter.groupBy = StatsGroupBy.STUDENT;
-		filter.applyDateRange(StatsFilter.DateRange.SESSION_FIRST_HALF,
-				EntityAcademicYear.defaultFor(2025));
-		filter.courseIDs.add(1L);
-		filter.courseIDs.add(2L);
-		filter.batchID = 1L;
-		filter.professorID = 1L;
-		filter.studentID = 1L;
-		filter.courseTypes.add(CourseType.MAJOR);
-		filter.year = Year.SY;
-		filter.stream = Stream.BSc;
-		filter.department = Department.PHYSICS;
-		return filter;
+		return QueryCases.fullyPopulatedFilter();
 	}
 
 	/** Captures whatever a query binds, in order, without needing a database. */

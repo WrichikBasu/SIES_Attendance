@@ -100,6 +100,14 @@ def build_fixture():
         5 IK201  IKS              CS  SY BSc_unaided   sem 3      (whole year+stream)
         6 CS900  MAJOR            CS  SY BSc_unaided   sem 4      (discontinued)
 
+      A course's roll is its batches (V41), so each course has the batches that put on its
+      roll the students it is taught to:
+        Batch 4 SY CS {1,2,3}  -> CS201, IK201, CS900
+        Batch A, Batch B       -> CS202
+        Batch 5 {1}            -> MA201
+        Batch 6 {1,2}          -> EN201
+      Batch 3 is left free for fixture_with_nested_batches.
+
       Lectures:
         L1 CS201 whole class 10 Jul 2025   -> 1,2,3 marked; Rahul absent
         L2 CS201 whole class 11 Jul 2025   -> 1,2 marked only (Rahul left off the sheet)
@@ -131,7 +139,7 @@ def build_fixture():
         (3, "RAHUL DESAI", "he/him", None),
         (4, "MEERA IYER", "she/her", "meera@sies.edu.in"),
     ]
-    c.executemany("INSERT INTO students VALUES (?,?,?,?)", students)
+    c.executemany("INSERT INTO students (studentID, name, pronouns, email) VALUES (?,?,?,?)", students)
 
     enrolments = [
         (1, 2025, "2025CS01", "SY", "BSc_unaided", "COMPUTER_SCIENCE", "MATHEMATICS",
@@ -142,7 +150,7 @@ def build_fixture():
         (4, 2025, "2025PH01", "SY", "BSc", "PHYSICS", "COMPUTER_SCIENCE", "HINDI", 3, "B"),
         (4, 2024, "2024PH07", "FY", "BSc", "PHYSICS", None, None, 1, "A"),
     ]
-    c.executemany("INSERT INTO student_year VALUES (?,?,?,?,?,?,?,?,?,?)", enrolments)
+    c.executemany("INSERT INTO student_year (studentID, academicYear, rollNo, year, stream, majorDept, minorDept, oeDept, semester, division) VALUES (?,?,?,?,?,?,?,?,?,?)", enrolments)
 
     courses = [
         (1, 1, "CS201", "Data Structures", "BSc_unaided", "COMPUTER_SCIENCE", "SY", 3,
@@ -160,10 +168,18 @@ def build_fixture():
     ]
     c.executemany("INSERT INTO courses VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", courses)
 
-    c.execute("INSERT INTO batch_desc VALUES (1,'Batch A',NULL,2025)")
-    c.execute("INSERT INTO batch_desc VALUES (2,'Batch B',NULL,2025)")
+    c.execute("INSERT INTO batch_desc VALUES (1,'Batch A',NULL,2025,NULL)")
+    c.execute("INSERT INTO batch_desc VALUES (2,'Batch B',NULL,2025,NULL)")
     c.executemany("INSERT INTO batch_student_map VALUES (?,?,?)",
                   [(1, 1, 2025), (1, 3, 2025), (2, 2, 2025)])
+    c.execute("INSERT INTO batch_desc VALUES (4,'SY CS',NULL,2025,NULL)")
+    c.execute("INSERT INTO batch_desc VALUES (5,'Maths minor',NULL,2025,NULL)")
+    c.execute("INSERT INTO batch_desc VALUES (6,'English OE',NULL,2025,NULL)")
+    c.executemany("INSERT INTO batch_student_map VALUES (?,?,?)",
+                  [(4, 1, 2025), (4, 2, 2025), (4, 3, 2025), (5, 1, 2025),
+                   (6, 1, 2025), (6, 2, 2025)])
+    c.executemany("INSERT INTO course_batch_map VALUES (?,?)",
+                  [(1, 4), (5, 4), (6, 4), (2, 1), (2, 2), (3, 5), (4, 6)])
 
     lectures = [
         (1, 1, None, ts(2025, 7, 10, 10, 0), ts(2025, 7, 10, 11, 0), None),
@@ -329,34 +345,45 @@ def test_export_denominator_counts_lectures_held(conn):
           f"held={rahul['held']} attended={rahul['attended']} ownRows={own_rows}")
 
 
-def test_export_roster_matches_course_type(conn):
+def test_export_roster_is_the_courses_batches(conn):
     rows = run(conn, "export_unrestricted")
     pairs = {(r["rollNo"], r["courseCode"]) for r in rows}
 
-    check("export: a MAJOR course reaches the offering department's majors",
-          ("2025CS01", "CS201") in pairs)
-    check("export: a MAJOR course does not reach another department's majors",
-          ("2025PH01", "CS201") not in pairs)
+    def roll(code: str) -> set[str]:
+        return {r for r, c in pairs if c == code}
 
-    # A minor course admits the minor department AND the offering department's own majors,
-    # because the minor field is optional and frequently blank.
-    check("export: a MINOR course admits students whose minor matches",
-          ("2025CS01", "MA201") in pairs)
-    check("export: a MINOR course does not admit an unrelated student",
-          ("2025CS03", "MA201") not in pairs,
-          "Rahul has no minor and is not a MATHEMATICS major")
+    check("export: a course's roll is the members of its batches",
+          roll("CS201") == {"2025CS01", "2025CS02", "2025CS03"}, f"{sorted(roll('CS201'))}")
+    check("export: a course with two batches takes the members of both",
+          roll("CS202") == {"2025CS01", "2025CS02", "2025CS03"}, f"{sorted(roll('CS202'))}")
+    check("export: a minor's roll is its batch, not everyone who could take it",
+          roll("MA201") == {"2025CS01"}, f"{sorted(roll('MA201'))}")
+    check("export: an elective's roll is its batch",
+          roll("EN201") == {"2025CS01", "2025CS02"}, f"{sorted(roll('EN201'))}")
+    check("export: a student in none of a course's batches is not on its roll",
+          ("2025PH01", "CS201") not in pairs and ("2025PH01", "IK201") not in pairs)
 
-    check("export: an OE course matches the declared OE department",
-          ("2025CS01", "EN201") in pairs and ("2025CS02", "EN201") in pairs)
-    check("export: an OE course skips a student with no OE declared",
-          ("2025CS03", "EN201") not in pairs)
 
-    # IKS/AEC/VSC/SEC are taken by a whole year and stream regardless of department.
-    for roll in ("2025CS01", "2025CS02", "2025CS03"):
-        check(f"export: IKS reaches the whole year and stream ({roll})",
-              (roll, "IK201") in pairs)
-    check("export: IKS does not cross into another stream",
-          ("2025PH01", "IK201") not in pairs, "Meera is BSc, not BSc_unaided")
+def test_a_course_with_no_batch_has_nobody_on_its_roll():
+    """
+    There is no fallback onto the course type any more: unlinking MA201's batch empties its
+    roll, in the export and in DaoStudent.getRollForCourseSync alike, although Aarav's minor
+    is still Mathematics.
+    """
+    conn = build_fixture()
+    conn.execute("DELETE FROM course_batch_map WHERE courseID = 3")
+    conn.commit()
+
+    codes = {r["courseCode"] for r in run(conn, "export_unrestricted")}
+    check("export: a course with no batch has no rows", "MA201" not in codes,
+          f"codes={sorted(codes)}")
+
+    roster = conn.execute(dao_sql("DaoStudent", "getRollForCourseSync"),
+                          (2025, 3, 2025)).fetchall()
+    check("roster: a course with no batch has nobody on its roll", roster == [],
+          f"{roster}")
+
+    conn.close()
 
 
 def test_export_excludes_other_sessions_and_orphans(conn):
@@ -447,12 +474,16 @@ def fixture_with_two_divisions():
     c = conn.cursor()
 
     # A second Physics student, in another division of the same class.
-    c.execute("INSERT INTO students VALUES (5,'PRIYA NAIR','she/her','priya@sies.edu.in')")
-    c.execute("INSERT INTO student_year VALUES "
+    c.execute("INSERT INTO students (studentID, name, pronouns, email) VALUES (5,'PRIYA NAIR','she/her','priya@sies.edu.in')")
+    c.execute("INSERT INTO student_year (studentID, academicYear, rollNo, year, stream, majorDept, minorDept, oeDept, semester, division) VALUES "
               "(5,2025,'2025PH02','SY','BSc','PHYSICS',NULL,NULL,3,'C')")
 
     c.execute("INSERT INTO courses VALUES "
               "(7,2,'PH201','Mechanics','BSc','PHYSICS','SY',3,'MAJOR',NULL,NULL,NULL)")
+    # The whole class as one batch: a course's roll is its batches.
+    c.execute("INSERT INTO batch_desc VALUES (7,'SY Physics',NULL,2025,NULL)")
+    c.executemany("INSERT INTO batch_student_map VALUES (?,?,?)", [(7, 4, 2025), (7, 5, 2025)])
+    c.execute("INSERT INTO course_batch_map VALUES (7,7)")
     c.execute("INSERT INTO lectures VALUES (7,7,NULL,?,?,NULL)",
               (ts(2025, 7, 10, 12, 0), ts(2025, 7, 10, 13, 0)))
     c.executemany("INSERT INTO attendance VALUES (?,?,?)", [(7, 4, 1), (7, 5, 0)])
@@ -641,7 +672,7 @@ def fixture_with_nested_batches():
     conn = build_fixture()
     c = conn.cursor()
 
-    c.execute("INSERT INTO batch_desc VALUES (3,'Batch A1',NULL,2025)")
+    c.execute("INSERT INTO batch_desc VALUES (3,'Batch A1',NULL,2025,NULL)")
     c.execute("INSERT INTO batch_student_map VALUES (3,1,2025)")
     conn.commit()
     return conn
@@ -837,22 +868,8 @@ def test_dao_roster_query_agrees_with_the_export(conn):
     condition. A student who counts as taking a course in one but not the other would
     appear on a sheet without appearing in the report, or the reverse.
     """
-    roster_sql = (
-        "SELECT y.rollNo "
-        "FROM courses c "
-        "INNER JOIN student_year y ON y.year = c.year AND y.stream = c.stream "
-        "   AND y.academicYear = ? "
-        "INNER JOIN students s ON s.studentID = y.studentID "
-        "WHERE c.courseID = ? AND ("
-        "   (c.courseType IN ('MAJOR', 'MAJOR_PRACTICALS') "
-        "      AND y.majorDept = c.offeringDepartment) "
-        "   OR (c.courseType IN ('MINOR', 'MINOR_PRACTICALS') "
-        "      AND (y.minorDept = c.offeringDepartment "
-        "           OR y.majorDept = c.offeringDepartment)) "
-        "   OR (c.courseType = 'OE' AND y.oeDept = c.offeringDepartment) "
-        "   OR c.courseType IN ('AEC', 'IKS', 'VSC', 'VSC_PRACTICALS', "
-        "                        'SEC', 'SEC_PRACTICALS')) "
-        "ORDER BY y.rollNo ASC")
+    # Its placeholders, in order: the session, the course, the session again.
+    roster_sql = dao_sql("DaoStudent", "getRollForCourseSync")
 
     export_rows = run(conn, "export_unrestricted")
     by_course = {}
@@ -860,10 +877,10 @@ def test_dao_roster_query_agrees_with_the_export(conn):
         by_course.setdefault(r["courseID"], set()).add(r["rollNo"])
 
     for course_id in (1, 2, 3, 4, 5, 6):
-        roster = {row[0] for row in conn.execute(roster_sql, (2025, course_id))}
+        roster = {row[4] for row in conn.execute(roster_sql, (2025, course_id, 2025))}
         exported = by_course.get(course_id, set())
         check(f"roster and export agree for course {course_id}",
-              roster == exported,
+              roster == exported and roster != set(),
               f"roster={sorted(roster)} export={sorted(exported)}")
 
 
@@ -1072,7 +1089,8 @@ def test_deletion_impact(conn):
     check("deletion impact: counts every attendance row for the student",
           row[0] == 4, f"got {row[0]}")
     check("deletion impact: counts enrolments", row[1] == 1)
-    check("deletion impact: counts batch memberships", row[2] == 1)
+    # Batch A, and the batches of CS201, MA201 and EN201.
+    check("deletion impact: counts batch memberships", row[2] == 4, f"got {row[2]}")
     check("deletion impact: the per-session count is bounded by the session dates",
           row[3] == 4, f"got {row[3]}")
 
@@ -1157,7 +1175,7 @@ def test_overlapping_sessions_double_count(conn):
     # it: exactly what merging a backup from a second device would fold in.
     probe.execute("INSERT INTO academic_years VALUES (?,?,?,?,?)",
                   (2026, 0, 0, start_of_day(2025, 7, 1), end_of_day(2025, 7, 31)))
-    probe.execute("INSERT INTO student_year VALUES (?,?,?,?,?,?,?,?,?,?)",
+    probe.execute("INSERT INTO student_year (studentID, academicYear, rollNo, year, stream, majorDept, minorDept, oeDept, semester, division) VALUES (?,?,?,?,?,?,?,?,?,?)",
                   (1, 2026, "2026CS01", "TY", "BSc_unaided", "COMPUTER_SCIENCE",
                    None, None, 5, None))
     probe.commit()
@@ -1214,6 +1232,9 @@ def test_export_column_order_follows_first_encounter(conn):
     probe.execute(
         "INSERT INTO courses VALUES (7,2,'AA101','Foundations','BSc','PHYSICS','SY',3,"
         "'IKS',NULL,NULL,NULL)")
+    probe.execute("INSERT INTO batch_desc VALUES (8,'Foundations',NULL,2025,NULL)")
+    probe.execute("INSERT INTO batch_student_map VALUES (8,4,2025)")
+    probe.execute("INSERT INTO course_batch_map VALUES (7,8)")
     probe.commit()
 
     seen = []
@@ -1235,7 +1256,7 @@ def main():
     test_every_generated_statement_parses_and_runs(conn)
     test_a_null_argument_round_trips(conn)
     test_export_denominator_counts_lectures_held(conn)
-    test_export_roster_matches_course_type(conn)
+    test_export_roster_is_the_courses_batches(conn)
     test_export_excludes_other_sessions_and_orphans(conn)
     test_export_date_window(conn)
     test_export_course_filter_selects_columns(conn)
@@ -1246,6 +1267,7 @@ def main():
     test_stats_enum_groupings_show_labels_not_stored_names(conn)
     test_marks_export_reads_the_register_as_it_was_called()
     test_stats_batch_filter_reaches_subset_batches()
+    test_a_course_with_no_batch_has_nobody_on_its_roll()
     test_stats_batch_and_course_together_narrow_to_one_roll()
     test_stats_lecture_counts_are_distinct(conn)
     test_stats_excludes_orphan_lectures(conn)

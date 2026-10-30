@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    What this app will talk to, and which certificate it will accept.
+
+    Pinning is declared here rather than built in code on purpose. A pin
+    applied by the platform covers every request the app makes, including
+    one written later by somebody who did not know there was a pinned
+    socket factory to use. A pin applied in code covers the requests that
+    remembered to use it.
+
+    BEFORE THIS SHIPS, both pins below have to be replaced. They are
+    placeholders and will refuse every connection, which is the right way
+    for a placeholder to fail: the alternative is an app that looks
+    pinned and is not.
+
+        openssl s_client -connect sies.example.edu:443 -showcerts </dev/null \
+          | openssl x509 -pubkey -noout \
+          | openssl pkey -pubin -outform der \
+          | openssl dgst -sha256 -binary \
+          | openssl enc -base64
+
+    TWO pins, and the second is not optional. A pin set with one entry is
+    an app that stops working the day the certificate is replaced, in the
+    middle of a term, with no way to fix it but a release. The second pin
+    should be the public key of the backup certificate or of the issuing
+    CA, something that will still be valid when the first is rotated.
+
+    expiration is a deliberate safety catch: past that date the platform
+    stops enforcing the pins rather than refusing every connection, so a
+    build that outlives its pins degrades to ordinary certificate
+    validation instead of bricking a professor's phone. Move it with each
+    release.
+-->
+<network-security-config>
+
+    <!--
+        No cleartext anywhere, including on the development machine. An
+        attendance record is a record about a named person, and a
+        debug build that talks HTTP is how somebody ends up testing
+        against production over a hotel network.
+
+        For a local server during development, set
+        sync_base_url to the https address of a tunnel, or add a
+        debug-only override in app/src/debug/res/xml/.
+    -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">sies.example.edu</domain>
+
+        <pin-set expiration="2027-06-30">
+            <!-- REPLACE: the server's current public key. -->
+            <pin digest="SHA-256">AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</pin>
+            <!-- REPLACE: the backup key or the issuing CA. See above. -->
+            <pin digest="SHA-256">BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=</pin>
+        </pin-set>
+    </domain-config>
+</network-security-config>

@@ -21,7 +21,8 @@ import androidx.room.PrimaryKey;
  * rather than the one they hold now.
  */
 @Entity(tableName = EntityStudent.TABLE_NAME,
-		indices = {@Index(value = {"email"}, unique = true)})
+		indices = {@Index(value = {"email"}, unique = true),
+				@Index(value = {"apaarId"}, unique = true)})
 public class EntityStudent {
 
 	@Ignore
@@ -47,6 +48,15 @@ public class EntityStudent {
 	 */
 	@NonNull
 	public String name;
+
+	/**
+	 * The student's APAAR ID, the national academic ID: one per person for life, so it is what
+	 * recognises the same student across sessions when their roll number changes. Null when it
+	 * has not been recorded. Unique across every student, which the index enforces here and V26
+	 * on the server.
+	 */
+	@Nullable
+	public Long apaarId;
 
 	/**
 	 * Free text rather than a fixed set, since neither the college roster nor the people on it

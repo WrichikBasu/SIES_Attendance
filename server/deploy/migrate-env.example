@@ -1,0 +1,19 @@
+# For the migration step and the partition job, which are the two things that connect as
+# the owner. Copy to /etc/sies-attendance/migrate-env, mode 600.
+#
+# Kept apart from the service's own environment file on purpose: the service holds a
+# password that cannot run DDL, and this one can. Two files is the difference between "the
+# long-running process cannot alter the schema" and "it could if something made it".
+
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=sies
+
+DB_OWNER_USER=sies_owner
+DB_OWNER_PASSWORD=
+
+# psql reads these two for the partition job. The same password, named the way libpq wants
+# it; PGPASSWORD rather than a .pgpass file so that it lives in one mode-600 file instead
+# of two places that have to agree.
+PGUSER=sies_owner
+PGPASSWORD=

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SIES Attendance · not found</title>
+<!--
+    What a browser is shown for an address the server has no page for.
+
+    Spring Boot's error controller finds this by its name, error/404.html, and
+    serves it only to a request that asks for HTML. The phone and anything
+    else asking for JSON still get the JSON error, so nothing that reads a
+    response's body is handed a page.
+
+    Self-contained on purpose: no script or stylesheet from this server, since
+    the address that failed may be exactly the one a relative link would
+    resolve against. The colours are the console's.
+-->
+<style>
+    :root {
+        --ink: #11181c; --ink-2: #4a5568; --ink-3: #8795a1;
+        --line: #d9e0e3; --bg: #f4f6f7; --card: #fff;
+        --accent: #0b5c6b;
+        color-scheme: light;
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0; min-height: 100vh; display: grid; place-items: center;
+        padding: 1.2rem; background: var(--bg); color: var(--ink);
+        font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+        width: 100%; max-width: 30rem; background: var(--card);
+        border: 1px solid var(--line); border-radius: 10px; padding: 2rem 1.6rem;
+        text-align: center;
+    }
+    .code {
+        margin: 0; font-size: 4.5rem; line-height: 1; font-weight: 700;
+        letter-spacing: -0.04em; color: var(--accent);
+        font-variant-numeric: tabular-nums;
+    }
+    h1 { font-size: 1.15rem; margin: 0.9rem 0 0.4rem; letter-spacing: -0.01em; }
+    p { margin: 0 0 1.2rem; color: var(--ink-2); }
+    .path {
+        display: inline-block; max-width: 100%; overflow-wrap: anywhere;
+        font: 0.85rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: 0.15rem 0.45rem; color: var(--ink);
+    }
+    .path:empty { display: none; }
+    a.button {
+        display: inline-block; text-decoration: none; padding: 0.55rem 1rem;
+        border-radius: 7px; background: var(--accent); color: #fff; font-weight: 600;
+    }
+    a.button:focus-visible { outline: 3px solid var(--line); outline-offset: 2px; }
+    footer { margin-top: 1.6rem; font-size: 0.8rem; color: var(--ink-3); }
+</style>
+</head>
+<body>
+<main>
+    <p class="code" aria-hidden="true">404</p>
+    <h1>There is no page here</h1>
+    <p>
+        <span class="path" id="path"></span><br>
+        The address may be mistyped, or the page may have moved. Everything this
+        server offers in a browser is in the console.
+    </p>
+    <a class="button" href="/console.html">Open the console</a>
+    <footer>SIES Attendance</footer>
+</main>
+<script>
+    // The address that was asked for, which the browser still shows: the error page is a
+    // forward, not a redirect. textContent, never markup, since a path is whatever anybody typed.
+    try {
+        document.getElementById("path").textContent = decodeURI(window.location.pathname);
+    } catch (e) {
+        document.getElementById("path").textContent = window.location.pathname;
+    }
+</script>
+</body>
+</html>

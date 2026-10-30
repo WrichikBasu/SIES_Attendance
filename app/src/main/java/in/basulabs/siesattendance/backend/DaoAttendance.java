@@ -132,6 +132,7 @@ public abstract class DaoAttendance {
 			"   WHERE " + SqlBits.EPOCH_START + " BETWEEN ay.startEpoch AND ay.endEpoch " +
 			"   ORDER BY ay.academicYear DESC LIMIT 1) " +
 			"WHERE a.lectureID IN (:lectureIDs) " +
+			"AND y.leaveDate IS NULL " +
 			"ORDER BY rollNo ASC, s.name ASC")
 	@NonNull
 	public abstract List<LectureMark> getMarksSync(@NonNull List<Long> lectureIDs);

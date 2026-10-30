@@ -1,0 +1,17 @@
+# Monthly, with a day to spare and a window to spread the load.
+#
+# Persistent=true is the part that matters: a machine that was off on the 1st runs this on
+# the next boot rather than skipping the month. A skipped month is a month of audit rows in
+# audit_log_overflow, which nothing complains about.
+
+[Unit]
+Description=Monthly audit_log partition maintenance
+
+[Timer]
+OnCalendar=monthly
+RandomizedDelaySec=1h
+Persistent=true
+Unit=sies-audit-partitions.service
+
+[Install]
+WantedBy=timers.target

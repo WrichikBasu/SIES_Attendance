@@ -220,13 +220,12 @@
             app:iconGravity="textStart" />
 
         <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnBackup"
+            android:id="@+id/btnSync"
             style="@style/Widget.Material3.Button.TextButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="@string/action_backup"
-            app:icon="@drawable/ic_backup"
+            android:text="@string/action_sync"
             app:iconGravity="textStart" />
 
     </LinearLayout>

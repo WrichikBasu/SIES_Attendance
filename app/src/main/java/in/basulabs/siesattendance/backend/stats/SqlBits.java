@@ -23,6 +23,25 @@ public final class SqlBits {
 	public static final String EPOCH_START =
 			"CAST(SUBSTR(l.startDateTime, 1, INSTR(l.startDateTime, '|') - 1) AS INTEGER)";
 
+	/**
+	 * The lecture's date on the wall calendar, as an epoch day: the same number the device
+	 * stores a {@code LocalDate} as, so it compares directly with {@code student_year.joinDate}.
+	 * Local time rather than UTC, because a lecture at 01:00 in Kolkata is the previous day in
+	 * UTC and would otherwise count as held before somebody who joined that morning.
+	 */
+	public static final String LECTURE_LOCAL_DAY =
+			"CAST(julianday(date(" + EPOCH_START + ", 'unixepoch', 'localtime')) - 2440587.5 "
+					+ "AS INTEGER)";
+
+	/**
+	 * Whether a lecture counts for the enrolment {@code y}: on or after the day the student
+	 * joined, or any lecture when no join date is recorded. A late joiner's attendance is
+	 * counted from the day they joined, so a defaulter list does not hold the weeks before
+	 * against them. {@code PgSqlBits.COUNTS_FOR_ENROLMENT} is the same rule.
+	 */
+	public static final String COUNTS_FOR_ENROLMENT =
+			"(y.joinDate IS NULL OR " + LECTURE_LOCAL_DAY + " >= y.joinDate)";
+
 	private SqlBits() {
 	}
 
