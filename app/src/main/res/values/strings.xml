@@ -1,6 +1,6 @@
 <resources>
 
-    <string name="app_name">SIES Attendance</string>
+    <string name="app_name">SIES Attendance Unofficial</string>
     <string name="title_activity_home">SIES Attendance</string>
     <string name="title_mark_attendance">Mark attendance</string>
     <string name="title_statistics">Statistics</string>
