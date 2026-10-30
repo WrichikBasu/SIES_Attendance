@@ -191,6 +191,7 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 | open a new academic session | — | — | — | — | — | ✓ |
 | correct or remove a session | — | — | — | ✓ | — | ✓ |
 | create, edit, delete batches; link them to courses | — | their own department's | their own department's | — | — | ✓ |
+| rename a batch and change its members | — | their own department's, and those serving only courses they coordinate | the same | — | — | ✓ |
 | read batches | those linked to their courses | their own department's, and those their courses use | the department's, and those their courses use | all | all | all |
 | import students (CSV) | — | their own department | the department's | ✓ | — | ✓ |
 | import attendance (CSV) | — | their courses | the department's | — | — | ✓ |
@@ -207,6 +208,10 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 - **Nothing is deleted to make room.** Every foreign key is `RESTRICT`. Roles and appointments
   are revoked, never deleted, and accounts cannot be removed.
 - **Nobody can alter the audit log**, the service included.
+- **A course's coordinator arranges its batches,** whichever department made them, when every
+  course a batch is linked to is one they coordinate (`courses.prof_id`). That covers renaming it
+  and moving students in or out. Making, removing and linking a batch stay with its department
+  (V42). Its other instructors read the batch and change nothing.
 
 ### A course's roll
 

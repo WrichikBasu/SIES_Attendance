@@ -94,6 +94,8 @@ public final class DeviceIdentity {
 
 	private static final String BATCH_DEPARTMENTS = "batchDepartments";
 
+	private static final String COORDINATED_BATCHES = "coordinatedBatches";
+
 	private static final String REGISTRATION_PENDING = "registrationPending";
 
 	/** How many refusals are kept. Enough to read; not a log. */
@@ -399,6 +401,26 @@ public final class DeviceIdentity {
 		if (me.appoints() != null) {
 			recordAppoints(context, me.appoints());
 		}
+
+		if (me.coordinatedBatches() != null) {
+			recordCoordinatedBatches(context, me.coordinatedBatches());
+		}
+	}
+
+	/**
+	 * Another department's batches this account may still rename and change the members of,
+	 * because it coordinates every course they serve (V42), as {@code /me} last said. Null when
+	 * it has never said.
+	 */
+	@Nullable
+	public static Set<Long> coordinatedBatches(@NonNull Context context) {
+		return courseIdsAt(context, COORDINATED_BATCHES);
+	}
+
+	/** Null forgets them, as signing in again and signing out do. */
+	public static void recordCoordinatedBatches(@NonNull Context context,
+	                                            @Nullable Collection<Long> batches) {
+		recordCourseIdsAt(context, COORDINATED_BATCHES, batches);
 	}
 
 	/**

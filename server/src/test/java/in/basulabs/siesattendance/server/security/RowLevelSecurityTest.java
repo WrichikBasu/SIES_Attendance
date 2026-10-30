@@ -903,6 +903,63 @@ class RowLevelSecurityTest {
 	}
 
 	@Test
+	void aCoordinatorArrangesTheBatchesOfTheirCoursesAndNothingMore() throws Exception {
+
+		// A CS professor coordinates the Chemistry course, whose batch 5902 is Chemistry's.
+		// C HEAD, of CS too, only teaches it.
+		postgres.asSuperuser("UPDATE courses SET prof_id = " + PROF_CS + " WHERE course_id = "
+				+ COURSE_CHEM + "; INSERT INTO course_instructor (course_id, prof_id) VALUES ("
+				+ COURSE_CHEM + ", " + PROF_HEAD_CS + ") ON CONFLICT DO NOTHING");
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals(1, update(as, "UPDATE batch_desc SET batch_name = 'FY CHEM B1' "
+					+ "WHERE batch_id = 5902"), "renamed by the coordinator of its course");
+			// The phone's push, which an INSERT policy has to admit as well.
+			execute(as, "INSERT INTO batch_desc (batch_id, batch_name, academic_year, department)"
+					+ " VALUES (5902, 'FY CHEM B2', 2025, 'CHEMISTRY') ON CONFLICT (batch_id) "
+					+ "DO UPDATE SET batch_name = EXCLUDED.batch_name");
+			execute(as, "INSERT INTO batch_student_map (batch_id, student_id, academic_year) "
+					+ "VALUES (5902, " + STUDENT_CR + ", " + SESSION + ")");
+			assertEquals(1, update(as, "DELETE FROM batch_student_map WHERE batch_id = 5902 "
+					+ "AND student_id = " + STUDENT_OTHER), "and its members changed");
+
+			assertEquals(0, update(as, "DELETE FROM course_batch_map WHERE batch_id = 5902"),
+					"but its courses are its department's to change");
+			assertEquals(0, update(as, "DELETE FROM batch_desc WHERE batch_id = 5902"),
+					"and so is removing it");
+			as.commit();
+		}
+
+		assertRefused(accountProfCs, PROF_CS, null, "INSERT INTO batch_desc (batch_id, "
+				+ "batch_name, academic_year, department) VALUES (5950, 'new', 2025, "
+				+ "'CHEMISTRY')", "a coordinator makes no batch for another department");
+
+		assertRefused(accountProfCs, PROF_CS, null, "UPDATE batch_desc SET department = NULL "
+				+ "WHERE batch_id = 5902", "nor takes a batch out of its department");
+
+		try (Connection as = postgres.actingAs(accountHeadCs, PROF_HEAD_CS, null)) {
+			assertEquals(0, update(as, "UPDATE batch_desc SET batch_name = 'no' "
+					+ "WHERE batch_id = 5902"), "teaching the course is not coordinating it");
+		}
+
+		// Shared with a course somebody else coordinates, it is that course's roll as well.
+		postgres.asSuperuser("""
+				INSERT INTO courses
+				    (course_id, prof_id, course_code, course_topic, stream,
+				     offering_department, year, semester, course_type) VALUES
+				    (3050, 1002, 'CH-102', 'Organic', 'BSc', 'CHEMISTRY', 'FY', 1, 'MAJOR');
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3050, 5902);
+				""");
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals(0, update(as, "UPDATE batch_desc SET batch_name = 'no' "
+					+ "WHERE batch_id = 5902"), "a batch shared with another's course");
+			assertEquals(0, update(as, "DELETE FROM batch_student_map WHERE batch_id = 5902"),
+					"is its department's alone again");
+		}
+	}
+
+	@Test
 	void aProfessorReadsTheirDepartmentsProfessorsAndChangesNone() throws Exception {
 
 		String which = "SELECT string_agg(prof_id::text, ',' ORDER BY prof_id) FROM professors";

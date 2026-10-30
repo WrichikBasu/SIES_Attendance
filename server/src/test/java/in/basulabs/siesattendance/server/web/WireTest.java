@@ -801,6 +801,25 @@ class WireTest {
 	}
 
 	@Test
+	void aCoordinatorIsToldWhichOfAnotherDepartmentsBatchesTheyArrange() throws Exception {
+
+		String professor = tokenFor("a.cs@sies.edu.in", "STAFF");
+
+		assertEquals(0, get("/me", professor, null).body().get("batches").get("coordinates")
+				.size(), "nothing before they coordinate a course");
+
+		// Coordinating the Chemistry course, whose one batch is 5902.
+		postgres.asSuperuser("UPDATE courses SET prof_id = " + PROF_CS
+				+ " WHERE course_id = " + COURSE_CHEM);
+
+		var batches = get("/me", professor, null).body().get("batches");
+		assertEquals("COMPUTER_SCIENCE", batches.get("departments").get(0).stringValue());
+		assertEquals(1, batches.get("coordinates").size());
+		assertEquals("5902", batches.get("coordinates").get(0).stringValue(),
+				"another department's batch, as a key in a string");
+	}
+
+	@Test
 	void aProfessorLoadsTheirOwnDepartmentsStudentsAndNoOthers() throws Exception {
 
 		String professor = tokenFor("a.cs@sies.edu.in", "STAFF");

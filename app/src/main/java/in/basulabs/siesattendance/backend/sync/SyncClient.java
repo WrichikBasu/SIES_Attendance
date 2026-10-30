@@ -13,6 +13,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -228,7 +229,8 @@ public final class SyncClient {
 	 */
 	public record Me(boolean mayKeepARoll, @Nullable List<Long> represents,
 	                 @Nullable List<String> roles, @Nullable List<String> importDepartments,
-	                 @Nullable List<String> batchDepartments, @Nullable List<Long> appoints) {
+	                 @Nullable List<String> batchDepartments, @Nullable List<Long> appoints,
+	                 @Nullable List<Long> coordinatedBatches) {
 	}
 
 	/**
@@ -262,10 +264,21 @@ public final class SyncClient {
 				? List.of(ANY_DEPARTMENT)
 				: SyncJson.textListAt(body, "batches", "departments");
 
+		// Null from a server older than V42, which says nothing about them.
+		List<String> coordinated = SyncJson.textListAt(body, "batches", "coordinates");
+		List<Long> coordinatedBatches = null;
+
+		if (coordinated != null) {
+			coordinatedBatches = new ArrayList<>();
+			for (String id : coordinated) {
+				coordinatedBatches.add(Long.parseLong(id.trim()));
+			}
+		}
+
 		return new Me(SyncJson.flagIn(body, "mayKeepARoll", fallback),
 				SyncJson.courseIdsIn(body, "represents"),
 				SyncJson.textsIn(body, "roles", "role"), departments, batchDepartments,
-				SyncJson.courseIdsIn(body, "appoints"));
+				SyncJson.courseIdsIn(body, "appoints"), coordinatedBatches);
 	}
 
 	/**

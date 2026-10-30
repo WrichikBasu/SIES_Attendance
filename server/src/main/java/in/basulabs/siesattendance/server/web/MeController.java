@@ -87,8 +87,12 @@ public final class MeController {
 	 * @param departments   otherwise, a professor's own department alone: heading another
 	 *                      does not make its batches theirs. Empty for everybody else, who
 	 *                      reads batches and keeps none
+	 * @param coordinates   the batches of another department this account may still rename
+	 *                      and change the members of, because it coordinates every course
+	 *                      they are linked to (V42). Keys, as digits in strings
 	 */
-	public record Batches(boolean anyDepartment, @NonNull List<String> departments) {
+	public record Batches(boolean anyDepartment, @NonNull List<String> departments,
+	                      @NonNull List<String> coordinates) {
 	}
 
 	/**
@@ -185,7 +189,7 @@ public final class MeController {
 					Long.toString(counted(connection, "SELECT audit_size() AS total")),
 					roles, represents, imports,
 					new Batches(asked(connection, "SELECT actor_has_role('ADMIN')"),
-							ownDepartment(connection)),
+							ownDepartment(connection), coordinates(connection)),
 					appoints(connection));
 		});
 	}
@@ -210,6 +214,28 @@ public final class MeController {
 			}
 		}
 		return courses;
+	}
+
+	/** See {@link Batches#coordinates}. Empty for anybody who is not a professor. */
+	@NonNull
+	private static List<String> coordinates(@NonNull java.sql.Connection connection)
+			throws SQLException {
+
+		List<String> batches = new ArrayList<>();
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT batch_id FROM batch_desc "
+						+ "WHERE department IS NOT NULL "
+						+ "  AND department IS DISTINCT FROM actor_prof_department() "
+						+ "  AND actor_coordinates_batch(batch_id) "
+						+ "ORDER BY batch_id");
+		     ResultSet results = statement.executeQuery()) {
+
+			while (results.next()) {
+				batches.add(Long.toString(results.getLong(1)));
+			}
+		}
+		return batches;
 	}
 
 	/** A professor's own department, as a list of one; empty for anybody who is not one. */
