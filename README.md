@@ -1,6 +1,8 @@
 # SIES Attendance (Unofficial)
-_An attendance system for SIES College of Arts, Science & Commerce, Mumbai, 
+_An attendance system for SIES College of Arts, Science & Commerce, Sion(West), Mumbai, India, 
 developed by students from the Dept. of Computer Science._
+
+<img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/WrichikBasu/SIES_Attendance"> <img alt="GitHub License" src="https://img.shields.io/github/license/WrichikBasu/SIES_Attendance">
 
 The app worked offline till v1.3.0; thereafter, a server is necessary to start the process. Attendance is marked and stored on the phone, and changes are queued
 and synced when there's a connection.
