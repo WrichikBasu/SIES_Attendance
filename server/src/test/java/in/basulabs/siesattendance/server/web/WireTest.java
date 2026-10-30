@@ -1918,6 +1918,63 @@ class WireTest {
 	}
 
 	@Test
+	void anAdministratorResetsAForgottenPassword() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+		String before = tokenFor("a.cs@sies.edu.in", "STAFF");
+
+		// Locked out as well, which is the usual reason to ask.
+		postgres.asSuperuser("UPDATE app_account SET failed_logins = 7, "
+				+ "locked_until = now() + interval '1 hour' WHERE account_id = " + accountProfCs);
+
+		String reset = "/accounts/" + accountProfCs + "/password/reset";
+
+		Reply notAdmin = post(reset, "{}", tokenFor("b.chem@sies.edu.in", "STAFF"), null);
+		assertEquals(403, notAdmin.status(), notAdmin::toString);
+
+		Reply own = post("/accounts/" + accountAdmin + "/password/reset", "{}", admin, null);
+		assertEquals(409, own.status(), own::toString);
+		assertEquals("own_account", own.body().get("code").stringValue());
+
+		Reply done = post(reset, "{}", admin, null);
+		assertEquals(200, done.status(), done::toString);
+
+		String temporary = done.body().get("temporaryPassword").stringValue();
+		assertTrue(temporary.matches("[a-z2-9]{4}(-[a-z2-9]{4}){3}"), temporary);
+		assertEquals(1, done.body().get("ended").intValue());
+
+		// The phone signed in before is signed out, and the old password is gone.
+		assertEquals(401, get("/me", before, null).status());
+		assertEquals(401, login("a.cs@sies.edu.in", "STAFF", PASSWORD, null).status());
+
+		// The temporary one signs in despite the lock, and is good for nothing but its own
+		// replacement.
+		Reply signedIn = login("a.cs@sies.edu.in", "STAFF", temporary, null);
+		assertEquals(200, signedIn.status(), signedIn::toString);
+		assertTrue(signedIn.body().get("mustRotate").booleanValue());
+
+		String token = signedIn.body().get("token").stringValue();
+		assertEquals(403, get("/me", token, null).status());
+
+		assertEquals(200, post("/auth/password", json(
+				"currentPassword", temporary,
+				"newPassword", "one only they know now"), token, null).status());
+		assertEquals(200, get("/me", token, null).status());
+
+		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'PASSWORD_ROTATE' "
+				+ "AND actor_account = " + accountAdmin
+				+ " AND detail->>'reset_by_another' = 'true'"), "the reset names who did it");
+
+		// A disabled account is enabled first.
+		postgres.asSuperuser("UPDATE app_account SET disabled_at = now() WHERE account_id = "
+				+ accountProfChem);
+		Reply disabled = post("/accounts/" + accountProfChem + "/password/reset", "{}", admin,
+				null);
+		assertEquals(409, disabled.status(), disabled::toString);
+		assertEquals("account_disabled", disabled.body().get("code").stringValue());
+	}
+
+	@Test
 	void aRevokedRoleCanBeGrantedAgain() throws Exception {
 
 		// V5's unique index was not partial, so a revoked grant kept its slot and

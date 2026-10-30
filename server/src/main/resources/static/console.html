@@ -134,6 +134,12 @@
     dialog::backdrop { background: rgba(17, 24, 28, 0.35); }
     dialog .actions { justify-content: flex-end; }
     .error { color: var(--bad); font-size: 0.85rem; margin: 0 0 0.8rem; }
+    .handover {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.3rem;
+        letter-spacing: 0.04em; padding: 0.6rem 0.8rem; margin: 0 0 0.8rem;
+        background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        user-select: all; word-break: break-all;
+    }
     .toasts {
         position: fixed; top: 1rem; right: 1rem; z-index: 10;
         display: flex; flex-direction: column; gap: 0.5rem;
@@ -455,6 +461,17 @@
         <div class="actions">
             <button id="promoteCancel" class="quiet" type="button">Cancel</button>
             <button id="promoteConfirm" type="button">Make professor</button>
+        </div>
+    </dialog>
+    <!-- A reset password, shown the one time the server says it. -->
+    <dialog id="resetDialog" aria-labelledby="resetTitle">
+        <h2 id="resetTitle">Temporary password</h2>
+        <p class="note" id="resetNote"></p>
+        <p class="handover" id="resetPassword"></p>
+        <p class="note">It is not shown again. If it is lost, reset the password again.</p>
+        <div class="actions">
+            <button id="resetCopy" class="quiet" type="button">Copy</button>
+            <button id="resetDone" type="button">Done</button>
         </div>
     </dialog>
 </main>
@@ -1283,6 +1300,13 @@ async function loadAccounts() {
         // Not on one's own row: the server refuses that, and says another admin has to.
         const own = me && me.accountId === account.accountId;
 
+        // Not one's own either: the server refuses it, and another administrator resets a
+        // forgotten one.
+        if (!own) {
+            action("Reset password", "Give " + account.displayName + " a temporary password "
+                + "they must change when they sign in", "quiet", () => resetPassword(account));
+        }
+
         if (account.kind === "PROFESSOR" && !own) {
             const demote = document.createElement("button");
             demote.className = "quiet";
@@ -1348,6 +1372,50 @@ async function endSessions(account) {
         say(e.message, false);
     }
 }
+
+async function resetPassword(account) {
+
+    if (!confirm("Reset " + account.displayName + "'s password? The server makes up a "
+            + "temporary one for you to give them, and they choose their own when they next "
+            + "sign in. Their current password stops working, and they are signed out "
+            + "everywhere.")) {
+        return;
+    }
+
+    clearSay();
+
+    try {
+        const reply = await post("/accounts/" + account.accountId + "/password/reset", {});
+
+        $("resetTitle").textContent = "Temporary password for " + account.displayName;
+        $("resetNote").textContent = "Give this to " + account.displayName + " in person or "
+            + "over the telephone, not by email. They sign in as " + account.loginEmail
+            + " with it, and are asked for a new password straight away.";
+        $("resetPassword").textContent = reply.temporaryPassword;
+        $("resetCopy").textContent = "Copy";
+        $("resetDialog").showModal();
+
+        await loadAccounts();
+
+    } catch (e) {
+        say(e.message, false);
+    }
+}
+
+$("resetCopy").addEventListener("click", async () => {
+    try {
+        await navigator.clipboard.writeText($("resetPassword").textContent);
+        $("resetCopy").textContent = "Copied";
+    } catch (e) {
+        // Over plain http the clipboard is not offered; the text selects with one click.
+        $("resetCopy").textContent = "Select it and copy";
+    }
+});
+
+$("resetDone").addEventListener("click", () => $("resetDialog").close());
+
+// Not left on the page once the dialog is gone.
+$("resetDialog").addEventListener("close", () => { $("resetPassword").textContent = ""; });
 
 async function makeStaff(account) {
 

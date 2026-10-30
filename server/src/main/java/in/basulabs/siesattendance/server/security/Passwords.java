@@ -5,6 +5,8 @@ import androidx.annotation.NonNull;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.security.SecureRandom;
+
 /**
  * How a password becomes a stored hash, and how a stored hash is checked.
  * <p>
@@ -108,6 +110,36 @@ public final class Passwords {
 			}
 		}
 		return "A password cannot be only spaces.";
+	}
+
+	/**
+	 * Letters and digits that cannot be mistaken for one another when read aloud or copied off
+	 * a screen: no 0 and o, no 1, l and i.
+	 */
+	private static final char[] TEMPORARY_ALPHABET =
+			"abcdefghjkmnpqrstuvwxyz23456789".toCharArray();
+
+	private static final SecureRandom RANDOM = new SecureRandom();
+
+	/**
+	 * A password for an administrator to hand to somebody who has forgotten theirs, such as
+	 * {@code k7mq-x3vd-9ptr-hw2e}.
+	 * <p>
+	 * Made up here rather than typed by the administrator, so it is not one they would think
+	 * of again, nor a pattern the college's passwords fall into. Sixteen characters from 31,
+	 * about 79 bits, in fours so it can be read over the telephone. It is meant to be used
+	 * once: the account must change it before anything else.
+	 */
+	@NonNull
+	public static char[] temporary() {
+
+		char[] password = new char[19];
+
+		for (int i = 0; i < password.length; i++) {
+			password[i] = i % 5 == 4 ? '-'
+					: TEMPORARY_ALPHABET[RANDOM.nextInt(TEMPORARY_ALPHABET.length)];
+		}
+		return password;
 	}
 
 	/** One {@code key=value} out of the encoded parameters, or -1 when it is not there. */

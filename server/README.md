@@ -162,13 +162,18 @@ curl -sS --fail-with-body -X POST "$BASE/auth/password" \
 
 Changing a password signs out every *other* session of the account.
 
-**A lost administrator password** can't be reset from the console; nobody may set another
-account's password. Revoke the grant on the database host, then run the bootstrap command again
-with a new address:
+**A forgotten password** is reset by an administrator, from the account's row in the console.
+The server makes up a temporary password and shows it once. The person signs in with it and has
+to choose their own straight away. The reset also clears any lock and signs the account out
+everywhere. An administrator can't reset their own password; another administrator does it.
+
+**An administrator with no other administrator to ask** is reset on the server, with the
+bootstrap command. The password comes from the environment or a prompt, never an argument, and
+must be changed at the next sign-in:
 
 ```sh
-docker exec sies-pg psql -U postgres -d sies -c \
-  "UPDATE user_role SET revoked_at = now(), revoked_by = account_id WHERE role = 'ADMIN' AND revoked_at IS NULL"
+SIES_ADMIN_PASSWORD=... ./gradlew :server:bootRun \
+    --args='--spring.profiles.active=bootstrap --bootstrap.reset=admin@sies.edu.in'
 ```
 
 ## Who may do what
@@ -265,6 +270,7 @@ POST /accounts                            create an account (optionally with a r
 POST /accounts/{id}/roles                 grant a role
 POST /accounts/{id}/roles/{grantId}/revoke
 POST /accounts/{id}/sessions/end           sign an account out everywhere (admin)
+POST /accounts/{id}/password/reset         give an account a temporary password, and end its sessions (admin)
 POST /accounts/{id}/demote                 make a professor's account a staff one, and end its sessions (admin)
 POST /accounts/{id}/promote                {"profId"} or {"person"}: make a staff account a professor's, and end its sessions (admin)
 POST /accounts/{id}/disable                stop an account signing in, and end its sessions (admin)

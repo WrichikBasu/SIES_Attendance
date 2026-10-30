@@ -53,11 +53,14 @@ import jakarta.servlet.http.HttpServletRequest;
  *
  * <h3>What this deliberately cannot do</h3>
  * <ul>
- *     <li><b>Set a password on somebody else's account.</b> A new account gets an initial one and
- *     {@code must_rotate} is true from the insert, so the person who typed it is not the person
- *     who ends up knowing it. There is no endpoint for changing another account's password:
- *     {@code /auth/password} requires the current one, and an administrator who could skip that
- *     could sign in as a professor and mark a register in their name.</li>
+ *     <li><b>Choose a password for somebody else's account.</b> A new account gets an initial
+ *     one and {@code must_rotate} is true from the insert, so the person who typed it is not the
+ *     person who ends up knowing it. Somebody who has forgotten theirs is given a temporary one
+ *     by {@link #resetPassword}, which the server makes up and which is good for one sign-in:
+ *     {@code must_rotate} is set again, and every session the account had is ended. An
+ *     administrator could still sign in with it before its owner does, so the reset is in the
+ *     audit trail under their name, and an owner who finds the password they were given no
+ *     longer works knows to ask why.</li>
  *     <li><b>Delete anything with a history.</b> A role is revoked and never deleted — see
  *     {@link Roles} — and an account that has signed in or held a role is disabled rather
  *     than deleted, because its sessions, grants and the audit log are the record of what it
@@ -633,6 +636,72 @@ public final class AccountsController {
 					AuditLog.detail("account_id", accountId, "ended", ended));
 
 			return new SessionsEnded(ended);
+		});
+	}
+
+	/**
+	 * @param temporaryPassword the password to hand to the account's owner; shown once, and
+	 *                          never stored anywhere it can be read back
+	 * @param ended             how many live sessions the reset put an end to
+	 */
+	public record PasswordReset(@NonNull String temporaryPassword, int ended) {
+	}
+
+	/**
+	 * Gives an account a temporary password, for somebody who has forgotten theirs or is locked
+	 * out.
+	 * <p>
+	 * The server makes the password up and returns it this once. It clears any lock, and it is
+	 * good for one sign-in: the account has to choose a new one before it may do anything else.
+	 * Every session the account had ends, so a phone signed in by whoever may have learnt the
+	 * old password is signed out with it. Not one's own account, which changes its password
+	 * knowing the current one; and not a disabled one, which could not sign in with it anyway.
+	 */
+	@PostMapping("/{accountId}/password/reset")
+	@NonNull
+	public PasswordReset resetPassword(@PathVariable long accountId,
+	                                   @NonNull HttpServletRequest http) throws SQLException {
+
+		RequestActor actor = RequestActor.of(http);
+
+		if (accountId == actor.accountId()) {
+			throw new ApiException(409, "own_account",
+					"Change your own password with the current one. If you have forgotten it, "
+							+ "another administrator has to reset it.");
+		}
+
+		return database.inTransaction(actor, connection -> {
+
+			refuseUnlessAdmin(connection);
+
+			try (PreparedStatement statement = connection.prepareStatement(
+					"SELECT disabled_at IS NOT NULL FROM app_account WHERE account_id = ?")) {
+
+				statement.setLong(1, accountId);
+
+				try (ResultSet results = statement.executeQuery()) {
+					if (!results.next()) {
+						throw new ApiException(404, "no_account",
+								"There is no account " + accountId);
+					}
+					if (results.getBoolean(1)) {
+						throw new ApiException(409, "account_disabled",
+								"This account is disabled. Enable it first, then reset its "
+										+ "password.");
+					}
+				}
+			}
+
+			char[] password = Passwords.temporary();
+			String handedOver = new String(password);
+
+			// resetPassword wipes the array; the String is the one copy that goes back.
+			AccountDirectory.resetPassword(connection, accountId, password);
+
+			int ended = Sessions.revokeAllFor(connection, accountId, null,
+					"password reset by an administrator");
+
+			return new PasswordReset(handedOver, ended);
 		});
 	}
 
