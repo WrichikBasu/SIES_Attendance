@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -1876,6 +1877,44 @@ class WireTest {
 		assertEquals("incomplete_grant", vague.body().get("code").stringValue());
 		assertTrue(vague.body().get("message").stringValue().contains("optional"),
 				"and it says what leaving the session out means: " + vague.raw());
+	}
+
+	@Test
+	void thereIsAlwaysAnAdministrator() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+		long own = count("SELECT user_role_id FROM user_role WHERE account_id = " + accountAdmin
+				+ " AND role = 'ADMIN'");
+
+		Reply refused = post("/accounts/" + accountAdmin + "/roles/" + own + "/revoke",
+				json("reason", "stepping down"), admin, null);
+		assertEquals(409, refused.status(), refused::toString);
+		assertEquals("own_administration", refused.body().get("code").stringValue());
+		assertEquals(1, count("SELECT count(*) FROM user_role WHERE user_role_id = " + own
+				+ " AND revoked_at IS NULL"), "still an administrator");
+
+		// Handing over: a second administrator first, who then revokes the first.
+		Reply granted = post("/accounts/" + accountOffice + "/roles",
+				json("role", "ADMIN", "reason", "taking over"), admin, null);
+		assertEquals(200, granted.status(), granted::toString);
+
+		String office = tokenFor("office@sies.edu.in", "STAFF");
+		assertEquals(200, post("/accounts/" + accountAdmin + "/roles/" + own + "/revoke",
+				json("reason", "handed over"), office, null).status());
+
+		// And underneath the console, for every statement however it arrives (V43): neither
+		// the last grant revoked nor the last administrator's account disabled.
+		assertThrows(SQLException.class, () -> postgres.asSuperuser(
+				"UPDATE user_role SET revoked_at = now() WHERE role = 'ADMIN'"));
+		assertThrows(SQLException.class, () -> postgres.asSuperuser(
+				"UPDATE app_account SET disabled_at = now() WHERE account_id = "
+						+ accountOffice));
+		assertThrows(SQLException.class, () -> postgres.asSuperuser(
+				"DELETE FROM user_role WHERE role = 'ADMIN' AND revoked_at IS NULL"));
+
+		// Disabling an account that holds no live ADMIN is untouched by it.
+		postgres.asSuperuser("UPDATE app_account SET disabled_at = now() WHERE account_id = "
+				+ accountAdmin);
 	}
 
 	@Test

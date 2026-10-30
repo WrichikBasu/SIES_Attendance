@@ -1197,11 +1197,16 @@ async function loadAccounts() {
                 + (grant.department ? " · " + departmentLabel(grant.department) : "")
                 + (grant.academicYear ? " · " + grant.academicYear : "");
 
-            const revoke = document.createElement("button");
-            revoke.textContent = "×";
-            revoke.title = "Revoke this role";
-            revoke.addEventListener("click", () => revokeRole(account, grant));
-            tag.appendChild(revoke);
+            // Not one's own ADMIN: another administrator revokes it, so one is always left.
+            const ownAdmin = me && me.accountId === account.accountId && grant.role === "ADMIN";
+
+            if (!ownAdmin) {
+                const revoke = document.createElement("button");
+                revoke.textContent = "×";
+                revoke.title = "Revoke this role";
+                revoke.addEventListener("click", () => revokeRole(account, grant));
+                tag.appendChild(revoke);
+            }
 
             roles.appendChild(tag);
         });

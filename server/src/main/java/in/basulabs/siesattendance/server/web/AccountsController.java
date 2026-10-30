@@ -574,6 +574,7 @@ public final class AccountsController {
 		return database.inTransaction(actor, connection -> {
 
 			refuseUnlessAdmin(connection);
+			refuseOwnAdministration(connection, actor, userRoleId);
 
 			boolean revoked = Roles.revoke(connection, userRoleId,
 					actor.session().accountId(), body == null ? null : body.reason());
@@ -843,6 +844,32 @@ public final class AccountsController {
 
 			return new SessionsEnded(0);
 		});
+	}
+
+	/**
+	 * Refuses an administrator revoking their own ADMIN: another administrator has to, which
+	 * also means there is one left afterwards. V43 holds the database to that last part
+	 * whichever way a statement arrives; this is the refusal with a reason in it.
+	 */
+	private static void refuseOwnAdministration(@NonNull Connection connection,
+	                                            @NonNull RequestActor actor, long userRoleId)
+			throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT 1 FROM user_role WHERE user_role_id = ? AND account_id = ? "
+						+ "AND role = 'ADMIN' AND revoked_at IS NULL")) {
+
+			statement.setLong(1, userRoleId);
+			statement.setLong(2, actor.accountId());
+
+			try (ResultSet results = statement.executeQuery()) {
+				if (results.next()) {
+					throw new ApiException(409, "own_administration",
+							"You cannot revoke your own administrator role. Another "
+									+ "administrator has to, so that one is always left.");
+				}
+			}
+		}
 	}
 
 	private static void refuseOwnAccount(@NonNull RequestActor actor, long accountId) {

@@ -208,6 +208,10 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 - **Nothing is deleted to make room.** Every foreign key is `RESTRICT`. Roles and appointments
   are revoked, never deleted, and accounts cannot be removed.
 - **Nobody can alter the audit log**, the service included.
+- **There is always an administrator.** An administrator cannot revoke their own ADMIN role,
+  disable their own account or delete it; another administrator has to. To hand over, grant ADMIN
+  to the new administrator first. Underneath that, the database refuses any change that would leave
+  no live ADMIN grant on an enabled account (V43).
 - **A course's coordinator arranges its batches,** whichever department made them, when every
   course a batch is linked to is one they coordinate (`courses.prof_id`). That covers renaming it
   and moving students in or out. Making, removing and linking a batch stay with its department
