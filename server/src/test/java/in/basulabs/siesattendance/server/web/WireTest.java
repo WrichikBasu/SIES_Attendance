@@ -1757,6 +1757,29 @@ class WireTest {
 	}
 
 	@Test
+	void aBrowserIsShownAPageForAnAddressThatIsNotThereAndEverythingElseJson()
+			throws Exception {
+
+		HttpResponse<String> browser = HttpClient.newHttpClient().send(
+				HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/nowhere.html"))
+						.header("Accept", "text/html").GET().build(),
+				HttpResponse.BodyHandlers.ofString());
+
+		assertEquals(404, browser.statusCode(), "still a 404, not a 200 with a page");
+		assertTrue(browser.body().contains("There is no page here"), browser.body());
+		assertTrue(browser.body().contains("/console.html"), "and it leads to the console");
+
+		// The phone reads response bodies as JSON, so it must never be handed the page.
+		HttpResponse<String> client = HttpClient.newHttpClient().send(
+				HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/nowhere.html"))
+						.header("Accept", "application/json").GET().build(),
+				HttpResponse.BodyHandlers.ofString());
+
+		assertEquals(404, client.statusCode());
+		assertFalse(client.body().contains("<html"), client.body());
+	}
+
+	@Test
 	void theConsoleIsServedWithoutAToken() throws Exception {
 
 		// The filter guards /api/* and nothing else, which is deliberate: the page is a
