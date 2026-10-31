@@ -98,10 +98,81 @@ fresh run.
 `dev-serve.sh` is for a laptop only: it compiles the working tree, exposes `/actuator/mappings`,
 and migrates on start.
 
+### The database, in Docker
+
+`dev-database.sh` is no use here either: its passwords are fixed and printed. On the server, run
+the container by hand, once:
+
+```sh
+# The superuser's password, in a file only root reads, not on the command line or in
+# `docker inspect`.
+install -d -m 700 /etc/sies-attendance
+openssl rand -hex 24 > /etc/sies-attendance/postgres-password
+chmod 600 /etc/sies-attendance/postgres-password
+
+docker volume create sies-pgdata
+docker run -d --name sies-pg --restart unless-stopped \
+    -e POSTGRES_PASSWORD_FILE=/run/secrets/postgres-password \
+    -e POSTGRES_DB=sies \
+    -e TZ=UTC \
+    -v /etc/sies-attendance/postgres-password:/run/secrets/postgres-password:ro \
+    -v sies-pgdata:/var/lib/postgresql \
+    -p 127.0.0.1:5432:5432 \
+    postgres:18
+
+# Wait for the database itself; pg_isready answers before POSTGRES_DB exists.
+until docker exec sies-pg psql -U postgres -d sies -tAc 'SELECT 1' >/dev/null 2>&1; do sleep 1; done
+```
+
+Then the three roles, before anything else touches the database (`tools/roles.sql` explains why the
+order matters). The passwords are hex so they need no quoting, and go in through stdin so they don't
+show up in the process list:
+
+```sh
+OWNER=$(openssl rand -hex 24); APP=$(openssl rand -hex 24); AUDITOR=$(openssl rand -hex 24)
+
+{ printf '\\set owner_password %s\n\\set app_password %s\n\\set auditor_password %s\n' \
+      "$OWNER" "$APP" "$AUDITOR"
+  cat server/tools/roles.sql
+} | docker exec -i sies-pg psql -U postgres -d sies -q -v ON_ERROR_STOP=1 -f -
+
+printf 'sies_owner   %s\nsies_app     %s\nsies_auditor %s\n' "$OWNER" "$APP" "$AUDITOR"
+unset OWNER APP AUDITOR
+```
+
+Put `sies_app`'s password in `env` and `sies_owner`'s in `migrate-env` (twice, as
+`DB_OWNER_PASSWORD` and `PGPASSWORD`) in the next step, and keep all three in the college's
+password manager. Leave the database empty: the migrate step creates the schema.
+
+- **`postgres:18`, mounted at `/var/lib/postgresql`.** That is the image the tests use. Version 18
+  keeps its data in `/var/lib/postgresql/18/docker`, so a volume at the older
+  `/var/lib/postgresql/data` saves nothing and the container exits with an empty log.
+- **`127.0.0.1` only.** A port Docker publishes on every interface skips the host firewall (`ufw`
+  included). The service, the migrate step and the partition job all reach it on `localhost:5432`.
+- **The partition job runs the host's `psql`,** so install a client there (Debian and Ubuntu:
+  `postgresql-client`).
+- **The units say `After=postgresql.service`,** which Docker doesn't provide. Order them after
+  Docker instead, with `systemctl edit sies-attendance` (and the same for
+  `sies-audit-partitions`):
+
+  ```ini
+  [Unit]
+  After=docker.service
+  Wants=docker.service
+  ```
+- **A shell on it:** `docker exec -it sies-pg psql -U postgres -d sies`. That is the superuser, and
+  it ignores every policy, so use it for repairs and not to look at data.
+
+### The service
+
 ```sh
 ./gradlew :server:bootJar                  # build/libs/sies-attendance.jar → /opt/sies-attendance/
 
+useradd --system --no-create-home --shell /usr/sbin/nologin sies   # both units run as it
+
 install -D -m 644 server/deploy/sies-attendance.service /etc/systemd/system/sies-attendance.service
+install -D -m 644 server/deploy/sies-audit-partitions.service /etc/systemd/system/sies-audit-partitions.service
+install -D -m 644 server/deploy/sies-audit-partitions.timer   /etc/systemd/system/sies-audit-partitions.timer
 install -D -m 600 server/deploy/sies-attendance.env.example /etc/sies-attendance/env
 install -D -m 600 server/deploy/migrate-env.example      /etc/sies-attendance/migrate-env
 # fill in DB_APP_PASSWORD in env, and DB_OWNER_PASSWORD and PGPASSWORD in migrate-env
