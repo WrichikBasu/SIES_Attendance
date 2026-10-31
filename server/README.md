@@ -217,6 +217,9 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
   disable their own account or delete it; another administrator has to. To hand over, grant ADMIN
   to the new administrator first. Underneath that, the database refuses any change that would leave
   no live ADMIN grant on an enabled account (V43).
+- **An account keeps its kind.** A professor's, student's or staff account stays one; the
+  database refuses changing it (V44). Somebody who is now a different kind of person gets a new
+  account, and the old one is disabled.
 - **A course's coordinator arranges its batches,** whichever department made them, when every
   course a batch is linked to is one they coordinate (`courses.prof_id`). That covers renaming it
   and moving students in or out. Making, removing and linking a batch stay with its department
@@ -271,8 +274,6 @@ POST /accounts/{id}/roles                 grant a role
 POST /accounts/{id}/roles/{grantId}/revoke
 POST /accounts/{id}/sessions/end           sign an account out everywhere (admin)
 POST /accounts/{id}/password/reset         give an account a temporary password, and end its sessions (admin)
-POST /accounts/{id}/demote                 make a professor's account a staff one, and end its sessions (admin)
-POST /accounts/{id}/promote                {"profId"} or {"person"}: make a staff account a professor's, and end its sessions (admin)
 POST /accounts/{id}/disable                stop an account signing in, and end its sessions (admin)
 POST /accounts/{id}/enable                 let a disabled account sign in again (admin)
 DELETE /accounts/{id}                      delete an account that has never been used; anything else is disabled (admin)

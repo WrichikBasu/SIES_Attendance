@@ -438,31 +438,6 @@
             <button id="trailMore" hidden>Older entries</button>
         </section>
     </div>
-    <!-- Making a staff account a professor's: which professor it is for. -->
-    <dialog id="promoteDialog" aria-labelledby="promoteTitle">
-        <h2 id="promoteTitle">Make a professor</h2>
-        <p class="note">The account keeps its password and roles, and is signed out
-            everywhere so it starts over as the professor.</p>
-        <div class="row">
-            <div><label for="promotePerson">Which professor</label>
-                 <select id="promotePerson"></select></div>
-        </div>
-        <div class="row" id="promoteNewRow" hidden>
-            <div><label for="promoteName">Professor's name</label>
-                 <input id="promoteName"></div>
-            <div><label for="promoteEmail">Professor's email</label>
-                 <input id="promoteEmail" type="email"></div>
-            <div><label for="promoteDepartment">Department</label>
-                 <select id="promoteDepartment"></select></div>
-            <div><label for="promoteDesignation">Designation</label>
-                 <select id="promoteDesignation"></select></div>
-        </div>
-        <p class="error" id="promoteError" hidden></p>
-        <div class="actions">
-            <button id="promoteCancel" class="quiet" type="button">Cancel</button>
-            <button id="promoteConfirm" type="button">Make professor</button>
-        </div>
-    </dialog>
     <!-- A reset password, shown the one time the server says it. -->
     <dialog id="resetDialog" aria-labelledby="resetTitle">
         <h2 id="resetTitle">Temporary password</h2>
@@ -1032,7 +1007,6 @@ async function loadOptions() {
     const designations = options.designations
         || ["Assistant Professor", "Associate Professor", "Professor", "HOD"];
     fill($("newPersonDesignation"), designations);
-    fill($("promoteDesignation"), designations);
     syncGrantRoles();
 
     // Either shape is accepted, because this page can be newer than the process serving it:
@@ -1046,7 +1020,6 @@ async function loadOptions() {
     fill($("newDepartment"), values, labels);
     fill($("grantDepartment"), values, labels);
     fill($("newPersonDepartment"), values, labels);
-    fill($("promoteDepartment"), values, labels);
 
     // An empty option first, and it is the default: V18 made the session optional on a HOD
     // grant, and its absence means "until it is revoked", which is what an appointment
@@ -1285,8 +1258,8 @@ async function loadAccounts() {
             actions.appendChild(button);
         };
 
-        // Nothing but the way back for a disabled account: it has no sessions to end, and
-        // changing what it is can wait until it is in use again.
+        // Nothing but the way back for a disabled account: it has no sessions to end, and a
+        // password to reset only once it can sign in again.
         if (account.disabled) {
             action("Enable", "Let " + account.displayName + " sign in again", "quiet",
                 () => setDisabled(account, false));
@@ -1305,24 +1278,6 @@ async function loadAccounts() {
         if (!own) {
             action("Reset password", "Give " + account.displayName + " a temporary password "
                 + "they must change when they sign in", "quiet", () => resetPassword(account));
-        }
-
-        if (account.kind === "PROFESSOR" && !own) {
-            const demote = document.createElement("button");
-            demote.className = "quiet";
-            demote.textContent = "Make staff";
-            demote.title = "Keep the account, but stop it acting as a professor";
-            demote.addEventListener("click", () => makeStaff(account));
-            actions.appendChild(demote);
-        }
-
-        if (account.kind === "STAFF" && !own) {
-            const promote = document.createElement("button");
-            promote.className = "quiet";
-            promote.textContent = "Make professor";
-            promote.title = "Attach this account to a professor";
-            promote.addEventListener("click", () => makeProfessor(account, accounts));
-            actions.appendChild(promote);
         }
 
         if (!own) {
@@ -1416,112 +1371,6 @@ $("resetDone").addEventListener("click", () => $("resetDialog").close());
 
 // Not left on the page once the dialog is gone.
 $("resetDialog").addEventListener("close", () => { $("resetPassword").textContent = ""; });
-
-async function makeStaff(account) {
-
-    if (!confirm("Make " + account.displayName + "'s account a staff account? It keeps its "
-            + "password and roles, but stops acting as a professor: no classes of their own "
-            + "and no attendance to mark. Their lectures and courses stay as they are. "
-            + "They are signed out everywhere.")) {
-        return;
-    }
-
-    clearSay();
-
-    try {
-        await post("/accounts/" + account.accountId + "/demote", {});
-        say(account.displayName + "'s account is now a staff account.", true);
-        await loadAccounts();
-
-    } catch (e) {
-        say(e.message, false);
-    }
-}
-
-/** The staff account the professor dialog is for, while it is open. */
-let promoting = null;
-
-/**
- * Opens the dialog that picks the professor a staff account becomes. Offers the professors no
- * account holds yet, the one whose address is the account's first, and a new one otherwise.
- */
-async function makeProfessor(account, accounts) {
-
-    clearSay();
-
-    try {
-        const people = await api("/accounts/people?kind=PROFESSOR");
-        const taken = new Set(accounts.filter((a) => a.profId).map((a) => a.profId));
-        const free = people.filter((p) => !taken.has(p.id));
-
-        const login = account.loginEmail.toLowerCase();
-        const theirs = free.find((p) => p.email && p.email.toLowerCase() === login);
-
-        fill($("promotePerson"),
-            [NEW_PERSON].concat(free.map((p) => p.id)),
-            ["A professor who is not on the server yet"].concat(free.map((p) => p.name
-                + (p.detail ? " · " + p.detail : "") + (p.email ? " · " + p.email : ""))));
-
-        $("promotePerson").value = theirs ? theirs.id : NEW_PERSON;
-        $("promoteName").value = account.displayName;
-        $("promoteEmail").value = account.loginEmail;
-        $("promoteError").hidden = true;
-        $("promoteTitle").textContent = "Make " + account.displayName + " a professor";
-        syncPromotePerson();
-
-        promoting = account;
-        $("promoteDialog").showModal();
-
-    } catch (e) {
-        say(e.message, false);
-    }
-}
-
-function syncPromotePerson() {
-    $("promoteNewRow").hidden = $("promotePerson").value !== NEW_PERSON;
-}
-
-$("promotePerson").addEventListener("change", syncPromotePerson);
-$("promoteCancel").addEventListener("click", () => $("promoteDialog").close());
-$("promoteDialog").addEventListener("close", () => { promoting = null; });
-
-$("promoteConfirm").addEventListener("click", async () => {
-
-    const account = promoting;
-    if (!account) {
-        return;
-    }
-
-    const chosen = $("promotePerson").value;
-    const button = $("promoteConfirm");
-
-    // In the dialog rather than a toast: a modal dialog sits above everything else, toasts
-    // included, so a toast would be hidden behind it.
-    $("promoteError").hidden = true;
-    button.disabled = true;
-
-    try {
-        await post("/accounts/" + account.accountId + "/promote", chosen === NEW_PERSON
-            ? {person: {
-                name: $("promoteName").value.trim(),
-                email: $("promoteEmail").value.trim(),
-                department: $("promoteDepartment").value,
-                designation: $("promoteDesignation").value.trim(),
-            }}
-            : {profId: chosen});
-
-        $("promoteDialog").close();
-        say(account.displayName + "'s account is now a professor's.", true);
-        await loadAccounts();
-
-    } catch (e) {
-        $("promoteError").textContent = e.message;
-        $("promoteError").hidden = false;
-
-    } finally {
-        button.disabled = false;
-    }
-});
 
 async function setDisabled(account, disabled) {
 

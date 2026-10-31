@@ -1512,87 +1512,30 @@ class WireTest {
 	}
 
 	@Test
-	void anAdministratorMakesAProfessorStaff() throws Exception {
+	void anAccountKeepsWhatItIs() throws Exception {
 
+		// A professor's account is not made a staff one, nor a staff account a professor's:
+		// there is no endpoint left that would.
 		String admin = tokenFor("admin@sies.edu.in", "STAFF");
-		String phone = tokenFor("b.chem@sies.edu.in", "STAFF");
 
-		assertEquals("PROFESSOR", get("/me", phone, null).body().get("kind").stringValue());
-
-		assertEquals(403, post("/accounts/" + accountProfChem + "/demote", "{}",
-						tokenFor("a.cs@sies.edu.in", "STAFF"), null).status(),
-				"changing an account is an administrator's");
-
-		Reply demoted = post("/accounts/" + accountProfChem + "/demote", "{}", admin, null);
-
-		assertEquals(200, demoted.status(), demoted::toString);
-		assertEquals(1, demoted.body().get("ended").intValue());
-		assertEquals(401, get("/me", phone, null).status(), "its sessions end with it");
-
-		Reply me = get("/me", tokenFor("b.chem@sies.edu.in", "STAFF"), null);
-
-		assertEquals(200, me.status(), "the same password still signs in");
-		assertEquals("STAFF", me.body().get("kind").stringValue());
-		assertFalse(me.body().get("imports").get("attendance").booleanValue(),
-				"no longer a professor, so no attendance to file");
-
-		assertEquals(1, count("SELECT count(*) FROM professors WHERE prof_id = " + PROF_CHEM),
-				"the professor stays, with the lectures and courses that point at them");
-		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'UPDATE' "
-				+ "AND table_name = 'app_account' AND before_image->>'kind' = 'PROFESSOR' "
-				+ "AND after_image->>'kind' = 'STAFF'"));
-
-		assertEquals(409, post("/accounts/" + accountProfChem + "/demote", "{}", admin, null)
-				.status(), "a staff account is not a professor's to begin with");
-		assertEquals(409, post("/accounts/" + accountAdmin + "/demote", "{}", admin, null)
-				.status(), "not one's own account");
-		assertEquals(404, post("/accounts/999999/demote", "{}", admin, null).status());
-	}
-
-	@Test
-	void anAdministratorMakesAStaffAccountAProfessorsAgain() throws Exception {
-
-		String admin = tokenFor("admin@sies.edu.in", "STAFF");
-		String promote = "/accounts/" + accountProfChem + "/promote";
-
-		assertEquals(200, post("/accounts/" + accountProfChem + "/demote", "{}", admin, null)
+		assertEquals(404, post("/accounts/" + accountProfChem + "/demote", "{}", admin, null)
 				.status());
+		assertEquals(404, post("/accounts/" + accountOffice + "/promote",
+				"{\"profId\": \"" + PROF_CHEM + "\"}", admin, null).status());
 
-		assertEquals(400, post(promote, "{}", admin, null).status(), "which professor?");
-		assertEquals(409, post(promote, "{\"profId\": \"" + PROF_CS + "\"}", admin, null)
-				.status(), "a professor with an account of their own already");
-		assertEquals(403, post(promote, "{\"profId\": \"" + PROF_CHEM + "\"}",
-						tokenFor("a.cs@sies.edu.in", "STAFF"), null).status(),
-				"changing an account is an administrator's");
+		// Nor underneath, however the statement arrives (V44).
+		assertThrows(SQLException.class, () -> postgres.asSuperuser(
+				"UPDATE app_account SET kind = 'STAFF', prof_id = NULL WHERE account_id = "
+						+ accountProfChem));
+		assertThrows(SQLException.class, () -> postgres.asSuperuser(
+				"UPDATE app_account SET kind = 'PROFESSOR', prof_id = " + PROF_CHEM
+						+ " WHERE account_id = " + accountOffice));
 
-		String phone = tokenFor("b.chem@sies.edu.in", "STAFF");
-		Reply promoted = post(promote, "{\"profId\": \"" + PROF_CHEM + "\"}", admin, null);
-
-		assertEquals(200, promoted.status(), promoted::toString);
-		assertEquals(1, promoted.body().get("ended").intValue());
-		assertEquals(401, get("/me", phone, null).status(), "its sessions end with it");
-
-		Reply me = get("/me", tokenFor("b.chem@sies.edu.in", "STAFF"), null);
-		assertEquals("PROFESSOR", me.body().get("kind").stringValue());
-		assertTrue(me.body().get("imports").get("attendance").booleanValue(), me::toString);
-
-		assertEquals(409, post(promote, "{\"profId\": \"" + PROF_CHEM + "\"}", admin, null)
-				.status(), "a professor's account is not a staff one to begin with");
-
-		// A staff account whose professor is not on the server yet: created with it.
-		Reply office = post("/accounts/" + accountOffice + "/promote", "{\"person\": {"
-				+ "\"name\": \"D NEW\", \"email\": \"d.new@sies.edu.in\", "
-				+ "\"department\": \"CHEMISTRY\", \"designation\": \"Professor\"}}",
-				admin, null);
-
-		assertEquals(200, office.status(), office::toString);
-		assertEquals(1, count("SELECT count(*) FROM app_account a JOIN professors p "
-				+ "USING (prof_id) WHERE a.account_id = " + accountOffice
-				+ " AND a.kind = 'PROFESSOR' AND p.name = 'D NEW'"));
-
-		assertEquals(409, post("/accounts/" + accountAdmin + "/promote",
-				"{\"profId\": \"" + PROF_CHEM + "\"}", admin, null).status(),
-				"not one's own account");
+		// A professor renumbered still carries their account along.
+		postgres.asSuperuser("UPDATE professors SET prof_id = 777001 WHERE prof_id = "
+				+ PROF_CHEM);
+		assertEquals(777001, count("SELECT prof_id FROM app_account WHERE account_id = "
+				+ accountProfChem));
 	}
 
 	@Test
