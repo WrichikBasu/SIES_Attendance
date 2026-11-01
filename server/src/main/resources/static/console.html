@@ -134,6 +134,12 @@
     dialog::backdrop { background: rgba(17, 24, 28, 0.35); }
     dialog .actions { justify-content: flex-end; }
     .error { color: var(--bad); font-size: 0.85rem; margin: 0 0 0.8rem; }
+    .handover {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.3rem;
+        letter-spacing: 0.04em; padding: 0.6rem 0.8rem; margin: 0 0 0.8rem;
+        background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+        user-select: all; word-break: break-all;
+    }
     .toasts {
         position: fixed; top: 1rem; right: 1rem; z-index: 10;
         display: flex; flex-direction: column; gap: 0.5rem;
@@ -432,29 +438,15 @@
             <button id="trailMore" hidden>Older entries</button>
         </section>
     </div>
-    <!-- Making a staff account a professor's: which professor it is for. -->
-    <dialog id="promoteDialog" aria-labelledby="promoteTitle">
-        <h2 id="promoteTitle">Make a professor</h2>
-        <p class="note">The account keeps its password and roles, and is signed out
-            everywhere so it starts over as the professor.</p>
-        <div class="row">
-            <div><label for="promotePerson">Which professor</label>
-                 <select id="promotePerson"></select></div>
-        </div>
-        <div class="row" id="promoteNewRow" hidden>
-            <div><label for="promoteName">Professor's name</label>
-                 <input id="promoteName"></div>
-            <div><label for="promoteEmail">Professor's email</label>
-                 <input id="promoteEmail" type="email"></div>
-            <div><label for="promoteDepartment">Department</label>
-                 <select id="promoteDepartment"></select></div>
-            <div><label for="promoteDesignation">Designation</label>
-                 <select id="promoteDesignation"></select></div>
-        </div>
-        <p class="error" id="promoteError" hidden></p>
+    <!-- A reset password, shown the one time the server says it. -->
+    <dialog id="resetDialog" aria-labelledby="resetTitle">
+        <h2 id="resetTitle">Temporary password</h2>
+        <p class="note" id="resetNote"></p>
+        <p class="handover" id="resetPassword"></p>
+        <p class="note">It is not shown again. If it is lost, reset the password again.</p>
         <div class="actions">
-            <button id="promoteCancel" class="quiet" type="button">Cancel</button>
-            <button id="promoteConfirm" type="button">Make professor</button>
+            <button id="resetCopy" class="quiet" type="button">Copy</button>
+            <button id="resetDone" type="button">Done</button>
         </div>
     </dialog>
 </main>
@@ -1015,7 +1007,6 @@ async function loadOptions() {
     const designations = options.designations
         || ["Assistant Professor", "Associate Professor", "Professor", "HOD"];
     fill($("newPersonDesignation"), designations);
-    fill($("promoteDesignation"), designations);
     syncGrantRoles();
 
     // Either shape is accepted, because this page can be newer than the process serving it:
@@ -1029,7 +1020,6 @@ async function loadOptions() {
     fill($("newDepartment"), values, labels);
     fill($("grantDepartment"), values, labels);
     fill($("newPersonDepartment"), values, labels);
-    fill($("promoteDepartment"), values, labels);
 
     // An empty option first, and it is the default: V18 made the session optional on a HOD
     // grant, and its absence means "until it is revoked", which is what an appointment
@@ -1197,11 +1187,16 @@ async function loadAccounts() {
                 + (grant.department ? " · " + departmentLabel(grant.department) : "")
                 + (grant.academicYear ? " · " + grant.academicYear : "");
 
-            const revoke = document.createElement("button");
-            revoke.textContent = "×";
-            revoke.title = "Revoke this role";
-            revoke.addEventListener("click", () => revokeRole(account, grant));
-            tag.appendChild(revoke);
+            // Not one's own ADMIN: another administrator revokes it, so one is always left.
+            const ownAdmin = me && me.accountId === account.accountId && grant.role === "ADMIN";
+
+            if (!ownAdmin) {
+                const revoke = document.createElement("button");
+                revoke.textContent = "×";
+                revoke.title = "Revoke this role";
+                revoke.addEventListener("click", () => revokeRole(account, grant));
+                tag.appendChild(revoke);
+            }
 
             roles.appendChild(tag);
         });
@@ -1263,8 +1258,8 @@ async function loadAccounts() {
             actions.appendChild(button);
         };
 
-        // Nothing but the way back for a disabled account: it has no sessions to end, and
-        // changing what it is can wait until it is in use again.
+        // Nothing but the way back for a disabled account: it has no sessions to end, and a
+        // password to reset only once it can sign in again.
         if (account.disabled) {
             action("Enable", "Let " + account.displayName + " sign in again", "quiet",
                 () => setDisabled(account, false));
@@ -1278,22 +1273,11 @@ async function loadAccounts() {
         // Not on one's own row: the server refuses that, and says another admin has to.
         const own = me && me.accountId === account.accountId;
 
-        if (account.kind === "PROFESSOR" && !own) {
-            const demote = document.createElement("button");
-            demote.className = "quiet";
-            demote.textContent = "Make staff";
-            demote.title = "Keep the account, but stop it acting as a professor";
-            demote.addEventListener("click", () => makeStaff(account));
-            actions.appendChild(demote);
-        }
-
-        if (account.kind === "STAFF" && !own) {
-            const promote = document.createElement("button");
-            promote.className = "quiet";
-            promote.textContent = "Make professor";
-            promote.title = "Attach this account to a professor";
-            promote.addEventListener("click", () => makeProfessor(account, accounts));
-            actions.appendChild(promote);
+        // Not one's own either: the server refuses it, and another administrator resets a
+        // forgotten one.
+        if (!own) {
+            action("Reset password", "Give " + account.displayName + " a temporary password "
+                + "they must change when they sign in", "quiet", () => resetPassword(account));
         }
 
         if (!own) {
@@ -1344,20 +1328,28 @@ async function endSessions(account) {
     }
 }
 
-async function makeStaff(account) {
+async function resetPassword(account) {
 
-    if (!confirm("Make " + account.displayName + "'s account a staff account? It keeps its "
-            + "password and roles, but stops acting as a professor: no classes of their own "
-            + "and no attendance to mark. Their lectures and courses stay as they are. "
-            + "They are signed out everywhere.")) {
+    if (!confirm("Reset " + account.displayName + "'s password? The server makes up a "
+            + "temporary one for you to give them, and they choose their own when they next "
+            + "sign in. Their current password stops working, and they are signed out "
+            + "everywhere.")) {
         return;
     }
 
     clearSay();
 
     try {
-        await post("/accounts/" + account.accountId + "/demote", {});
-        say(account.displayName + "'s account is now a staff account.", true);
+        const reply = await post("/accounts/" + account.accountId + "/password/reset", {});
+
+        $("resetTitle").textContent = "Temporary password for " + account.displayName;
+        $("resetNote").textContent = "Give this to " + account.displayName + " in person or "
+            + "over the telephone, not by email. They sign in as " + account.loginEmail
+            + " with it, and are asked for a new password straight away.";
+        $("resetPassword").textContent = reply.temporaryPassword;
+        $("resetCopy").textContent = "Copy";
+        $("resetDialog").showModal();
+
         await loadAccounts();
 
     } catch (e) {
@@ -1365,90 +1357,20 @@ async function makeStaff(account) {
     }
 }
 
-/** The staff account the professor dialog is for, while it is open. */
-let promoting = null;
-
-/**
- * Opens the dialog that picks the professor a staff account becomes. Offers the professors no
- * account holds yet, the one whose address is the account's first, and a new one otherwise.
- */
-async function makeProfessor(account, accounts) {
-
-    clearSay();
-
+$("resetCopy").addEventListener("click", async () => {
     try {
-        const people = await api("/accounts/people?kind=PROFESSOR");
-        const taken = new Set(accounts.filter((a) => a.profId).map((a) => a.profId));
-        const free = people.filter((p) => !taken.has(p.id));
-
-        const login = account.loginEmail.toLowerCase();
-        const theirs = free.find((p) => p.email && p.email.toLowerCase() === login);
-
-        fill($("promotePerson"),
-            [NEW_PERSON].concat(free.map((p) => p.id)),
-            ["A professor who is not on the server yet"].concat(free.map((p) => p.name
-                + (p.detail ? " · " + p.detail : "") + (p.email ? " · " + p.email : ""))));
-
-        $("promotePerson").value = theirs ? theirs.id : NEW_PERSON;
-        $("promoteName").value = account.displayName;
-        $("promoteEmail").value = account.loginEmail;
-        $("promoteError").hidden = true;
-        $("promoteTitle").textContent = "Make " + account.displayName + " a professor";
-        syncPromotePerson();
-
-        promoting = account;
-        $("promoteDialog").showModal();
-
+        await navigator.clipboard.writeText($("resetPassword").textContent);
+        $("resetCopy").textContent = "Copied";
     } catch (e) {
-        say(e.message, false);
-    }
-}
-
-function syncPromotePerson() {
-    $("promoteNewRow").hidden = $("promotePerson").value !== NEW_PERSON;
-}
-
-$("promotePerson").addEventListener("change", syncPromotePerson);
-$("promoteCancel").addEventListener("click", () => $("promoteDialog").close());
-$("promoteDialog").addEventListener("close", () => { promoting = null; });
-
-$("promoteConfirm").addEventListener("click", async () => {
-
-    const account = promoting;
-    if (!account) {
-        return;
-    }
-
-    const chosen = $("promotePerson").value;
-    const button = $("promoteConfirm");
-
-    // In the dialog rather than a toast: a modal dialog sits above everything else, toasts
-    // included, so a toast would be hidden behind it.
-    $("promoteError").hidden = true;
-    button.disabled = true;
-
-    try {
-        await post("/accounts/" + account.accountId + "/promote", chosen === NEW_PERSON
-            ? {person: {
-                name: $("promoteName").value.trim(),
-                email: $("promoteEmail").value.trim(),
-                department: $("promoteDepartment").value,
-                designation: $("promoteDesignation").value.trim(),
-            }}
-            : {profId: chosen});
-
-        $("promoteDialog").close();
-        say(account.displayName + "'s account is now a professor's.", true);
-        await loadAccounts();
-
-    } catch (e) {
-        $("promoteError").textContent = e.message;
-        $("promoteError").hidden = false;
-
-    } finally {
-        button.disabled = false;
+        // Over plain http the clipboard is not offered; the text selects with one click.
+        $("resetCopy").textContent = "Select it and copy";
     }
 });
+
+$("resetDone").addEventListener("click", () => $("resetDialog").close());
+
+// Not left on the page once the dialog is gone.
+$("resetDialog").addEventListener("close", () => { $("resetPassword").textContent = ""; });
 
 async function setDisabled(account, disabled) {
 

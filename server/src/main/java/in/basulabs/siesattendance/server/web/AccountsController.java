@@ -53,11 +53,14 @@ import jakarta.servlet.http.HttpServletRequest;
  *
  * <h3>What this deliberately cannot do</h3>
  * <ul>
- *     <li><b>Set a password on somebody else's account.</b> A new account gets an initial one and
- *     {@code must_rotate} is true from the insert, so the person who typed it is not the person
- *     who ends up knowing it. There is no endpoint for changing another account's password:
- *     {@code /auth/password} requires the current one, and an administrator who could skip that
- *     could sign in as a professor and mark a register in their name.</li>
+ *     <li><b>Choose a password for somebody else's account.</b> A new account gets an initial
+ *     one and {@code must_rotate} is true from the insert, so the person who typed it is not the
+ *     person who ends up knowing it. Somebody who has forgotten theirs is given a temporary one
+ *     by {@link #resetPassword}, which the server makes up and which is good for one sign-in:
+ *     {@code must_rotate} is set again, and every session the account had is ended. An
+ *     administrator could still sign in with it before its owner does, so the reset is in the
+ *     audit trail under their name, and an owner who finds the password they were given no
+ *     longer works knows to ask why.</li>
  *     <li><b>Delete anything with a history.</b> A role is revoked and never deleted — see
  *     {@link Roles} — and an account that has signed in or held a role is disabled rather
  *     than deleted, because its sessions, grants and the audit log are the record of what it
@@ -148,13 +151,6 @@ public final class AccountsController {
 	 */
 	public record NewDelegation(@Nullable String courseId, @Nullable Integer academicYear,
 	                            @Nullable String reason) {
-	}
-
-	/**
-	 * Which professor a staff account becomes: one on file, or one created with it, exactly as
-	 * when an account is created.
-	 */
-	public record Promotion(@Nullable String profId, @Nullable NewPerson person) {
 	}
 
 	public record Revocation(@Nullable String reason) {
@@ -574,6 +570,7 @@ public final class AccountsController {
 		return database.inTransaction(actor, connection -> {
 
 			refuseUnlessAdmin(connection);
+			refuseOwnAdministration(connection, actor, userRoleId);
 
 			boolean revoked = Roles.revoke(connection, userRoleId,
 					actor.session().accountId(), body == null ? null : body.reason());
@@ -636,128 +633,68 @@ public final class AccountsController {
 	}
 
 	/**
-	 * Makes a professor's account a staff one: it signs in as before and keeps its roles, but it
-	 * no longer acts as the professor.
-	 * <p>
-	 * The {@code professors} row stays, because lectures, courses and the audit trail point at
-	 * it; only the account lets go of it. Who an account is is read from the account on every
-	 * request, so this takes effect at once, and its sessions are ended anyway so each phone
-	 * signs in again and starts over with what a staff account may read. Not one's own account:
-	 * the session this page is using would keep its professor until it ended.
+	 * @param temporaryPassword the password to hand to the account's owner; shown once, and
+	 *                          never stored anywhere it can be read back
+	 * @param ended             how many live sessions the reset put an end to
 	 */
-	@PostMapping("/{accountId}/demote")
-	@NonNull
-	public SessionsEnded demote(@PathVariable long accountId,
-	                            @NonNull HttpServletRequest http) throws SQLException {
-
-		RequestActor actor = RequestActor.of(http);
-
-		refuseOwnAccount(actor, accountId);
-
-		return database.inTransaction(actor, connection -> {
-
-			refuseUnlessAdmin(connection);
-
-			if (!accountExists(connection, accountId)) {
-				throw new ApiException(404, "no_account", "There is no account " + accountId);
-			}
-
-			try (PreparedStatement statement = connection.prepareStatement(
-					"UPDATE app_account SET kind = 'STAFF', prof_id = NULL, "
-							+ "updated_at = now(), updated_by = ? "
-							+ "WHERE account_id = ? AND kind = 'PROFESSOR'")) {
-
-				statement.setLong(1, actor.accountId());
-				statement.setLong(2, accountId);
-
-				if (statement.executeUpdate() == 0) {
-					throw new ApiException(409, "not_a_professor",
-							"That account is not a professor's.");
-				}
-			}
-
-			return new SessionsEnded(Sessions.revokeAllFor(connection, accountId, null,
-					"made a staff account by an administrator"));
-		});
+	public record PasswordReset(@NonNull String temporaryPassword, int ended) {
 	}
 
 	/**
-	 * Makes a staff account a professor's: the way back from {@link #demote}, and the way to
-	 * a professor account for somebody whose address already has a staff one.
+	 * Gives an account a temporary password, for somebody who has forgotten theirs or is locked
+	 * out.
 	 * <p>
-	 * The professor is one on file without an account, or one created here in the same
-	 * transaction. Its sessions end, as a demotion's do, so each phone signs in again and
-	 * starts over as the professor. Not one's own account, for the same reason.
+	 * The server makes the password up and returns it this once. It clears any lock, and it is
+	 * good for one sign-in: the account has to choose a new one before it may do anything else.
+	 * Every session the account had ends, so a phone signed in by whoever may have learnt the
+	 * old password is signed out with it. Not one's own account, which changes its password
+	 * knowing the current one; and not a disabled one, which could not sign in with it anyway.
 	 */
-	@PostMapping("/{accountId}/promote")
+	@PostMapping("/{accountId}/password/reset")
 	@NonNull
-	public SessionsEnded promote(@PathVariable long accountId,
-	                             @RequestBody @NonNull Promotion body,
-	                             @NonNull HttpServletRequest http) throws SQLException {
+	public PasswordReset resetPassword(@PathVariable long accountId,
+	                                   @NonNull HttpServletRequest http) throws SQLException {
 
 		RequestActor actor = RequestActor.of(http);
-		Long wantedProf = key(body.profId(), "profId");
 
-		refuseOwnAccount(actor, accountId);
-
-		if ((wantedProf == null) == (body.person() == null)) {
-			throw new ApiException(400, "needs_person",
-					"Name the professor this account is for, or give the details of a new one, "
-							+ "but not both.");
+		if (accountId == actor.accountId()) {
+			throw new ApiException(409, "own_account",
+					"Change your own password with the current one. If you have forgotten it, "
+							+ "another administrator has to reset it.");
 		}
 
 		return database.inTransaction(actor, connection -> {
 
 			refuseUnlessAdmin(connection);
 
-			if (!accountExists(connection, accountId)) {
-				throw new ApiException(404, "no_account", "There is no account " + accountId);
-			}
-
-			// An if and not a ternary, for the reason create() gives.
-			Long profId = wantedProf;
-
-			if (profId == null) {
-				profId = createProfessor(connection, body.person());
-			}
-
-			onFile(connection, "professors", "prof_id", profId,
-					"That professor is not on the server.");
-
 			try (PreparedStatement statement = connection.prepareStatement(
-					"SELECT account_id FROM app_account WHERE prof_id = ?")) {
+					"SELECT disabled_at IS NOT NULL FROM app_account WHERE account_id = ?")) {
 
-				statement.setLong(1, profId);
+				statement.setLong(1, accountId);
 
 				try (ResultSet results = statement.executeQuery()) {
-					if (results.next()) {
-						throw new ApiException(409, "professor_has_account",
-								"That professor already has an account (#"
-										+ results.getLong(1) + ").");
+					if (!results.next()) {
+						throw new ApiException(404, "no_account",
+								"There is no account " + accountId);
+					}
+					if (results.getBoolean(1)) {
+						throw new ApiException(409, "account_disabled",
+								"This account is disabled. Enable it first, then reset its "
+										+ "password.");
 					}
 				}
 			}
 
-			try (PreparedStatement statement = connection.prepareStatement(
-					"UPDATE app_account SET kind = 'PROFESSOR', prof_id = ?, "
-							+ "updated_at = now(), updated_by = ? "
-							+ "WHERE account_id = ? AND kind = 'STAFF'")) {
+			char[] password = Passwords.temporary();
+			String handedOver = new String(password);
 
-				statement.setLong(1, profId);
-				statement.setLong(2, actor.accountId());
-				statement.setLong(3, accountId);
+			// resetPassword wipes the array; the String is the one copy that goes back.
+			AccountDirectory.resetPassword(connection, accountId, password);
 
-				if (statement.executeUpdate() == 0) {
-					throw new ApiException(409, "not_staff",
-							"Only a staff account can be made a professor's.");
-				}
-			}
+			int ended = Sessions.revokeAllFor(connection, accountId, null,
+					"password reset by an administrator");
 
-			// As when a professor's account is created: a head's designation makes them head.
-			grantHeadIfDesignated(connection, accountId, profId, actor.accountId());
-
-			return new SessionsEnded(Sessions.revokeAllFor(connection, accountId, null,
-					"made a professor account by an administrator"));
+			return new PasswordReset(handedOver, ended);
 		});
 	}
 
@@ -843,6 +780,32 @@ public final class AccountsController {
 
 			return new SessionsEnded(0);
 		});
+	}
+
+	/**
+	 * Refuses an administrator revoking their own ADMIN: another administrator has to, which
+	 * also means there is one left afterwards. V43 holds the database to that last part
+	 * whichever way a statement arrives; this is the refusal with a reason in it.
+	 */
+	private static void refuseOwnAdministration(@NonNull Connection connection,
+	                                            @NonNull RequestActor actor, long userRoleId)
+			throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT 1 FROM user_role WHERE user_role_id = ? AND account_id = ? "
+						+ "AND role = 'ADMIN' AND revoked_at IS NULL")) {
+
+			statement.setLong(1, userRoleId);
+			statement.setLong(2, actor.accountId());
+
+			try (ResultSet results = statement.executeQuery()) {
+				if (results.next()) {
+					throw new ApiException(409, "own_administration",
+							"You cannot revoke your own administrator role. Another "
+									+ "administrator has to, so that one is always left.");
+				}
+			}
+		}
 	}
 
 	private static void refuseOwnAccount(@NonNull RequestActor actor, long accountId) {

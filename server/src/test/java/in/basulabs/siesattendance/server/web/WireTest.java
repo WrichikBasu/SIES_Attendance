@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -1511,87 +1512,30 @@ class WireTest {
 	}
 
 	@Test
-	void anAdministratorMakesAProfessorStaff() throws Exception {
+	void anAccountKeepsWhatItIs() throws Exception {
 
+		// A professor's account is not made a staff one, nor a staff account a professor's:
+		// there is no endpoint left that would.
 		String admin = tokenFor("admin@sies.edu.in", "STAFF");
-		String phone = tokenFor("b.chem@sies.edu.in", "STAFF");
 
-		assertEquals("PROFESSOR", get("/me", phone, null).body().get("kind").stringValue());
-
-		assertEquals(403, post("/accounts/" + accountProfChem + "/demote", "{}",
-						tokenFor("a.cs@sies.edu.in", "STAFF"), null).status(),
-				"changing an account is an administrator's");
-
-		Reply demoted = post("/accounts/" + accountProfChem + "/demote", "{}", admin, null);
-
-		assertEquals(200, demoted.status(), demoted::toString);
-		assertEquals(1, demoted.body().get("ended").intValue());
-		assertEquals(401, get("/me", phone, null).status(), "its sessions end with it");
-
-		Reply me = get("/me", tokenFor("b.chem@sies.edu.in", "STAFF"), null);
-
-		assertEquals(200, me.status(), "the same password still signs in");
-		assertEquals("STAFF", me.body().get("kind").stringValue());
-		assertFalse(me.body().get("imports").get("attendance").booleanValue(),
-				"no longer a professor, so no attendance to file");
-
-		assertEquals(1, count("SELECT count(*) FROM professors WHERE prof_id = " + PROF_CHEM),
-				"the professor stays, with the lectures and courses that point at them");
-		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'UPDATE' "
-				+ "AND table_name = 'app_account' AND before_image->>'kind' = 'PROFESSOR' "
-				+ "AND after_image->>'kind' = 'STAFF'"));
-
-		assertEquals(409, post("/accounts/" + accountProfChem + "/demote", "{}", admin, null)
-				.status(), "a staff account is not a professor's to begin with");
-		assertEquals(409, post("/accounts/" + accountAdmin + "/demote", "{}", admin, null)
-				.status(), "not one's own account");
-		assertEquals(404, post("/accounts/999999/demote", "{}", admin, null).status());
-	}
-
-	@Test
-	void anAdministratorMakesAStaffAccountAProfessorsAgain() throws Exception {
-
-		String admin = tokenFor("admin@sies.edu.in", "STAFF");
-		String promote = "/accounts/" + accountProfChem + "/promote";
-
-		assertEquals(200, post("/accounts/" + accountProfChem + "/demote", "{}", admin, null)
+		assertEquals(404, post("/accounts/" + accountProfChem + "/demote", "{}", admin, null)
 				.status());
+		assertEquals(404, post("/accounts/" + accountOffice + "/promote",
+				"{\"profId\": \"" + PROF_CHEM + "\"}", admin, null).status());
 
-		assertEquals(400, post(promote, "{}", admin, null).status(), "which professor?");
-		assertEquals(409, post(promote, "{\"profId\": \"" + PROF_CS + "\"}", admin, null)
-				.status(), "a professor with an account of their own already");
-		assertEquals(403, post(promote, "{\"profId\": \"" + PROF_CHEM + "\"}",
-						tokenFor("a.cs@sies.edu.in", "STAFF"), null).status(),
-				"changing an account is an administrator's");
+		// Nor underneath, however the statement arrives (V44).
+		assertThrows(SQLException.class, () -> postgres.asSuperuser(
+				"UPDATE app_account SET kind = 'STAFF', prof_id = NULL WHERE account_id = "
+						+ accountProfChem));
+		assertThrows(SQLException.class, () -> postgres.asSuperuser(
+				"UPDATE app_account SET kind = 'PROFESSOR', prof_id = " + PROF_CHEM
+						+ " WHERE account_id = " + accountOffice));
 
-		String phone = tokenFor("b.chem@sies.edu.in", "STAFF");
-		Reply promoted = post(promote, "{\"profId\": \"" + PROF_CHEM + "\"}", admin, null);
-
-		assertEquals(200, promoted.status(), promoted::toString);
-		assertEquals(1, promoted.body().get("ended").intValue());
-		assertEquals(401, get("/me", phone, null).status(), "its sessions end with it");
-
-		Reply me = get("/me", tokenFor("b.chem@sies.edu.in", "STAFF"), null);
-		assertEquals("PROFESSOR", me.body().get("kind").stringValue());
-		assertTrue(me.body().get("imports").get("attendance").booleanValue(), me::toString);
-
-		assertEquals(409, post(promote, "{\"profId\": \"" + PROF_CHEM + "\"}", admin, null)
-				.status(), "a professor's account is not a staff one to begin with");
-
-		// A staff account whose professor is not on the server yet: created with it.
-		Reply office = post("/accounts/" + accountOffice + "/promote", "{\"person\": {"
-				+ "\"name\": \"D NEW\", \"email\": \"d.new@sies.edu.in\", "
-				+ "\"department\": \"CHEMISTRY\", \"designation\": \"Professor\"}}",
-				admin, null);
-
-		assertEquals(200, office.status(), office::toString);
-		assertEquals(1, count("SELECT count(*) FROM app_account a JOIN professors p "
-				+ "USING (prof_id) WHERE a.account_id = " + accountOffice
-				+ " AND a.kind = 'PROFESSOR' AND p.name = 'D NEW'"));
-
-		assertEquals(409, post("/accounts/" + accountAdmin + "/promote",
-				"{\"profId\": \"" + PROF_CHEM + "\"}", admin, null).status(),
-				"not one's own account");
+		// A professor renumbered still carries their account along.
+		postgres.asSuperuser("UPDATE professors SET prof_id = 777001 WHERE prof_id = "
+				+ PROF_CHEM);
+		assertEquals(777001, count("SELECT prof_id FROM app_account WHERE account_id = "
+				+ accountProfChem));
 	}
 
 	@Test
@@ -1876,6 +1820,101 @@ class WireTest {
 		assertEquals("incomplete_grant", vague.body().get("code").stringValue());
 		assertTrue(vague.body().get("message").stringValue().contains("optional"),
 				"and it says what leaving the session out means: " + vague.raw());
+	}
+
+	@Test
+	void thereIsAlwaysAnAdministrator() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+		long own = count("SELECT user_role_id FROM user_role WHERE account_id = " + accountAdmin
+				+ " AND role = 'ADMIN'");
+
+		Reply refused = post("/accounts/" + accountAdmin + "/roles/" + own + "/revoke",
+				json("reason", "stepping down"), admin, null);
+		assertEquals(409, refused.status(), refused::toString);
+		assertEquals("own_administration", refused.body().get("code").stringValue());
+		assertEquals(1, count("SELECT count(*) FROM user_role WHERE user_role_id = " + own
+				+ " AND revoked_at IS NULL"), "still an administrator");
+
+		// Handing over: a second administrator first, who then revokes the first.
+		Reply granted = post("/accounts/" + accountOffice + "/roles",
+				json("role", "ADMIN", "reason", "taking over"), admin, null);
+		assertEquals(200, granted.status(), granted::toString);
+
+		String office = tokenFor("office@sies.edu.in", "STAFF");
+		assertEquals(200, post("/accounts/" + accountAdmin + "/roles/" + own + "/revoke",
+				json("reason", "handed over"), office, null).status());
+
+		// And underneath the console, for every statement however it arrives (V43): neither
+		// the last grant revoked nor the last administrator's account disabled.
+		assertThrows(SQLException.class, () -> postgres.asSuperuser(
+				"UPDATE user_role SET revoked_at = now() WHERE role = 'ADMIN'"));
+		assertThrows(SQLException.class, () -> postgres.asSuperuser(
+				"UPDATE app_account SET disabled_at = now() WHERE account_id = "
+						+ accountOffice));
+		assertThrows(SQLException.class, () -> postgres.asSuperuser(
+				"DELETE FROM user_role WHERE role = 'ADMIN' AND revoked_at IS NULL"));
+
+		// Disabling an account that holds no live ADMIN is untouched by it.
+		postgres.asSuperuser("UPDATE app_account SET disabled_at = now() WHERE account_id = "
+				+ accountAdmin);
+	}
+
+	@Test
+	void anAdministratorResetsAForgottenPassword() throws Exception {
+
+		String admin = tokenFor("admin@sies.edu.in", "STAFF");
+		String before = tokenFor("a.cs@sies.edu.in", "STAFF");
+
+		// Locked out as well, which is the usual reason to ask.
+		postgres.asSuperuser("UPDATE app_account SET failed_logins = 7, "
+				+ "locked_until = now() + interval '1 hour' WHERE account_id = " + accountProfCs);
+
+		String reset = "/accounts/" + accountProfCs + "/password/reset";
+
+		Reply notAdmin = post(reset, "{}", tokenFor("b.chem@sies.edu.in", "STAFF"), null);
+		assertEquals(403, notAdmin.status(), notAdmin::toString);
+
+		Reply own = post("/accounts/" + accountAdmin + "/password/reset", "{}", admin, null);
+		assertEquals(409, own.status(), own::toString);
+		assertEquals("own_account", own.body().get("code").stringValue());
+
+		Reply done = post(reset, "{}", admin, null);
+		assertEquals(200, done.status(), done::toString);
+
+		String temporary = done.body().get("temporaryPassword").stringValue();
+		assertTrue(temporary.matches("[a-z2-9]{4}(-[a-z2-9]{4}){3}"), temporary);
+		assertEquals(1, done.body().get("ended").intValue());
+
+		// The phone signed in before is signed out, and the old password is gone.
+		assertEquals(401, get("/me", before, null).status());
+		assertEquals(401, login("a.cs@sies.edu.in", "STAFF", PASSWORD, null).status());
+
+		// The temporary one signs in despite the lock, and is good for nothing but its own
+		// replacement.
+		Reply signedIn = login("a.cs@sies.edu.in", "STAFF", temporary, null);
+		assertEquals(200, signedIn.status(), signedIn::toString);
+		assertTrue(signedIn.body().get("mustRotate").booleanValue());
+
+		String token = signedIn.body().get("token").stringValue();
+		assertEquals(403, get("/me", token, null).status());
+
+		assertEquals(200, post("/auth/password", json(
+				"currentPassword", temporary,
+				"newPassword", "one only they know now"), token, null).status());
+		assertEquals(200, get("/me", token, null).status());
+
+		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'PASSWORD_ROTATE' "
+				+ "AND actor_account = " + accountAdmin
+				+ " AND detail->>'reset_by_another' = 'true'"), "the reset names who did it");
+
+		// A disabled account is enabled first.
+		postgres.asSuperuser("UPDATE app_account SET disabled_at = now() WHERE account_id = "
+				+ accountProfChem);
+		Reply disabled = post("/accounts/" + accountProfChem + "/password/reset", "{}", admin,
+				null);
+		assertEquals(409, disabled.status(), disabled::toString);
+		assertEquals("account_disabled", disabled.body().get("code").stringValue());
 	}
 
 	@Test

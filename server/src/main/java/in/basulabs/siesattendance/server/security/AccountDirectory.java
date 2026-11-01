@@ -369,10 +369,31 @@ public final class AccountDirectory {
 	public static void setPassword(@NonNull Connection connection, long accountId,
 	                               @NonNull char[] password, @Nullable Long actedBy)
 			throws SQLException {
+		writePassword(connection, accountId, password, actedBy != null, false);
+	}
+
+	/**
+	 * Gives an account a password somebody else will hand to its owner, on a caller's own
+	 * transaction with an actor already announced on it: the administrator resetting it, or
+	 * {@code BootstrapCommand} for the administrator who forgot theirs.
+	 * <p>
+	 * Unlike {@link #setPassword}, {@code must_rotate} is set rather than cleared: whoever
+	 * reset it knows this password, so it is good for one sign-in, after which the owner chooses
+	 * their own. The failure counter and any lock are cleared, because the owner is about to
+	 * sign in with it.
+	 */
+	public static void resetPassword(@NonNull Connection connection, long accountId,
+	                                 @NonNull char[] password) throws SQLException {
+		writePassword(connection, accountId, password, true, true);
+	}
+
+	private static void writePassword(@NonNull Connection connection, long accountId,
+	                                  @NonNull char[] password, boolean byAnother,
+	                                  boolean mustRotate) throws SQLException {
 
 		try {
 			writeHash(connection, accountId,
-					Passwords.encoder().encode(CharBuffer.wrap(password)), false);
+					Passwords.encoder().encode(CharBuffer.wrap(password)), mustRotate);
 
 			try (PreparedStatement statement = connection.prepareStatement(
 					"UPDATE app_account SET failed_logins = 0, locked_until = NULL "
@@ -385,7 +406,7 @@ public final class AccountDirectory {
 			// and the actor alone does not say whose it was.
 			AuditLog.record(connection, AuditAction.PASSWORD_ROTATE, "app_account",
 					AuditLog.detail("account_id", accountId),
-					AuditLog.detail("reset_by_another", actedBy != null));
+					AuditLog.detail("reset_by_another", byAnother));
 
 		} finally {
 			Arrays.fill(password, '\0');

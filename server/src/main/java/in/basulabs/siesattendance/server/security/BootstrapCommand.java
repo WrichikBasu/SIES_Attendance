@@ -19,7 +19,8 @@ import javax.sql.DataSource;
 import in.basulabs.siesattendance.backend.AccountKind;
 
 /**
- * Creates the first administrator, which nothing else can.
+ * Creates the first administrator, which nothing else can, and lets an administrator back in who
+ * has forgotten their password.
  * <p>
  * There has to be one and it cannot come from a migration: a migration is a committed file, and
  * a committed file with a password in it is a password everybody with the repository has. Nor
@@ -40,6 +41,20 @@ import in.basulabs.siesattendance.backend.AccountKind;
  * A second administrator is granted by the first, through the ordinary path, where the grant is
  * attributable. A command that could keep minting them would be a way around that, so it checks
  * for an existing {@code ADMIN} and stops.
+ *
+ * <h3>A forgotten administrator password</h3>
+ * An administrator resets anybody else's password from the console, but nobody resets their own,
+ * and since V43 the last administrator cannot be revoked either. So for an administrator with no
+ * other administrator to ask, {@code --bootstrap.reset} gives their account a password from the
+ * environment or the terminal, which they must change when they sign in:
+ *
+ * <pre>
+ * SIES_ADMIN_PASSWORD=... ./gradlew :server:bootRun --args='--spring.profiles.active=bootstrap \
+ *     --bootstrap.reset=admin@sies.edu.in'
+ * </pre>
+ *
+ * Only an enabled account holding {@code ADMIN}: anybody else is reset by an administrator, where
+ * the reset has an author.
  *
  * <h3>The password is not an argument</h3>
  * Arguments are readable by every process on the machine through {@code /proc} and are kept in
@@ -62,6 +77,22 @@ public class BootstrapCommand implements ApplicationRunner {
 	@Override
 	public void run(@NonNull ApplicationArguments arguments) throws Exception {
 
+		String forgotten = one(arguments, "bootstrap.reset");
+
+		if (forgotten != null) {
+			char[] password = readPassword(passwordVariable(arguments), "Temporary password for "
+					+ forgotten + ": ");
+			long account = resetAdministrator(forgotten, password);
+
+			System.out.printf("""
+					Reset the password of administrator account %d, %s.
+
+					It must change the password when it signs in, and every session it had
+					has ended.
+					%n""", account, forgotten);
+			return;
+		}
+
 		String email = one(arguments, "bootstrap.email");
 		String name = one(arguments, "bootstrap.name");
 
@@ -73,6 +104,10 @@ public class BootstrapCommand implements ApplicationRunner {
 					  --bootstrap.name="A Administrator"     the display name (required)
 					  --bootstrap.password-env=NAME          where to read the password from,
 					                                         default SIES_ADMIN_PASSWORD
+
+					Or, for an administrator who has forgotten their password:
+
+					  --bootstrap.reset=admin@sies.edu.in    the administrator's login address
 
 					The password is never an argument. Set the environment variable, or run
 					this on a terminal and it will prompt.""");
@@ -87,10 +122,8 @@ public class BootstrapCommand implements ApplicationRunner {
 							+ "This command only brings the first into being.");
 		}
 
-		char[] password = readPassword(
-				one(arguments, "bootstrap.password-env") == null
-						? DEFAULT_PASSWORD_ENV
-						: one(arguments, "bootstrap.password-env"));
+		char[] password = readPassword(passwordVariable(arguments),
+				"Password for the new administrator: ");
 
 		long account = createAdministrator(name, email, password);
 
@@ -160,6 +193,70 @@ public class BootstrapCommand implements ApplicationRunner {
 		}
 	}
 
+	/**
+	 * Gives an enabled administrator's account a password it must change at its next sign-in,
+	 * and ends its sessions. Labelled {@code "bootstrap"}, as the first administrator is, so the
+	 * trail says a command did it. Package-private for the test.
+	 */
+	long resetAdministrator(@NonNull String email, @NonNull char[] password)
+			throws SQLException {
+
+		try {
+			String weak = Passwords.tooWeak(password);
+
+			if (weak != null) {
+				throw new IllegalArgumentException(weak);
+			}
+
+			try (Connection connection = dataSource.getConnection()) {
+
+				connection.setAutoCommit(false);
+
+				try {
+					ActorSession.announceUnattributed(connection, "bootstrap");
+
+					long account;
+
+					try (PreparedStatement statement = connection.prepareStatement(
+							"SELECT a.account_id FROM app_account a "
+									+ "WHERE NOT a.student_login "
+									+ "AND lower(a.login_email) = lower(?) "
+									+ "AND a.disabled_at IS NULL "
+									+ "AND EXISTS (SELECT 1 FROM user_role r "
+									+ "    WHERE r.account_id = a.account_id "
+									+ "    AND r.role = 'ADMIN' AND r.revoked_at IS NULL)")) {
+
+						statement.setString(1, email);
+
+						try (var results = statement.executeQuery()) {
+							if (!results.next()) {
+								throw new IllegalStateException(email + " is not an enabled "
+										+ "administrator's account. Anybody else's password "
+										+ "is reset by an administrator, from the console.");
+							}
+							account = results.getLong(1);
+						}
+					}
+
+					AccountDirectory.resetPassword(connection, account, password.clone());
+					Sessions.revokeAllFor(connection, account, null,
+							"password reset by BootstrapCommand");
+
+					connection.commit();
+					return account;
+
+				} catch (SQLException | RuntimeException e) {
+					connection.rollback();
+					throw e;
+				} finally {
+					connection.setAutoCommit(true);
+				}
+			}
+		} finally {
+			Arrays.fill(password, '\0');
+		}
+	}
+
 	private boolean administratorExists() throws SQLException {
 
 		try (Connection connection = dataSource.getConnection();
@@ -182,9 +279,15 @@ public class BootstrapCommand implements ApplicationRunner {
 				: values.get(0);
 	}
 
+	@NonNull
+	private static String passwordVariable(@NonNull ApplicationArguments arguments) {
+		String named = one(arguments, "bootstrap.password-env");
+		return named == null ? DEFAULT_PASSWORD_ENV : named;
+	}
+
 	/** From the environment, or from the terminal when there is one. Never from an argument. */
 	@NonNull
-	private static char[] readPassword(@NonNull String variable) {
+	private static char[] readPassword(@NonNull String variable, @NonNull String prompt) {
 
 		String fromEnvironment = System.getenv(variable);
 
@@ -193,8 +296,7 @@ public class BootstrapCommand implements ApplicationRunner {
 		}
 
 		if (System.console() != null) {
-			char[] typed = System.console().readPassword(
-					"Password for the new administrator: ");
+			char[] typed = System.console().readPassword(prompt);
 			if (typed != null && typed.length > 0) {
 				return typed;
 			}

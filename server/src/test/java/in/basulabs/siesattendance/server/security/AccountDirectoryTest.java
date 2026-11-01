@@ -88,6 +88,39 @@ class AccountDirectoryTest {
 	}
 
 	@Test
+	void anAdministratorWithNobodyToAskIsResetFromTheShell() throws Exception {
+
+		long admin = accounts.create(AccountKind.STAFF, null, null, "AN ADMIN",
+				"admin@sies.edu.in", "correct horse battery".toCharArray(), null);
+		accounts.create(AccountKind.PROFESSOR, 1001L, null, "A RAO",
+				"a.rao@sies.edu.in", "correct horse battery".toCharArray(), null);
+
+		postgres.asSuperuser("INSERT INTO user_role (account_id, role, granted_by) VALUES ("
+				+ admin + ", 'ADMIN', " + admin + ")");
+		postgres.asSuperuser("UPDATE app_account SET must_rotate = false, failed_logins = 9, "
+				+ "locked_until = now() + interval '1 hour' WHERE account_id = " + admin);
+
+		BootstrapCommand bootstrap = new BootstrapCommand(postgres.dataSource());
+
+		assertEquals(admin, bootstrap.resetAdministrator("ADMIN@sies.edu.in",
+				"a temporary one for today".toCharArray()));
+
+		AccountDirectory.Attempt attempt = accounts.authenticate("admin@sies.edu.in",
+				AccountDirectory.Door.STAFF, "a temporary one for today".toCharArray());
+
+		assertTrue(attempt.succeeded(), () -> "refused: " + attempt.refusal());
+		assertTrue(attempt.principal().mustRotate(), "a reset password is good for one sign-in");
+
+		// Nobody but an administrator: the rest are reset from the console, with an author.
+		assertThrows(IllegalStateException.class, () -> bootstrap.resetAdministrator(
+				"a.rao@sies.edu.in", "a temporary one for today".toCharArray()));
+		assertThrows(IllegalArgumentException.class, () -> bootstrap.resetAdministrator(
+				"admin@sies.edu.in", "short".toCharArray()));
+		assertTrue(accounts.authenticate("a.rao@sies.edu.in", AccountDirectory.Door.STAFF,
+				"correct horse battery".toCharArray()).succeeded());
+	}
+
+	@Test
 	void theWrongPasswordIsRefusedAndCounted() throws Exception {
 
 		long account = accounts.create(AccountKind.PROFESSOR, 1001L, null, "A RAO",

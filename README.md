@@ -5,8 +5,10 @@ developed by students from the Dept. of Computer Science._
 ![GitHub last commit](https://img.shields.io/github/last-commit/WrichikBasu/SIES_Attendance)
  ![GitHub License](https://img.shields.io/github/license/WrichikBasu/SIES_Attendance)
 
+ ✅ App package is registered with Google Play, so the APKs can be freely used even after 31<sup>st</sup> December 2026.
+
 The app worked offline till v1.3.0; thereafter, a server is necessary to start the process. Attendance is marked and stored on the phone, and changes are queued
-and synced when there's a connection.
+and synced when there is a connection.
 
 ## Modules
 
