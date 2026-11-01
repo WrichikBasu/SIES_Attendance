@@ -138,8 +138,8 @@ public abstract class MainDatabase extends RoomDatabase {
 	/**
 	 * Creates the outbox triggers, on every open.
 	 * <p>
-	 * Every open rather than once at creation, and {@code IF NOT EXISTS} rather than a migration
-	 * step, because three different files have to end up with the same triggers: one this build
+	 * Every open rather than once at creation, and dropped and re-created rather than installed
+	 * in a migration step, because three different files have to end up with the same triggers: one this build
 	 * created, one an older build created and this build migrated, and one restored from a backup
 	 * written by a phone that may have been on any version at all. "Created when the database was
 	 * created" is a claim about a creation this build may never have seen.
