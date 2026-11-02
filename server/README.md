@@ -199,6 +199,41 @@ Still needed before phones can use production:
 - a tested backup and restore (`pg_dump` and WAL)
 - a different login rate limiter if more than one instance runs: `LoginRateLimiter` counts in memory
 
+### Updating
+
+The service doesn't run from the checkout, so `git pull` and a restart change nothing. It runs
+copies: the jar in `/opt/sies-attendance/`, the units in `/etc/systemd/system/`, and the
+environment files in `/etc/sies-attendance/`. See what a pull brought in, then do only the steps
+that apply:
+
+```sh
+git diff --stat ORIG_HEAD HEAD -- server/
+
+# Java code or resources changed (application*.yml and console.html included):
+./gradlew :server:bootJar
+sudo install -m 644 server/build/libs/sies-attendance.jar /opt/sies-attendance/sies-attendance.jar
+
+# A new migration in src/main/resources/db/migration/, after copying the jar and before
+# restarting:
+sudo bash -c 'set -a; . /etc/sies-attendance/migrate-env; set +a
+    java -jar /opt/sies-attendance/sies-attendance.jar --spring.profiles.active=migrate'
+
+# A unit in deploy/ changed (copy whichever did):
+sudo install -m 644 server/deploy/sies-attendance.service /etc/systemd/system/
+sudo systemctl daemon-reload
+
+sudo systemctl restart sies-attendance
+curl -fsS http://localhost:8080/actuator/health && echo " ok"
+```
+
+- **The service never migrates itself.** A new jar against an old schema can fail at startup or on
+  the first request that needs the new column.
+- **Never copy an `.example` over `/etc/sies-attendance/env` or `migrate-env`.** They hold the
+  passwords. A new variable in an example is added to the real file by hand; the service names any
+  that is missing when it starts.
+- **Logs are in the journal**, not in a file: `journalctl -u sies-attendance -n 100`, or `-f` to
+  follow.
+
 ## The first administrator
 
 Only a command on the machine can create the first one, and it refuses to run a second time.
