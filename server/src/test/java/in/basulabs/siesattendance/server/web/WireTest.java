@@ -1773,6 +1773,19 @@ class WireTest {
 	}
 
 	@Test
+	void theServersOwnAddressLeadsToTheConsole() throws Exception {
+
+		// HttpClient follows no redirects unless asked, so this sees the redirect itself.
+		HttpResponse<String> response = HttpClient.newHttpClient().send(
+				HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/")).GET().build(),
+				HttpResponse.BodyHandlers.ofString());
+
+		assertEquals(302, response.statusCode(), "a redirect a browser does not keep forever");
+		assertTrue(response.headers().firstValue("Location").orElse("absent")
+				.endsWith("/console.html"), response.headers().toString());
+	}
+
+	@Test
 	void theConsoleIsRevalidatedRatherThanRemembered() throws Exception {
 
 		// Spring sends Last-Modified and, by default, no Cache-Control for a classpath
