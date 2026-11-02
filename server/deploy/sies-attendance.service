@@ -1,4 +1,4 @@
- ma# The service, as systemd runs it.
+# The service, as systemd runs it.
 #
 #   install -D -m 644 server/deploy/sies-attendance.service \
 #       /etc/systemd/system/sies-attendance.service
@@ -74,7 +74,13 @@ AmbientCapabilities=
 
 # The one directory it writes: an importer's decrypted working copy. Nothing else on the
 # filesystem needs to be writable, which is what ProtectSystem=strict above enforces.
-ReadWritePaths=/var/lib/sies-attendance
+#
+# StateDirectory rather than ReadWritePaths: systemd creates /var/lib/sies-attendance owned
+# by User= and makes it writable. ReadWritePaths only exempts a path that already exists,
+# and on a fresh machine it does not, so the unit failed with status=226/NAMESPACE before
+# java ever ran. 0700, because what is written there is a full clone of somebody's phone.
+StateDirectory=sies-attendance
+StateDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target
