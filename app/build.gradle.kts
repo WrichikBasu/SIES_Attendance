@@ -51,7 +51,7 @@ android {
             resValue("string", "sync_base_url",
                 providers.gradleProperty("sies.debugSyncUrl").orNull
                     ?: localProperties.getProperty("sies.debugSyncUrl")
-                    ?: "http://10.0.2.2:8080/api/v1")
+                    ?: "")
         }
         release {
             // https only: the release network config refuses cleartext, and its pins are
