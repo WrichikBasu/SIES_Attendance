@@ -22,9 +22,10 @@ import in.basulabs.siesattendance.backend.sync.OutboxTriggers;
  * An intent says "this row changed", not what it changed to. The sender reads the row as it
  * stands when it drains, which is what makes two edits before the phone finds a signal cost one
  * message, and what makes a replay after a lost response send the current state rather than an
- * older one. The unique index on the key is how the collapse happens: the triggers write
- * {@code INSERT OR REPLACE}, so a row dirtied again replaces its own pending intent and takes a
- * new sequence number.
+ * older one. The unique index on the key is how the collapse happens: the triggers delete the
+ * key's pending intent and insert a new one, so a row dirtied again replaces its own pending
+ * intent and takes a new sequence number. See {@link OutboxTriggers} for why that is not an
+ * {@code INSERT OR REPLACE}.
  *
  * <h3>Not a foreign key</h3>
  * Deliberately. An intent outlives the row it names — that is the whole point of a

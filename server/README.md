@@ -199,6 +199,41 @@ Still needed before phones can use production:
 - a tested backup and restore (`pg_dump` and WAL)
 - a different login rate limiter if more than one instance runs: `LoginRateLimiter` counts in memory
 
+### Updating
+
+The service doesn't run from the checkout, so `git pull` and a restart change nothing. It runs
+copies: the jar in `/opt/sies-attendance/`, the units in `/etc/systemd/system/`, and the
+environment files in `/etc/sies-attendance/`. See what a pull brought in, then do only the steps
+that apply:
+
+```sh
+git diff --stat ORIG_HEAD HEAD -- server/
+
+# Java code or resources changed (application*.yml and console.html included):
+./gradlew :server:bootJar
+sudo install -m 644 server/build/libs/sies-attendance.jar /opt/sies-attendance/sies-attendance.jar
+
+# A new migration in src/main/resources/db/migration/, after copying the jar and before
+# restarting:
+sudo bash -c 'set -a; . /etc/sies-attendance/migrate-env; set +a
+    java -jar /opt/sies-attendance/sies-attendance.jar --spring.profiles.active=migrate'
+
+# A unit in deploy/ changed (copy whichever did):
+sudo install -m 644 server/deploy/sies-attendance.service /etc/systemd/system/
+sudo systemctl daemon-reload
+
+sudo systemctl restart sies-attendance
+curl -fsS http://localhost:8080/actuator/health && echo " ok"
+```
+
+- **The service never migrates itself.** A new jar against an old schema can fail at startup or on
+  the first request that needs the new column.
+- **Never copy an `.example` over `/etc/sies-attendance/env` or `migrate-env`.** They hold the
+  passwords. A new variable in an example is added to the real file by hand; the service names any
+  that is missing when it starts.
+- **Logs are in the journal**, not in a file: `journalctl -u sies-attendance -n 100`, or `-f` to
+  follow.
+
 ## The first administrator
 
 Only a command on the machine can create the first one, and it refuses to run a second time.
@@ -209,6 +244,22 @@ SIES_ADMIN_PASSWORD=... ./gradlew :server:bootRun \
     --args='--spring.profiles.active=bootstrap \
             --bootstrap.email=admin@sies.edu.in --bootstrap.name="A Administrator"'
 ```
+
+**In production**, run the installed jar instead, with the owner's credentials from
+`migrate-env`, as root since that file is mode 600:
+
+```sh
+set -a; . /etc/sies-attendance/migrate-env; set +a
+java -jar /opt/sies-attendance/sies-attendance.jar --spring.profiles.active=bootstrap \
+    --bootstrap.email=admin@sies.edu.in --bootstrap.name="A Administrator"
+```
+
+- **Leave `SIES_ADMIN_PASSWORD` unset** and the command prompts for the password without echoing
+  it, which keeps it out of shell history.
+- **The service can stay running.** The bootstrap profile starts no web server, so this is a
+  short-lived process beside it, connecting as `sies_owner`.
+- **Run the migrate step first.** The bootstrap profile has Flyway enabled, so against an
+  unmigrated database it applies the pending migrations before creating the account.
 
 **Change the password first.** Every new account must change its password before it can do
 anything. Until then, a session can only change the password or sign out: a phone signs in and
@@ -245,6 +296,14 @@ must be changed at the next sign-in:
 ```sh
 SIES_ADMIN_PASSWORD=... ./gradlew :server:bootRun \
     --args='--spring.profiles.active=bootstrap --bootstrap.reset=admin@sies.edu.in'
+```
+
+In production, as above, with the installed jar and `migrate-env`:
+
+```sh
+set -a; . /etc/sies-attendance/migrate-env; set +a
+java -jar /opt/sies-attendance/sies-attendance.jar --spring.profiles.active=bootstrap \
+    --bootstrap.reset=admin@sies.edu.in
 ```
 
 ## Who may do what

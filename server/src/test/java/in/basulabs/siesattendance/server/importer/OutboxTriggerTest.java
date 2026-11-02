@@ -139,6 +139,60 @@ class OutboxTriggerTest {
 	}
 
 	@Test
+	void aRowDeletedAndInsertedOrIgnoredAgainIsQueuedAsAnUpsert() throws Exception {
+
+		device.course(3001, 1001, "CS-101", "Programming", "BSc_unaided", "COMPUTER_SCIENCE",
+				"FY", 1, "MAJOR");
+
+		// What saving a new course does: DaoCourse.insert links the coordinator, then
+		// setInstructors clears the links and writes them back, all with INSERT OR IGNORE.
+		connection.setAutoCommit(false);
+
+		try {
+			execute("INSERT OR IGNORE INTO course_instructor (courseID, profID) "
+					+ "VALUES (3001, 1001)");
+			execute("DELETE FROM course_instructor WHERE courseID = 3001");
+			execute("INSERT OR IGNORE INTO course_instructor (courseID, profID) "
+					+ "VALUES (3001, 1001)");
+			connection.commit();
+
+		} finally {
+			connection.setAutoCommit(true);
+		}
+
+		assertEquals(1, count("SELECT count(*) FROM course_instructor WHERE courseID = 3001"));
+		assertEquals(1, count("SELECT count(*) FROM outbox "
+				+ "WHERE tableName = 'course_instructor'"));
+		assertEquals(OutboxOp.UPSERT.name(), text("SELECT op FROM outbox "
+						+ "WHERE tableName = 'course_instructor' AND key1 = 3001 AND key2 = 1001"),
+				"the outer IGNORE overrides any conflict clause in the trigger body, so the "
+						+ "intent must not rely on one; a DELETE here would be sent for a row "
+						+ "that is still on the device");
+	}
+
+	@Test
+	void reinstallingReplacesATriggerAnOlderBuildLeft() throws Exception {
+
+		// The shape the triggers had before the body stopped relying on INSERT OR REPLACE. A
+		// device upgraded from that build has these in its file, and IF NOT EXISTS alone would
+		// leave them there.
+		String name = "outbox_course_instructor_insert";
+		execute("DROP TRIGGER `" + name + "`");
+		execute("CREATE TRIGGER `" + name + "` AFTER INSERT ON `course_instructor` BEGIN "
+				+ "INSERT OR REPLACE INTO `outbox` "
+				+ "(`tableName`, `key1`, `key2`, `key3`, `op`, `queuedAt`) VALUES "
+				+ "('course_instructor', NEW.`courseID`, NEW.`profID`, 0, 'UPSERT', 0); END");
+
+		for (String statement : OutboxTriggers.statements()) {
+			execute(statement);
+		}
+
+		assertTrue(text("SELECT sql FROM sqlite_master WHERE type = 'trigger' "
+						+ "AND name = '" + name + "'").contains("DELETE FROM `outbox`"),
+				"the installed body is this build's, not the one already in the file");
+	}
+
+	@Test
 	void aCompositeKeyIsQueuedWhole() throws Exception {
 
 		seedALecture();
@@ -225,7 +279,7 @@ class OutboxTriggerTest {
 	@Test
 	void theTriggersSurviveTheMigrationBeingRunAgain() throws Exception {
 
-		// The migration is idempotent and the triggers are created with IF NOT EXISTS, which
+		// The migration is idempotent and the triggers are dropped and re-created, which
 		// together are what let the app install them on every open rather than once.
 		for (String statement : OutboxTriggers.statements()) {
 			execute(statement);

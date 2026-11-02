@@ -69,12 +69,15 @@ public final class OutboxTriggers {
 	}
 
 	/**
-	 * Every {@code CREATE TRIGGER} statement, in table order.
+	 * Every statement that installs the triggers, in table order.
 	 * <p>
-	 * {@code IF NOT EXISTS}, and run on every open rather than once in a migration: a fresh
-	 * install, an upgraded one and a restored file all have to end up with the same triggers, and
-	 * "created when the file was created" is a claim about a file this build may never have seen
-	 * the creation of.
+	 * Run on every open rather than once in a migration: a fresh install, an upgraded one and a
+	 * restored file all have to end up with the same triggers, and "created when the file was
+	 * created" is a claim about a file this build may never have seen the creation of.
+	 * <p>
+	 * Each trigger is dropped before it is created. {@code IF NOT EXISTS} alone would keep
+	 * whatever body an older build left in the file, so a fix to the body would never reach a
+	 * device that already had the trigger.
 	 */
 	@NonNull
 	public static List<String> statements() {
@@ -82,6 +85,9 @@ public final class OutboxTriggers {
 		List<String> statements = new ArrayList<>();
 
 		for (DeviceTables.Table table : DeviceTables.inDependencyOrder()) {
+			for (String event : List.of("insert", "update", "delete")) {
+				statements.add(drop(name(table, event)));
+			}
 			statements.add(trigger(table, OutboxOp.UPSERT, "INSERT", "NEW"));
 			statements.add(trigger(table, OutboxOp.UPSERT, "UPDATE", "NEW"));
 			statements.add(trigger(table, OutboxOp.DELETE, "DELETE", "OLD"));
@@ -113,9 +119,14 @@ public final class OutboxTriggers {
 		List<String> statements = new ArrayList<>();
 
 		for (String name : names()) {
-			statements.add("DROP TRIGGER IF EXISTS `" + name + "`");
+			statements.add(drop(name));
 		}
 		return Collections.unmodifiableList(statements);
+	}
+
+	@NonNull
+	private static String drop(@NonNull String name) {
+		return "DROP TRIGGER IF EXISTS `" + name + "`";
 	}
 
 	@NonNull
@@ -144,24 +155,35 @@ public final class OutboxTriggers {
 		}
 
 		StringBuilder values = new StringBuilder();
+		StringBuilder match = new StringBuilder();
 
 		for (int at = 0; at < 3; at++) {
 			values.append(at == 0 ? "" : ", ");
 
-			if (at < key.size()) {
-				values.append(row).append(".`").append(key.get(at)).append("`");
-			} else {
-				values.append(UNUSED_KEY);
-			}
+			String value = at < key.size()
+					? row + ".`" + key.get(at) + "`"
+					: String.valueOf(UNUSED_KEY);
+
+			values.append(value);
+			match.append(" AND `key").append(at + 1).append("` = ").append(value);
 		}
 
+		// The pending intent is deleted and the new one inserted plainly, rather than one
+		// INSERT OR REPLACE. SQLite lets the conflict clause of the statement that fired a
+		// trigger override every clause inside the trigger's body, so under an INSERT OR IGNORE
+		// -- which is how the DAOs write link rows -- the REPLACE became an IGNORE, and a key
+		// deleted and re-inserted in one transaction stayed queued as a DELETE of a row that
+		// was still here. A DELETE has no conflict clause to override, and once it has run the
+		// INSERT has nothing to conflict with, whatever clause it ends up under.
 		return "CREATE TRIGGER IF NOT EXISTS `" + name(table, event.toLowerCase(
 				java.util.Locale.ROOT)) + "` "
 				+ "AFTER " + event + " ON `" + table.name() + "` "
 				+ "WHEN COALESCE((SELECT `applying` FROM `" + SYNC_STATE
 				+ "` WHERE `id` = 1), 0) = 0 "
 				+ "BEGIN "
-				+ "INSERT OR REPLACE INTO `" + OUTBOX
+				+ "DELETE FROM `" + OUTBOX + "` WHERE `tableName` = '" + table.name() + "'"
+				+ match + "; "
+				+ "INSERT INTO `" + OUTBOX
 				+ "` (`tableName`, `key1`, `key2`, `key3`, `op`, `queuedAt`) VALUES ("
 				+ "'" + table.name() + "', " + values + ", " + op.sqlLiteral() + ", "
 				// Seconds from SQLite's own clock, in milliseconds to match every other
