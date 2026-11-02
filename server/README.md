@@ -210,6 +210,22 @@ SIES_ADMIN_PASSWORD=... ./gradlew :server:bootRun \
             --bootstrap.email=admin@sies.edu.in --bootstrap.name="A Administrator"'
 ```
 
+**In production**, run the installed jar instead, with the owner's credentials from
+`migrate-env`, as root since that file is mode 600:
+
+```sh
+set -a; . /etc/sies-attendance/migrate-env; set +a
+java -jar /opt/sies-attendance/sies-attendance.jar --spring.profiles.active=bootstrap \
+    --bootstrap.email=admin@sies.edu.in --bootstrap.name="A Administrator"
+```
+
+- **Leave `SIES_ADMIN_PASSWORD` unset** and the command prompts for the password without echoing
+  it, which keeps it out of shell history.
+- **The service can stay running.** The bootstrap profile starts no web server, so this is a
+  short-lived process beside it, connecting as `sies_owner`.
+- **Run the migrate step first.** The bootstrap profile has Flyway enabled, so against an
+  unmigrated database it applies the pending migrations before creating the account.
+
 **Change the password first.** Every new account must change its password before it can do
 anything. Until then, a session can only change the password or sign out: a phone signs in and
 syncs nothing, and the console shows only the password form. Change it in the console, on the
@@ -245,6 +261,14 @@ must be changed at the next sign-in:
 ```sh
 SIES_ADMIN_PASSWORD=... ./gradlew :server:bootRun \
     --args='--spring.profiles.active=bootstrap --bootstrap.reset=admin@sies.edu.in'
+```
+
+In production, as above, with the installed jar and `migrate-env`:
+
+```sh
+set -a; . /etc/sies-attendance/migrate-env; set +a
+java -jar /opt/sies-attendance/sies-attendance.jar --spring.profiles.active=bootstrap \
+    --bootstrap.reset=admin@sies.edu.in
 ```
 
 ## Who may do what
