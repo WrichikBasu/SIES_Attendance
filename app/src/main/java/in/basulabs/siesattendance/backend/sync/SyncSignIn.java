@@ -19,7 +19,6 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.AccountKind;
 import in.basulabs.siesattendance.backend.IdGenerator;
 import in.basulabs.siesattendance.backend.MainDatabase;
@@ -588,12 +587,12 @@ public final class SyncSignIn {
 	@NonNull
 	private static String base(@NonNull Context context) throws IOException {
 
-		String url = context.getString(R.string.sync_base_url);
+		String url = ServerAddress.current(context);
 
 		if (url.isEmpty()) {
-			throw new Refused("this build has no server to sign in to");
+			throw new Refused("this phone has no server to sign in to");
 		}
 
-		return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+		return url;
 	}
 }

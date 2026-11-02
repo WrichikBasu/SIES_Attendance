@@ -327,6 +327,15 @@ public final class DeviceIdentity {
 	}
 
 	/**
+	 * Recorded as the last account when the server address changes while the phone still holds
+	 * the previous server's rows. No account on any server has this number, so whoever signs in
+	 * next is somebody else and the phone starts over: account numbers are only unique within
+	 * one server, and the same number on the new one is not the same person. See
+	 * {@code ServerAddress}.
+	 */
+	public static final long ANOTHER_SERVER = -1L;
+
+	/**
 	 * The account that last signed in on this phone, or 0 when none has been recorded.
 	 * <p>
 	 * Kept past sign-out on purpose: what it answers is whose view of the server this

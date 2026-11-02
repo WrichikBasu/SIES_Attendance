@@ -415,6 +415,17 @@ public class AttendanceViewModel extends AndroidViewModel {
 	private static final ExecutorService NETWORK_TASK_EXECUTOR =
 			Executors.newSingleThreadExecutor();
 
+	/**
+	 * Asks whether this server's API answers at an address, before the phone is pointed at it.
+	 * See {@link SyncClient#probe}.
+	 *
+	 * @param onChecked run on the network thread with what answered
+	 */
+	public void checkServer(@NonNull String address,
+	                        @NonNull java.util.function.Consumer<SyncClient.Probe> onChecked) {
+		NETWORK_TASK_EXECUTOR.execute(() -> onChecked.accept(SyncClient.probe(address)));
+	}
+
 	/** How many local changes are waiting to reach the server. */
 	public LiveData<Integer> getPendingChanges() {
 		return repository.observePendingChangeCount();
@@ -426,7 +437,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
-	 * Whether this build has a server at all.
+	 * Whether this phone has a server at all: one typed in on it, or else the build's.
 	 * <p>
 	 * Empty in a release build until somebody configures one, and what
 	 * {@code SignInGuard} consults before insisting on a session: there is no asking somebody to

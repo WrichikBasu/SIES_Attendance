@@ -634,7 +634,7 @@
     <string name="action_sync_now">Sync now</string>
     <string name="error_email_required">Enter your email address</string>
     <string name="error_sync_password_required">Enter your password</string>
-    <string name="sync_no_server">This build has no server</string>
+    <string name="sync_no_server">No server set</string>
     <string name="sync_not_signed_in">Not signed in</string>
     <string name="sync_signed_in">Signed in</string>
     <string name="sync_signed_in_as">Signed in as %1$s</string>
@@ -656,6 +656,11 @@
     </plurals>
     <string name="sync_down_nothing_new">Nothing new from the server %1$s</string>
     <string name="sync_running">Syncing now\u2026</string>
+    <!--
+        A server that answered with an error, as opposed to one that did not answer at all.
+        The number is for whoever runs the server; the rest is for the person holding the phone.
+    -->
+    <string name="sync_server_error">The server had a problem (error %1$d). Your changes are kept and will be sent when it is fixed.</string>
 
     <!--
         What the server would not accept, kept until somebody says they have read it. The
@@ -694,7 +699,7 @@
 
     <string name="title_sign_in">Sign in</string>
     <string name="sign_in_headline">Sign in to use this phone</string>
-    <string name="sign_in_headline_no_server">This build has no server</string>
+    <string name="sign_in_headline_no_server">No server set</string>
     <!--
         Said plainly, because the honest reason is the useful one: a register is signed
         work, and the server records which account recorded it.
@@ -708,6 +713,34 @@
         the first sign-in.
     -->
     <string name="sign_in_forgot_password">Forgotten your password, or locked out? Ask an administrator to reset it.</string>
+
+    <!-- ── The server address ────────────────────────────────────── -->
+
+    <!--
+        Typed on the phone, in place of the one the build was given. Changing it signs out
+        first, because nothing on the phone means anything to another server; see
+        ServerAddress.
+    -->
+    <string name="title_server">Server</string>
+    <string name="server_none">None. This phone works on its own.</string>
+    <string name="server_from_build">%1$s (built in)</string>
+    <string name="action_change_server">Change server</string>
+    <string name="dialog_server_title">Server address</string>
+    <string name="dialog_server_explained">The address your administrator gave you, such as attendance.example.edu. Leave it empty to use the one built into the app.</string>
+    <string name="hint_server_address">Server address</string>
+    <string name="action_use_built_in">Use built-in</string>
+    <string name="action_save">Save</string>
+    <string name="error_server_not_an_address">That isn\'t a web address</string>
+    <string name="error_server_not_http">The address has to start with https://</string>
+    <string name="error_server_cleartext">This app only connects with https://</string>
+    <string name="server_checking">Checking the server\u2026</string>
+    <string name="error_server_no_such_host">No server by that name. Check the address.</string>
+    <string name="error_server_no_answer">Nothing answered at that address. Check the address and your connection.</string>
+    <string name="error_server_certificate">The server\'s certificate wasn\'t accepted</string>
+    <string name="error_server_not_sies">Something answered, but it isn\'t the attendance server. Check the address.</string>
+    <string name="dialog_change_server_title">Change server?</string>
+    <string name="dialog_change_server_message">You will be signed out, and this account\'s data will be removed from this phone. Changes that haven\'t been sent are sent first.\n\nNew server: %1$s</string>
+    <string name="action_change_server_confirm">Sign out and change</string>
 
     <!-- ── Changing the password ─────────────────────────────────── -->
 

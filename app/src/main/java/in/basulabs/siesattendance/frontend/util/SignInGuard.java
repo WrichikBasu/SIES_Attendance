@@ -17,8 +17,8 @@ package in.basulabs.siesattendance.frontend.util;
  * fortnight of no signal, and nothing here shortens that.
  *
  * <h3>A build with no server is not locked out</h3>
- * {@code sync_base_url} is empty in a release build until somebody configures one, and then there
- * is no account anywhere to sign in to. A locked screen with no way past it is not a secured app,
+ * {@code sync_base_url} is empty in a release build until somebody configures one, and until an
+ * address is typed in on the phone there is no account anywhere to sign in to. A locked screen with no way past it is not a secured app,
  * it is a broken one, so the rule has two halves and both matter: <em>ask only when there is
  * somewhere to ask about</em>. That is one boolean, in {@link #gate}, and tightening it to "no
  * server means no app" is a one-line change in a place a reader will find.

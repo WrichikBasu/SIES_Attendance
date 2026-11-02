@@ -125,7 +125,13 @@ public final class SyncWorker extends Worker {
 
 		} catch (SyncClient.Unavailable e) {
 			Log.i(TAG, "sync deferred: " + e.getMessage());
-			DeviceIdentity.recordSyncError(context, "Waiting for a connection");
+
+			// "Waiting for a connection" only when nothing answered. A server that answers
+			// with a 5xx is reachable and broken, and saying the phone is offline sends
+			// somebody looking for signal when the fault is on the server.
+			DeviceIdentity.recordSyncError(context, e.status() == 0
+					? "Waiting for a connection"
+					: context.getString(R.string.sync_server_error, e.status()));
 			return Result.retry();
 
 		} catch (SyncClient.Unauthenticated e) {

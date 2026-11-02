@@ -2926,6 +2926,18 @@ class WireTest {
 		assertEquals("unauthenticated", refused.body().get("code").stringValue());
 	}
 
+	@Test
+	void aPullWithNoTokenIsHowAPhoneKnowsThisServerIsHere() throws Exception {
+
+		// The app's SyncClient.probe asks exactly this before it is pointed at an address,
+		// and takes this answer, and only this one, to mean the API is there. Change the
+		// status or the code and no phone can be moved to this server.
+		Reply refused = get("/sync/pull", null, null);
+
+		assertEquals(401, refused.status(), refused::toString);
+		assertEquals("unauthenticated", refused.body().get("code").stringValue());
+	}
+
 	// ── The shape of the thing ───────────────────────────────────────────
 
 	@Test

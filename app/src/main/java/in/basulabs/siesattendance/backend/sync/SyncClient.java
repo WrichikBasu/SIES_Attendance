@@ -12,12 +12,14 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import in.basulabs.siesattendance.R;
+import javax.net.ssl.SSLException;
+
 
 /**
  * The phone's side of the wire: two calls, over HTTPS, with the token.
@@ -52,8 +54,27 @@ public final class SyncClient {
 
 		private static final long serialVersionUID = 1L;
 
+		/** The HTTP status when the server answered with an error, or 0 when nothing answered. */
+		private final int status;
+
 		public Unavailable(@NonNull String message, @Nullable Throwable cause) {
+			this(message, cause, 0);
+		}
+
+		public Unavailable(@NonNull String message, @Nullable Throwable cause, int status) {
 			super(message, cause);
+			this.status = status;
+		}
+
+		/**
+		 * The status the server answered with, or 0 when it did not answer at all.
+		 * <p>
+		 * The two are told apart because they are different problems for different people: no
+		 * answer is the phone's signal, and a 5xx is the server's, which no amount of walking
+		 * towards a window will fix.
+		 */
+		public int status() {
+			return status;
 		}
 	}
 
@@ -113,10 +134,10 @@ public final class SyncClient {
 
 	public SyncClient(@NonNull Context context) {
 		this.context = context.getApplicationContext();
-		this.baseUrl = trimTrailingSlash(context.getString(R.string.sync_base_url));
+		this.baseUrl = ServerAddress.current(context);
 	}
 
-	/** Whether this build has somewhere to sync to at all. */
+	/** Whether this phone has somewhere to sync to at all. */
 	public boolean isConfigured() {
 		return !baseUrl.isEmpty();
 	}
@@ -350,6 +371,87 @@ public final class SyncClient {
 		return out.append('"').toString();
 	}
 
+	// ── Before pointing the phone at a server ────────────────────────────
+
+	/** What answered at an address, asked before the phone is pointed at it. */
+	public enum Probe {
+
+		/** This server's API, at this path. */
+		SIES,
+
+		/** No host by that name. */
+		NO_SUCH_HOST,
+
+		/** The name resolved, and nothing answered in time, or the connection was refused. */
+		NO_ANSWER,
+
+		/** It answered over TLS with a certificate this build would not accept. */
+		CERTIFICATE,
+
+		/** Something answered, and it is not this server's API: another site, or a wrong path. */
+		NOT_SIES
+	}
+
+	/** Where the probe asks. Any path under the API would do; this one has no side effects. */
+	private static final String PROBE_PATH = "/sync/pull";
+
+	/** Shorter than a sync's: somebody is looking at a dialog while this runs. */
+	private static final int PROBE_TIMEOUT_MS = 8_000;
+
+	/**
+	 * Asks whether this server's API is at an address, without a session. Blocks; call it off
+	 * the main thread.
+	 * <p>
+	 * There is no open endpoint to ask, so this asks a closed one and reads the refusal. A
+	 * request with no token is turned away by the server's token filter before it looks anything
+	 * up — no database, no rate limit — with a 401 whose body is
+	 * {@code {"code": "unauthenticated", …}}. A 401 with that code is this server; anything else
+	 * that answered is not. A health check would say less: any site at all answers 200 at its
+	 * root, and a wrong path behind the right host is exactly the mistake to catch here.
+	 *
+	 * @param address an address {@link ServerAddress#normalise} has been through
+	 */
+	@NonNull
+	public static Probe probe(@NonNull String address) {
+
+		HttpURLConnection connection = null;
+
+		try {
+			connection = (HttpURLConnection) new URL(address + PROBE_PATH).openConnection();
+			connection.setRequestMethod("GET");
+			connection.setConnectTimeout(PROBE_TIMEOUT_MS);
+			connection.setReadTimeout(PROBE_TIMEOUT_MS);
+			connection.setRequestProperty("Accept", "application/json");
+
+			// A redirect is an answer about somewhere else, and the phone will not follow one
+			// when it syncs either.
+			connection.setInstanceFollowRedirects(false);
+
+			if (connection.getResponseCode() != HttpURLConnection.HTTP_UNAUTHORIZED) {
+				return Probe.NOT_SIES;
+			}
+
+			return "unauthenticated".equals(SyncJson.codeIn(read(connection.getErrorStream())))
+					? Probe.SIES
+					: Probe.NOT_SIES;
+
+		} catch (UnknownHostException e) {
+			return Probe.NO_SUCH_HOST;
+
+		} catch (SSLException e) {
+			// A pin that does not match lands here too, which is the right sentence for it.
+			return Probe.CERTIFICATE;
+
+		} catch (IOException e) {
+			return Probe.NO_ANSWER;
+
+		} finally {
+			if (connection != null) {
+				connection.disconnect();
+			}
+		}
+	}
+
 	// ── The one request method ───────────────────────────────────────────
 
 	@NonNull
@@ -405,7 +507,7 @@ public final class SyncClient {
 			}
 
 			if (status >= 500) {
-				throw new Unavailable("the server answered " + status, null);
+				throw new Unavailable("the server answered " + status, null, status);
 			}
 
 			if (status >= 400) {
@@ -464,10 +566,5 @@ public final class SyncClient {
 		} catch (PackageManager.NameNotFoundException e) {
 			return "sies-attendance/unknown";
 		}
-	}
-
-	@NonNull
-	private static String trimTrailingSlash(@NonNull String url) {
-		return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
 	}
 }

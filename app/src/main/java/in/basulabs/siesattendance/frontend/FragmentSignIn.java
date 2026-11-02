@@ -26,8 +26,10 @@ import com.google.android.material.textfield.TextInputLayout;
 import java.util.Arrays;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.sync.ServerAddress;
 import in.basulabs.siesattendance.backend.sync.SyncSignIn;
 import in.basulabs.siesattendance.frontend.util.PasswordDialog;
+import in.basulabs.siesattendance.frontend.util.ServerAddressDialog;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
@@ -54,6 +56,10 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * {@code sync_base_url} is empty until somebody configures one, and then there is no account
  * anywhere to sign in to. This screen says so and offers the way through, because a locked screen
  * with no way past it is a broken app rather than a secured one. See {@code SignInGuard}.
+ *
+ * <h3>The address is changed here too</h3>
+ * The Account and sync screen is behind this one, so an address typed wrongly there, or a server
+ * that has moved, would otherwise leave nobody able to change it. See {@code ServerAddress}.
  */
 public class FragmentSignIn extends Fragment {
 
@@ -105,16 +111,17 @@ public class FragmentSignIn extends Fragment {
 		actvDoor = view.findViewById(R.id.actvSignInDoor);
 		tvError = view.findViewById(R.id.tvSignInError);
 
-		boolean hasServer = viewModel.hasServer();
+		showServer(view);
 
-		view.findViewById(R.id.groupCredentials)
-				.setVisibility(hasServer ? View.VISIBLE : View.GONE);
-		view.findViewById(R.id.groupNoServer)
-				.setVisibility(hasServer ? View.GONE : View.VISIBLE);
-
-		view.<TextView>findViewById(R.id.tvSignInHeadline).setText(hasServer
-				? R.string.sign_in_headline
-				: R.string.sign_in_headline_no_server);
+		// Nobody is signed in here, so there is nothing to sign out of first: the address
+		// changes and the form follows it. ServerAddress marks whatever an expired session
+		// left on the phone as another server's.
+		view.<MaterialButton>findViewById(R.id.btnSignInChangeServer).setOnClickListener(v ->
+				ServerAddressDialog.show(this, viewModel, address -> {
+					ServerAddress.choose(requireContext().getApplicationContext(), address);
+					tvError.setVisibility(View.GONE);
+					showServer(requireView());
+				}));
 
 		bindDoor();
 
@@ -130,6 +137,24 @@ public class FragmentSignIn extends Fragment {
 
 		tvError.setVisibility(refusal == null ? View.GONE : View.VISIBLE);
 		tvError.setText(refusal == null ? "" : refusal);
+	}
+
+	/** The form or the way past it, depending on whether there is a server, and which. */
+	private void showServer(@NonNull View view) {
+
+		boolean hasServer = viewModel.hasServer();
+
+		view.findViewById(R.id.groupCredentials)
+				.setVisibility(hasServer ? View.VISIBLE : View.GONE);
+		view.findViewById(R.id.groupNoServer)
+				.setVisibility(hasServer ? View.GONE : View.VISIBLE);
+
+		view.<TextView>findViewById(R.id.tvSignInHeadline).setText(hasServer
+				? R.string.sign_in_headline
+				: R.string.sign_in_headline_no_server);
+
+		view.<TextView>findViewById(R.id.tvSignInServer)
+				.setText(ServerAddressDialog.describe(requireContext()));
 	}
 
 	private void bindDoor() {
