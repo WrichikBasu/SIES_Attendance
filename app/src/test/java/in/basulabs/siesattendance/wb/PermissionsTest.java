@@ -71,6 +71,32 @@ public class PermissionsTest {
 	}
 
 	@Test
+	public void anIksOrVecCourseIsAnAdministratorsAlone() {
+
+		Set<String> head = Set.of("HOD");
+		Set<String> office = Set.of("OFFICE");
+		Set<String> admin = Set.of("ADMIN");
+
+		for (CourseType type : List.of(CourseType.IKS, CourseType.VEC)) {
+			assertFalse(type + ": a head", Permissions.mayKeepCourseOfType(
+					AccountKind.PROFESSOR, head, type));
+			assertFalse(type + ": the office", Permissions.mayKeepCourseOfType(
+					AccountKind.STAFF, office, type));
+			assertFalse(type + ": roles never recorded", Permissions.mayKeepCourseOfType(
+					AccountKind.PROFESSOR, null, type));
+			assertTrue(type + ": an administrator", Permissions.mayKeepCourseOfType(
+					AccountKind.STAFF, admin, type));
+			assertTrue(type + ": a build with no server", Permissions.mayKeepCourseOfType(
+					null, null, type));
+		}
+
+		// Every other type is left to Capability.COURSES, as it was.
+		assertTrue(Permissions.mayKeepCourseOfType(AccountKind.PROFESSOR, head,
+				CourseType.MAJOR));
+		assertTrue(Permissions.mayKeepCourseOfType(AccountKind.PROFESSOR, head, null));
+	}
+
+	@Test
 	public void aStudentSeesOnlyTheCoursesTheyRepresent() {
 
 		List<EntityCourse> all = List.of(course(3001, "CS-101"), course(3002, "CS-102"),

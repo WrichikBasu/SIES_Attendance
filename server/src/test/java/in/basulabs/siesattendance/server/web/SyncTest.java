@@ -181,6 +181,9 @@ class SyncTest {
 		accountHeadCs = account(AccountKind.PROFESSOR, 1003L, null, "c.head@sies.edu.in");
 
 		grantRole(accountHeadCs, "HOD", "COMPUTER_SCIENCE", null, accountOffice);
+
+		long accountAdmin = account(AccountKind.STAFF, null, null, "admin@sies.edu.in");
+		grantRole(accountAdmin, "ADMIN", null, null, accountOffice);
 	}
 
 	// ── The gate ─────────────────────────────────────────────────────────
@@ -578,6 +581,117 @@ class SyncTest {
 		assertEquals(1, former.body().get("accepted").intValue(), former::toString);
 		assertEquals(0, count("SELECT count(*) FROM course_instructor WHERE course_id = "
 				+ courseID + " AND prof_id = " + PROF_CS));
+	}
+
+	// ── IKS and VEC courses are an administrator's (V46) ─────────────────
+
+	@Test
+	void aHeadCannotMakeAnIksCourseOrTurnACourseIntoOne() throws Exception {
+
+		Phone head = signInWithAPhone("c.head@sies.edu.in");
+		long courseID = head.key(650);
+
+		Reply made = push(head, List.of(intent("courses", List.of(courseID), "UPSERT",
+				courseRow(courseID, 1003L, "IKS-1", "IKS"))));
+
+		assertEquals(0, made.body().get("accepted").intValue(), made::toString);
+		assertTrue(made.body().get("rejected").get(0).get("reason").stringValue()
+				.contains("administrator"), made::toString);
+		assertTrue(made.body().get("rejected").get(0).get("permanent").booleanValue());
+		assertEquals(0, count("SELECT count(*) FROM courses WHERE course_id = " + courseID));
+
+		// An OE course the head may make, and may not then make a VEC one.
+		Map<String, Object> oe = courseRow(courseID, 1003L, "CS-OE-9", "OE");
+		assertEquals(1, push(head, List.of(intent("courses", List.of(courseID), "UPSERT",
+				oe))).body().get("accepted").intValue());
+
+		oe.put("courseType", "VEC");
+		Reply turned = push(head, List.of(intent("courses", List.of(courseID), "UPSERT",
+				oe)));
+
+		assertEquals(0, turned.body().get("accepted").intValue(), turned::toString);
+		assertEquals(1, count("SELECT count(*) FROM courses WHERE course_id = " + courseID
+				+ " AND course_type = 'OE'"));
+	}
+
+	@Test
+	void neitherItsCoordinatorNorTheOfficeChangesOrRemovesAVecCourse() throws Exception {
+
+		// Made by an administrator, coordinated by the head of the offering department:
+		// the two people who could change it before V46, along with the office.
+		Phone admin = signInWithAPhone("admin@sies.edu.in");
+		long courseID = admin.key(652);
+
+		assertEquals(1, push(admin, List.of(intent("courses", List.of(courseID), "UPSERT",
+				courseRow(courseID, 1003L, "VEC-1", "VEC")))).body().get("accepted")
+				.intValue());
+
+		for (String who : List.of("c.head@sies.edu.in", "office@sies.edu.in")) {
+
+			Phone phone = signInWithAPhone(who);
+			Map<String, Object> renamed = courseRow(courseID, 1003L, "VEC-1", "VEC");
+			renamed.put("courseTopic", "Renamed by " + who);
+
+			Reply changed = push(phone, List.of(intent("courses", List.of(courseID), "UPSERT",
+					renamed)));
+			assertEquals(0, changed.body().get("accepted").intValue(), who + " " + changed);
+
+			Reply removed = push(phone, List.of(intent("courses", List.of(courseID), "DELETE",
+					null)));
+			assertEquals(0, removed.body().get("accepted").intValue(), who + " " + removed);
+
+			// Refused by V46 rather than by the instructors still on it, which is what
+			// stops anybody's deletion of a course.
+			assertTrue(removed.body().get("rejected").get(0).get("reason").stringValue()
+					.contains("administrator"), who + " " + removed);
+		}
+
+		assertEquals(1, count("SELECT count(*) FROM courses WHERE course_id = " + courseID
+				+ " AND course_topic = 'Values'"), "the course is as the administrator left it");
+
+		// Teaching it is untouched: the coordinator still adds a colleague as an instructor.
+		Phone head = signInWithAPhone("c.head@sies.edu.in");
+		Map<String, Object> instructor = new LinkedHashMap<>();
+		instructor.put("courseID", courseID);
+		instructor.put("profID", PROF_CS);
+
+		assertEquals(1, push(head, List.of(intent("course_instructor",
+				List.of(courseID, PROF_CS), "UPSERT", instructor))).body().get("accepted")
+				.intValue());
+	}
+
+	@Test
+	void anAdministratorMakesAndChangesAnIksCourse() throws Exception {
+
+		Phone admin = signInWithAPhone("admin@sies.edu.in");
+		long courseID = admin.key(651);
+		Map<String, Object> course = courseRow(courseID, 1003L, "IKS-2", "IKS");
+
+		assertEquals(1, push(admin, List.of(intent("courses", List.of(courseID), "UPSERT",
+				course))).body().get("accepted").intValue());
+
+		course.put("courseTopic", "Indian astronomy");
+		assertEquals(1, push(admin, List.of(intent("courses", List.of(courseID), "UPSERT",
+				course))).body().get("accepted").intValue());
+		assertEquals(1, count("SELECT count(*) FROM courses WHERE course_id = " + courseID
+				+ " AND course_topic = 'Indian astronomy'"));
+	}
+
+	/** A Computer Science course row as a phone would send it. */
+	private static Map<String, Object> courseRow(long courseID, long profID, String code,
+	                                             String type) {
+
+		Map<String, Object> course = new LinkedHashMap<>();
+		course.put("courseID", courseID);
+		course.put("profID", profID);
+		course.put("courseCode", code);
+		course.put("courseTopic", "Values");
+		course.put("stream", "BSc");
+		course.put("offeringDepartment", "COMPUTER_SCIENCE");
+		course.put("year", "SY");
+		course.put("semester", 3);
+		course.put("courseType", type);
+		return course;
 	}
 
 	@Test

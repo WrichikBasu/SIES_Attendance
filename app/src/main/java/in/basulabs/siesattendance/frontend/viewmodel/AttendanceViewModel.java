@@ -26,6 +26,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
@@ -734,6 +735,16 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return Permissions.may(DeviceIdentity.accountKind(getApplication()),
 				DeviceIdentity.mayKeepARoll(getApplication()),
 				DeviceIdentity.roles(getApplication()), what);
+	}
+
+	/**
+	 * Whether the signed-in account may make, change or remove a course of that type; see
+	 * {@link Permissions#mayKeepCourseOfType}. An IKS or VEC course is an administrator's.
+	 */
+	public boolean mayKeepCourseOfType(@Nullable CourseType type) {
+		return may(Permissions.Capability.COURSES)
+				&& Permissions.mayKeepCourseOfType(DeviceIdentity.accountKind(getApplication()),
+				DeviceIdentity.roles(getApplication()), type);
 	}
 
 	/**

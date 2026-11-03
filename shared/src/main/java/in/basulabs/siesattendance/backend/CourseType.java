@@ -144,6 +144,18 @@ public enum CourseType {
 	}
 
 	/**
+	 * Whether only an administrator creates, changes or removes a course of this type.
+	 * <p>
+	 * IKS and VEC: taken by a whole year and stream across departments, so no department's
+	 * head, office or coordinator keeps one. The server enforces it with
+	 * {@code course_type_is_administrators()} (V46); this is the same list, so the app does not
+	 * offer what will be refused. {@code PostgresSchemaDriftTest} holds the two together.
+	 */
+	public boolean keptByAdministrators() {
+		return this == IKS || this == VEC;
+	}
+
+	/**
 	 * The types whose offering department is the student's own, in declaration order: exactly
 	 * the types the server's {@code courses} to {@code department_stream} foreign key applies
 	 * to. {@code PostgresSchemaDriftTest} compares this list against the committed SQL.

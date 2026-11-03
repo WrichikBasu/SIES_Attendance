@@ -203,6 +203,36 @@ public class PostgresSchemaDriftTest {
 		}
 	}
 
+	// ── The courses an administrator keeps ───────────────────────────────
+
+	@Test
+	public void theAdministratorsCourseTypesMatchV46() throws IOException {
+
+		String function = normalise(statementContaining(
+				read("V46__iks_and_vec_courses_are_the_administrators.sql"),
+				"CREATE FUNCTION course_type_is_administrators"));
+
+		Matcher list = Pattern.compile("IN \\(([^)]*)\\)").matcher(function);
+		assertTrue("course_type_is_administrators has no IN (...) list: " + function,
+				list.find());
+
+		List<String> actual = new ArrayList<>();
+		for (String quoted : list.group(1).split(",")) {
+			actual.add(quoted.trim().replace("'", ""));
+		}
+
+		List<String> expected = new ArrayList<>();
+		for (CourseType type : CourseType.values()) {
+			if (type.keptByAdministrators()) {
+				expected.add(type.name());
+			}
+		}
+
+		java.util.Collections.sort(actual);
+		assertEquals("CourseType.keptByAdministrators() and V46 disagree about which courses "
+				+ "are an administrator's", expected, actual);
+	}
+
 	// ── The roll, defined once ───────────────────────────────────────────
 
 	/*

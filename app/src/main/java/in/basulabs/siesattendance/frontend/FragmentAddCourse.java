@@ -231,6 +231,14 @@ public class FragmentAddCourse extends Fragment {
 				return;
 			}
 			Ui.onMain(this, () -> {
+				// The list offers an IKS or VEC course to an administrator alone; this is
+				// the check for any other way in (V46).
+				if (!viewModel.mayKeepCourseOfType(course.courseType)) {
+					viewModel.sayNotPermitted();
+					Navigation.findNavController(requireView()).popBackStack();
+					return;
+				}
+
 				// Appointed on the server, with the roll it keeps, so not part of the save:
 				// only for a course the server has and lists as this account's to appoint for.
 				viewModel.checkMayAppointFor(course.courseID, may -> Ui.onMain(this, () -> {
@@ -467,7 +475,16 @@ public class FragmentAddCourse extends Fragment {
 					chosenSemester = semester;
 				});
 
-		DropdownBinder.bind(actvType, Arrays.asList(CourseType.values()), null,
+		// IKS and VEC only for an administrator (V46), who is the only one the server lets
+		// make or change one.
+		List<CourseType> types = new ArrayList<>();
+		for (CourseType type : CourseType.values()) {
+			if (viewModel.mayKeepCourseOfType(type)) {
+				types.add(type);
+			}
+		}
+
+		DropdownBinder.bind(actvType, types, null,
 				chosenType, value -> {
 					chosenType = value;
 					academicFields.rebuild();

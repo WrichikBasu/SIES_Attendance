@@ -323,6 +323,7 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 | add or correct a professor | — | — | — | ✓ | — | ✓ |
 | read professors | those teaching their courses | their own department's, and those teaching courses they read | the same, and the departments they head | all | all | all |
 | add or withdraw a course | — | — | the department's | ✓ | — | ✓ |
+| add, change or withdraw an IKS or VEC course | — | — | — | — | — | ✓ |
 | open a new academic session | — | — | — | — | — | ✓ |
 | correct or remove a session | — | — | — | ✓ | — | ✓ |
 | create, edit, delete batches; link them to courses | — | their own department's | their own department's | — | — | ✓ |
