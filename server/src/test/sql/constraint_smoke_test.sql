@@ -108,7 +108,9 @@ SELECT assert_equal(
     'BSc'::degree_stream,
     'a major carries its stream into the generated column');
 
-INSERT INTO course_instructor (course_id, prof_id) VALUES (3001, 1001), (3002, 1001);
+-- V37 already adds a course's coordinator as its instructor.
+INSERT INTO course_instructor (course_id, prof_id) VALUES (3001, 1001), (3002, 1001)
+    ON CONFLICT DO NOTHING;
 
 INSERT INTO batch_desc (batch_id, batch_name, batch_desc, academic_year)
     VALUES (4001, 'Batch A', 'Lab 1', 2025),
@@ -262,10 +264,12 @@ SELECT assert_rejected($$
     VALUES (2002, 2024, 'X-4', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 'A')$$,
     'a division on a stream that has none');
 
-SELECT assert_rejected($$
-    INSERT INTO student_year (student_id, academic_year, roll_no, year, stream, major_dept, minor_dept)
-    VALUES (2002, 2024, 'X-5', 'FY', 'BSc', 'PHYSICS', 'PHYSICS')$$,
-    'a student minoring in their own major department');
+-- Allowed since V45: a student minoring in their own major department. Rolled
+-- back with everything else, so the session row it uses stays free.
+SAVEPOINT minor_in_major;
+INSERT INTO student_year (student_id, academic_year, roll_no, year, stream, major_dept, minor_dept)
+    VALUES (2002, 2024, 'X-5', 'FY', 'BSc', 'PHYSICS', 'PHYSICS');
+ROLLBACK TO SAVEPOINT minor_in_major;
 
 SELECT assert_rejected($$
     INSERT INTO student_year (student_id, academic_year, roll_no, year, stream, major_dept, oe_dept)

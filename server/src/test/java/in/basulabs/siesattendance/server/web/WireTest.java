@@ -956,10 +956,10 @@ class WireTest {
 	void aBadRowCostsOnlyThatRow() throws Exception {
 
 		Reply reply = postCsv("/roster?year=" + SESSION, """
-				rollNo,name,year,stream,majorDept,minorDept
+				rollNo,name,year,stream,majorDept,oeDept
 				CS-FY-010,Good Row,FY,BSc_unaided,COMPUTER_SCIENCE,
 				CS-FY-011,Unknown Department,FY,BSc_unaided,NOT_A_DEPARTMENT,
-				CS-FY-012,Minor Equals Major,FY,BSc_unaided,COMPUTER_SCIENCE,COMPUTER_SCIENCE
+				CS-FY-012,Elective Equals Major,FY,BSc_unaided,COMPUTER_SCIENCE,COMPUTER_SCIENCE
 				""", tokenFor("office@sies.edu.in", "STAFF"));
 
 		assertEquals(200, reply.status(), reply::toString);
@@ -971,7 +971,7 @@ class WireTest {
 		// correct the file.
 		assertTrue(reply.body().get("errors").get(0).stringValue().startsWith("Line 3:"),
 				reply.body().get("errors").toString());
-		assertTrue(reply.body().get("errors").get(1).stringValue().contains("minor department"),
+		assertTrue(reply.body().get("errors").get(1).stringValue().contains("open elective"),
 				reply.body().get("errors").toString());
 
 		assertEquals(1, count("SELECT count(*) FROM student_year "

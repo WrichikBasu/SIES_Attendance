@@ -531,8 +531,6 @@
     <string name="dialog_delete_student_confirm_message">%1$d attendance record(s) will be permanently deleted.</string>
 
     <!-- Manual student entry cross-checks -->
-    <string name="error_minor_same_as_major">The minor department cannot be the same as the
-        major</string>
     <string name="error_oe_same_as_major">The open elective cannot be the same as the
         major department</string>
     <string name="error_oe_same_as_minor">The open elective cannot be the same as the

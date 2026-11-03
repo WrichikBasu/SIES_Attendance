@@ -308,10 +308,10 @@ public class FragmentAddStudent extends Fragment {
 	 * sound.
 	 * <p>
 	 * {@link AcademicRules#validate} covers department against stream, year against both,
-	 * semester against year, and division against stream. The minor and open-elective checks are here rather than in
-	 * AcademicRules because they are about this form specifically: a student cannot take their
-	 * own major department as a minor or an open elective, which is a rule about one student
-	 * rather than about what the college offers.
+	 * semester against year, and division against stream. The open-elective checks are here rather than in AcademicRules
+	 * because they are about one student rather than about what the college offers: the open
+	 * elective has to be outside both the major and the minor. The minor may be the major
+	 * department.
 	 */
 	@Nullable
 	private String combinationProblem() {
@@ -321,10 +321,6 @@ public class FragmentAddStudent extends Fragment {
 
 		if (problem != null) {
 			return problem;
-		}
-
-		if (chosenMajor != null && chosenMajor == chosenMinor) {
-			return getString(R.string.error_minor_same_as_major);
 		}
 
 		if (chosenMajor != null && chosenMajor == chosenOe) {
