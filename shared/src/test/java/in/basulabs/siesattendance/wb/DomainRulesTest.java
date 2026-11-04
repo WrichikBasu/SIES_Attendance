@@ -666,6 +666,26 @@ public class DomainRulesTest {
 	}
 
 	@Test
+	public void anAecIsOfferedByALanguageDepartmentAlone() {
+
+		for (Department language : List.of(Department.ENGLISH, Department.HINDI,
+				Department.MARATHI)) {
+			assertNull(language.name(), AcademicRules.validateCourse(language,
+					Stream.BSc_unaided, Year.FY, 1, CourseType.AEC));
+		}
+
+		String refused = AcademicRules.validateCourse(Department.ECONOMICS, Stream.BA,
+				Year.FY, 1, CourseType.AEC);
+		assertNotNull(refused);
+		assertTrue(refused, refused.contains("English, Hindi or Marathi"));
+
+		// Every other type may be offered by any department, as before.
+		for (CourseType type : CourseType.values()) {
+			assertEquals(type.name(), type == CourseType.AEC, type.offeringDepartments() != null);
+		}
+	}
+
+	@Test
 	public void aMajorIsStillHeldToItsDepartmentsStreams() {
 
 		// Nothing is relaxed for the types whose roll is the students majoring in the offering

@@ -264,6 +264,12 @@ SELECT assert_rejected($$
     VALUES (2002, 2024, 'X-4', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 'A')$$,
     'a division on a stream that has none');
 
+SELECT assert_rejected($$
+    INSERT INTO courses (course_id, prof_id, course_code, course_topic, stream,
+                         offering_department, year, semester, course_type)
+    VALUES (3097, 1001, 'PHY-AEC-1', 'Not a language', 'BSc', 'PHYSICS', 'FY', 1, 'AEC')$$,
+    'an AEC offered by a department that is not a language one (V49)');
+
 -- Allowed since V45: a student minoring in their own major department. Rolled
 -- back with everything else, so the session row it uses stays free.
 SAVEPOINT minor_in_major;

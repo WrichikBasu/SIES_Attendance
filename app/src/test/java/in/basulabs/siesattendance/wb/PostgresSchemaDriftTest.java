@@ -251,6 +251,32 @@ public class PostgresSchemaDriftTest {
 				+ "are an administrator's", expected, actual);
 	}
 
+	@Test
+	public void theAecDepartmentsMatchV49() throws IOException {
+
+		String function = normalise(statementContaining(
+				read("V49__an_aec_is_a_language_departments.sql"),
+				"CREATE FUNCTION course_aec_offered_by_a_language_department"));
+
+		Matcher list = Pattern.compile("d IN \\(([^)]*)\\)").matcher(function);
+		assertTrue("course_aec_offered_by_a_language_department has no IN (...) list: "
+				+ function, list.find());
+		assertTrue("V49 should be about AEC: " + function, function.contains("t <> 'AEC'"));
+
+		List<String> actual = new ArrayList<>();
+		for (String quoted : list.group(1).split(",")) {
+			actual.add(quoted.trim().replace("'", ""));
+		}
+
+		List<String> expected = new ArrayList<>();
+		for (Department department : CourseType.AEC.offeringDepartments()) {
+			expected.add(department.name());
+		}
+
+		assertEquals("CourseType.offeringDepartments() and V49 disagree about who offers an "
+				+ "AEC", expected, actual);
+	}
+
 	// ── The roll, defined once ───────────────────────────────────────────
 
 	/*

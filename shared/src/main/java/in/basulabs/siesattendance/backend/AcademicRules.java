@@ -185,6 +185,9 @@ public final class AcademicRules {
 	 * Everything else {@link #validate} looks at still applies. The year and semester are
 	 * checked against the stream either way, and with a stream chosen the department has no
 	 * further say in which years are available, so dropping it costs no other check.
+	 * <p>
+	 * One check is added: a type only some departments offer, which is an AEC, offered by a
+	 * language department ({@link CourseType#offeringDepartments()}, V49).
 	 *
 	 * @param type the course type; a null type is treated as the strict case, since the screen
 	 * 		has nothing to relax the check on until one is chosen
@@ -196,8 +199,30 @@ public final class AcademicRules {
 	                                    @Nullable Integer semester,
 	                                    @Nullable CourseType type) {
 
+		List<Department> offering = type == null ? null : type.offeringDepartments();
+
+		if (department != null && offering != null && !offering.contains(department)) {
+			return "An " + type + " course is offered by " + joinDepartments(offering)
+					+ ", not " + department;
+		}
+
 		boolean ownDepartment = type == null || type.followsOfferingDepartment();
 		return validate(ownDepartment ? department : null, stream, year, semester);
+	}
+
+	/** "English, Hindi or Marathi". */
+	@NonNull
+	private static String joinDepartments(@NonNull List<Department> departments) {
+
+		StringBuilder out = new StringBuilder();
+
+		for (int at = 0; at < departments.size(); at++) {
+			if (at > 0) {
+				out.append(at == departments.size() - 1 ? " or " : ", ");
+			}
+			out.append(departments.get(at));
+		}
+		return out.toString();
 	}
 
 	@Nullable
