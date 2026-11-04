@@ -151,11 +151,8 @@ public class PostgresSchemaDriftTest {
 	@Test
 	public void departmentStreamSeedMatchesAcademicRules() throws IOException {
 
-		String sql = read("V2__constraints.sql");
-		String insert = statementContaining(sql, "INSERT INTO department_stream");
-
 		List<String> actual = new ArrayList<>();
-		Matcher matcher = SEED_ROW.matcher(insert);
+		Matcher matcher = SEED_ROW.matcher(departmentStreamSeeds());
 		while (matcher.find()) {
 			actual.add(matcher.group(1) + "|" + matcher.group(2) + "|" + matcher.group(3));
 		}
@@ -177,7 +174,8 @@ public class PostgresSchemaDriftTest {
 		java.util.Collections.sort(expectedSorted);
 		java.util.Collections.sort(actualSorted);
 
-		assertEquals("the department_stream seed in V2__constraints.sql has drifted from "
+		assertEquals("the department_stream seed (V2, and the rows added since) has drifted "
+						+ "from "
 						+ "AcademicRules.STREAMS. Missing rows: "
 						+ difference(expectedSorted, actualSorted)
 						+ "; rows that should not be there: "
@@ -191,8 +189,7 @@ public class PostgresSchemaDriftTest {
 		// AcademicRules.streamsFor promises never to return empty. If it ever did, the
 		// composite foreign keys onto department_stream would make that department unusable:
 		// no course and no student could be entered under it at all.
-		String insert = statementContaining(read("V2__constraints.sql"),
-				"INSERT INTO department_stream");
+		String insert = departmentStreamSeeds();
 
 		for (Department department : Department.values()) {
 			assertFalse(department + " offers no stream, so no course or student could be "
@@ -201,6 +198,27 @@ public class PostgresSchemaDriftTest {
 			assertTrue("the department_stream seed never mentions " + department.name(),
 					insert.contains("'" + department.name() + "'"));
 		}
+	}
+
+	/**
+	 * Every row any migration seeds department_stream with: V2's, and those of a department
+	 * added since, such as Marathi's (V48). Nothing removes a row, so together they are the
+	 * table.
+	 */
+	private static String departmentStreamSeeds() throws IOException {
+
+		StringBuilder seeds = new StringBuilder();
+
+		for (String file : migrationFileNames()) {
+
+			String sql = read(file);
+
+			if (sql.contains("INSERT INTO department_stream")) {
+				seeds.append(statementContaining(sql, "INSERT INTO department_stream"))
+						.append('\n');
+			}
+		}
+		return seeds.toString();
 	}
 
 	// ── The courses an administrator keeps ───────────────────────────────

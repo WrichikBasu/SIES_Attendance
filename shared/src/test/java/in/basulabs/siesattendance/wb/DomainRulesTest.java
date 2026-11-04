@@ -503,6 +503,17 @@ public class DomainRulesTest {
 	}
 
 	@Test
+	public void marathiIsStudiedAsABaAndAnMaLikeTheOtherArtsSubjects() {
+
+		assertEquals(Arrays.asList(Stream.BA, Stream.MA),
+				AcademicRules.streamsFor(Department.MARATHI));
+		assertNull(AcademicRules.validate(Department.MARATHI, Stream.BA, Year.FY, 1,
+				Division.A));
+		assertNull(AcademicRules.validate(Department.MARATHI, Stream.MA,
+				Year.Masters_P1, 1, null));
+	}
+
+	@Test
 	public void validateAcceptsADivisionOnADividedStreamAndABlankOneAnywhere() {
 		assertNull(AcademicRules.validate(Department.PHYSICS, Stream.BSc, Year.SY, 3,
 				Division.D));
