@@ -6,6 +6,7 @@ import android.view.ViewGroup;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.checkbox.MaterialCheckBox;
@@ -13,6 +14,7 @@ import com.google.android.material.checkbox.MaterialCheckBox;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 import in.basulabs.siesattendance.R;
@@ -47,16 +49,58 @@ public class AdapterSelectableStudent
 	}
 
 	/**
-	 * Replaces both the visible rows and the selection.
+	 * Replaces both the visible rows and the selection, telling the list only what changed.
+	 * <p>
+	 * Not {@code notifyDataSetChanged}. This adapter sits behind the batch editor's header in a
+	 * {@code ConcatAdapter}, which passes a whole-list change on to the whole list, header
+	 * included: every keystroke in the header's search box then took the header down and put
+	 * it back, and the box lost its focus on the first letter. A diff touches the student rows
+	 * alone. Worked out on the main thread, which a session's roll is small enough for.
 	 *
 	 * @param selectedIDs copied rather than retained, so the caller stays free to modify theirs
 	 */
 	public void submit(@NonNull List<StudentWithYear> students, @NonNull Set<Long> selectedIDs) {
+
+		List<StudentWithYear> before = new ArrayList<>(visible);
+		Set<Long> selectedBefore = new HashSet<>(selected);
+
+		DiffUtil.DiffResult diff = DiffUtil.calculateDiff(new DiffUtil.Callback() {
+
+			@Override
+			public int getOldListSize() {
+				return before.size();
+			}
+
+			@Override
+			public int getNewListSize() {
+				return students.size();
+			}
+
+			@Override
+			public boolean areItemsTheSame(int oldAt, int newAt) {
+				return before.get(oldAt).studentID == students.get(newAt).studentID;
+			}
+
+			@Override
+			public boolean areContentsTheSame(int oldAt, int newAt) {
+
+				StudentWithYear was = before.get(oldAt);
+				StudentWithYear now = students.get(newAt);
+
+				// What a row shows: its three lines and its tick.
+				return Objects.equals(was.rollNo, now.rollNo)
+						&& Objects.equals(was.displayName(), now.displayName())
+						&& Objects.equals(was.classLabel(), now.classLabel())
+						&& selectedBefore.contains(was.studentID)
+						== selectedIDs.contains(now.studentID);
+			}
+		});
+
 		visible.clear();
 		visible.addAll(students);
 		selected.clear();
 		selected.addAll(selectedIDs);
-		notifyDataSetChanged();
+		diff.dispatchUpdatesTo(this);
 	}
 
 	@NonNull
