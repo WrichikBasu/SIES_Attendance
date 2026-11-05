@@ -30,6 +30,20 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // The release key, supplied only by the release workflow (.github/workflows/release.yml),
+    // which decodes the keystore from a repository secret. Without these variables a local
+    // release build is still produced, just unsigned, so nothing about the key has to live
+    // on a development machine.
+    val releaseKeystore = providers.environmentVariable("SIES_KEYSTORE_FILE").orNull
+    val releaseSigning = releaseKeystore?.let {
+        signingConfigs.create("release") {
+            storeFile = file(it)
+            storePassword = providers.environmentVariable("SIES_KEYSTORE_PASSWORD").get()
+            keyAlias = providers.environmentVariable("SIES_KEY_ALIAS").get()
+            keyPassword = providers.environmentVariable("SIES_KEY_PASSWORD").get()
+        }
+    }
+
     buildTypes {
         // Where the server is: R.string.sync_base_url, read by SyncClient and SyncSignIn.
         //
@@ -61,6 +75,7 @@ android {
                 providers.gradleProperty("sies.releaseSyncUrl").orNull
                     ?: localProperties.getProperty("sies.releaseSyncUrl")
                     ?: "")
+            releaseSigning?.let { signingConfig = it }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
