@@ -2,6 +2,7 @@ package in.basulabs.siesattendance.server.web;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -1485,6 +1486,113 @@ class SyncTest {
 				changesFor(pulled.body(), "students").get(0).get("key").get(0).longValue());
 		assertEquals(COURSE_CHEM,
 				changesFor(pulled.body(), "courses").get(0).get("key").get(0).longValue());
+	}
+
+	// ── Access that changes without the rows changing (V51) ──────────────
+
+	@Test
+	void aPullSaysWhatDecidesAccessAndADepartmentChangeChangesIt() throws Exception {
+
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+
+		Reply first = get(phone, "/sync/pull");
+		String access = SyncJson.parsePull(first.raw()).access();
+		String watermark = first.body().get("watermark").stringValue();
+
+		assertNotNull(access, first::toString);
+		assertEquals(access, SyncJson.parsePull(get(phone,
+						"/sync/pull?since=" + urlEncode(watermark)).raw()).access(),
+				"nothing about the account changed, so neither does the digest");
+
+		// The case a phone found: moved to another department, nothing about the rows that
+		// department's batches hold is written, and the feed has nothing to say.
+		postgres.asSuperuser(
+				"UPDATE professors SET department = 'CHEMISTRY' WHERE prof_id = " + PROF_CS);
+
+		String moved = SyncJson.parsePull(get(phone,
+				"/sync/pull?since=" + urlEncode(watermark)).raw()).access();
+
+		assertNotNull(moved);
+		assertNotEquals(access, moved,
+				"the phone can only start over if it can tell that something changed");
+
+		// And a role, for the same reason.
+		grantRole(accountProfCs, "HOD", "CHEMISTRY", null, accountOffice);
+
+		assertNotEquals(moved, SyncJson.parsePull(get(phone,
+				"/sync/pull?since=" + urlEncode(watermark)).raw()).access());
+	}
+
+	@Test
+	void aRowThatChangesOutOfSightArrivesAsADeletion() throws Exception {
+
+		Phone head = signInWithAPhone("c.head@sies.edu.in");
+
+		Reply snapshot = get(head, "/sync/pull");
+		String watermark = snapshot.body().get("watermark").stringValue();
+
+		assertEquals(1, changesFor(snapshot.body(), "student_year").size(),
+				"the head of Computer Science holds its student to begin with");
+
+		// Moved to Chemistry: the head can no longer read the enrolment, and it is the row
+		// that changed.
+		postgres.asSuperuser("""
+				UPDATE student_year SET major_dept = 'CHEMISTRY', stream = 'BSc'
+				WHERE student_id = %d AND academic_year = 2025
+				""".formatted(STUDENT_CS));
+
+		Reply pulled = get(head, "/sync/pull?since=" + urlEncode(watermark));
+		List<JsonNode> enrolments = changesFor(pulled.body(), "student_year");
+
+		assertEquals(1, enrolments.size(), pulled::toString);
+		assertEquals("DELETE", enrolments.get(0).get("op").stringValue(),
+				"without it the phone keeps a student it may no longer read, for ever");
+		assertEquals(STUDENT_CS, enrolments.get(0).get("key").get(0).longValue());
+
+		// Whoever can still read it gets the row, as before.
+		Phone office = signInWithAPhone("office@sies.edu.in");
+		String officeMark = get(office, "/sync/pull").body().get("watermark").stringValue();
+
+		postgres.asSuperuser("""
+				UPDATE student_year SET roll_no = 'CH-FY-009'
+				WHERE student_id = %d AND academic_year = 2025
+				""".formatted(STUDENT_CS));
+
+		List<JsonNode> seen = changesFor(get(office,
+				"/sync/pull?since=" + urlEncode(officeMark)).body(), "student_year");
+
+		assertEquals(1, seen.size());
+		assertEquals("UPSERT", seen.get(0).get("op").stringValue());
+	}
+
+	@Test
+	void theKeysAreOnlyWhatTheAccountMayRead() throws Exception {
+
+		Phone chemistry = signInWithAPhone("b.chem@sies.edu.in");
+		Reply mine = get(chemistry, "/sync/keys?table=students");
+
+		assertEquals(200, mine.status(), mine::toString);
+		assertEquals(List.of(List.of(STUDENT_CHEM)), SyncJson.parseKeys(mine.raw()).keys(),
+				"the same policies as a snapshot, so a sweep and a snapshot agree");
+
+		// A page at a time, resumed from the last key.
+		Phone office = signInWithAPhone("office@sies.edu.in");
+
+		SyncJson.KeyPage first = SyncJson.parseKeys(
+				get(office, "/sync/keys?table=students&limit=1").raw());
+
+		assertEquals(List.of(List.of(STUDENT_CS)), first.keys());
+		assertTrue(first.more());
+
+		SyncJson.KeyPage second = SyncJson.parseKeys(
+				get(office, "/sync/keys?table=students&limit=1&after=" + STUDENT_CS).raw());
+
+		assertEquals(List.of(List.of(STUDENT_CHEM)), second.keys());
+		assertFalse(second.more());
+
+		// A table name goes into a statement, and it came from a phone.
+		assertEquals(400, get(office, "/sync/keys?table=app_account").status());
+		assertEquals(400, get(office, "/sync/keys?table=students&after=1,2").status());
 	}
 
 	@Test

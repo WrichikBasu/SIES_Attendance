@@ -177,6 +177,30 @@ public final class SyncClient {
 	}
 
 	/**
+	 * One page of the keys this account may read in a table, for a sweep.
+	 *
+	 * @param after the last key of the previous page, or empty for the first
+	 */
+	@NonNull
+	public SyncJson.KeyPage keys(@NonNull String table, @NonNull List<Long> after, int limit)
+			throws IOException {
+
+		StringBuilder query = new StringBuilder("/sync/keys?table=")
+				.append(java.net.URLEncoder.encode(table, StandardCharsets.UTF_8))
+				.append("&limit=").append(limit);
+
+		if (!after.isEmpty()) {
+			query.append("&after=");
+
+			for (int at = 0; at < after.size(); at++) {
+				query.append(at == 0 ? "" : ",").append(after.get(at));
+			}
+		}
+
+		return SyncJson.parseKeys(call("GET", query.toString(), null));
+	}
+
+	/**
 	 * Ends this session on the server.
 	 * <p>
 	 * Worth doing rather than only forgetting the token locally: a session is a row, and a

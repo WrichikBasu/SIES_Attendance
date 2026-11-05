@@ -267,4 +267,30 @@ public class SyncJsonTest {
 		assertEquals(List.of(), SyncJson.textsIn("{\"roles\":[]}", "roles", "role"));
 		assertNull(SyncJson.textsIn("{}", "roles", "role"));
 	}
+
+	@Test
+	public void aPullCarriesTheDigestOfWhatDecidesAccess() {
+
+		SyncJson.PullPage page = SyncJson.parsePull(
+				"{\"watermark\":\"x@1\",\"more\":false,\"changes\":[],\"access\":\"9e1c\"}");
+
+		assertEquals("9e1c", page.access());
+
+		// An older server sends none, and the phone then changes nothing.
+		assertNull(SyncJson.parsePull(
+				"{\"watermark\":\"x@1\",\"more\":false,\"changes\":[]}").access());
+	}
+
+	@Test
+	public void aPageOfKeysIsReadInOrder() {
+
+		SyncJson.KeyPage page = SyncJson.parseKeys(
+				"{\"keys\":[[1,2],[1,3],[36028797018963968,1]],\"more\":true}");
+
+		assertEquals(List.of(List.of(1L, 2L), List.of(1L, 3L), List.of(36028797018963968L, 1L)),
+				page.keys());
+		assertTrue(page.more());
+
+		assertFalse(SyncJson.parseKeys("{\"keys\":[],\"more\":false}").more());
+	}
 }

@@ -80,7 +80,21 @@ public final class SyncWorker extends Worker {
 			SyncSignIn.registerIfPending(context);
 
 			Pushed pushed = pushEverything(drain);
-			Pulled pulled = pullEverything(drain);
+
+			startOverIfAWeekHasPassed(context, db);
+
+			Pulled pulled = pullEverything(context, db, drain);
+
+			// Once the pull has caught up, and not before: mid-snapshot, a row the account
+			// may read and that has not arrived yet would look like one it may not.
+			// And only from a server that sends a digest, which is one that answers
+			// GET /sync/keys: an older one would refuse the sweep on every run.
+			if (!pulled.morePending() && DeviceIdentity.sweepWanted(context)
+					&& DeviceIdentity.accessFingerprint(context) != null) {
+				drain.sweep();
+				DeviceIdentity.recordSweepWanted(context, false);
+				DeviceIdentity.recordLastSweepAt(context, System.currentTimeMillis());
+			}
 
 			boolean more = pushed.morePending() || pulled.morePending();
 
@@ -219,7 +233,8 @@ public final class SyncWorker extends Worker {
 	}
 
 	@NonNull
-	private Pulled pullEverything(@NonNull OutboxDrain drain) throws IOException {
+	private Pulled pullEverything(@NonNull Context context, @NonNull MainDatabase db,
+	                              @NonNull OutboxDrain drain) throws IOException {
 
 		int applied = 0;
 
@@ -228,10 +243,91 @@ public final class SyncWorker extends Worker {
 			OutboxDrain.Result result = drain.pull();
 			applied += result.applied();
 
+			if (result.sweepWanted()) {
+				DeviceIdentity.recordSweepWanted(context, true);
+			}
+
+			if (accessChanged(context, db, result.access())) {
+				// Starting over: the next page is the first of a snapshot.
+				continue;
+			}
+
 			if (!result.morePending()) {
 				return new Pulled(false, applied);
 			}
 		}
 		return new Pulled(true, applied);
+	}
+
+	/** A week: how stale a row the account may no longer read can get, whatever the cause. */
+	private static final long SWEEP_EVERY = 7L * 24 * 60 * 60 * 1000;
+
+	/**
+	 * Whether the digest of what decides this account's access has changed, and if it has,
+	 * starts the pull over from a snapshot with a sweep to follow.
+	 * <p>
+	 * A pull brings the rows that changed. Access can change without them — a professor moved
+	 * to another department, a role granted or revoked, a CR appointment ending — and then the
+	 * feed says nothing: the rows the account has lost stay on the phone, and the ones it has
+	 * gained never arrive. The snapshot brings the second kind and the sweep after it removes
+	 * the first. V51 says what the digest covers.
+	 * <p>
+	 * The first digest an account's phone sees is only recorded: that pull is its first
+	 * snapshot, so there is nothing to make up for. A server too old to send one sends null,
+	 * which changes nothing.
+	 */
+	private static boolean accessChanged(@NonNull Context context, @NonNull MainDatabase db,
+	                                     @Nullable String access) {
+
+		if (access == null) {
+			return false;
+		}
+
+		String known = DeviceIdentity.accessFingerprint(context);
+
+		if (known == null) {
+			DeviceIdentity.recordAccessFingerprint(context, access);
+
+			if (DeviceIdentity.lastSweepAt(context) == 0L) {
+				// The weekly sweep counts from here.
+				DeviceIdentity.recordLastSweepAt(context, System.currentTimeMillis());
+			}
+			return false;
+		}
+
+		if (known.equals(access)) {
+			return false;
+		}
+
+		Log.i(TAG, "this account's access changed: starting over from a snapshot");
+
+		// The sweep is owed before the watermark is forgotten, so a crash in between costs
+		// at most an extra sweep, never a snapshot without one.
+		DeviceIdentity.recordSweepWanted(context, true);
+		db.daoOutbox().forgetWatermarkSync();
+		DeviceIdentity.recordAccessFingerprint(context, access);
+		return true;
+	}
+
+	/**
+	 * Starts over from a snapshot and a sweep once a week, for whatever the digest does not
+	 * cover: a policy that reads rows other than the account's own — a batch's department, the
+	 * batches a course is linked to — can take a row out of sight without that row changing.
+	 */
+	private static void startOverIfAWeekHasPassed(@NonNull Context context,
+	                                              @NonNull MainDatabase db) {
+
+		long last = DeviceIdentity.lastSweepAt(context);
+
+		// No digest yet means a server without V51, which cannot be swept against.
+		if (last == 0L || DeviceIdentity.accessFingerprint(context) == null
+				|| DeviceIdentity.sweepWanted(context)
+				|| System.currentTimeMillis() - last < SWEEP_EVERY) {
+			return;
+		}
+
+		Log.i(TAG, "a week since the last sweep: starting over from a snapshot");
+		DeviceIdentity.recordSweepWanted(context, true);
+		db.daoOutbox().forgetWatermarkSync();
 	}
 }

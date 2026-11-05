@@ -389,6 +389,7 @@ POST /devices                             register an install, get its node numb
 
 POST /sync/push                           the phone's queued changes
 GET  /sync/pull?since=&limit=             a snapshot, or changes since the watermark
+GET  /sync/keys?table=&after=&limit=      the keys of every row in a table the account may read
 
 GET  /export                              a register, as JSON rows
 POST /roster?year=                        a roster CSV (professors for their own department,
