@@ -409,6 +409,7 @@
 
 
     <string name="dialog_invalid_combination">That combination does not exist</string>
+    <string name="helper_no_coordinator_for_type">No professor of %1$s has been entered yet, and only one of them can coordinate this type</string>
     <string name="app_bar_title">SIES Attendance</string>
 
     <!-- Data export -->

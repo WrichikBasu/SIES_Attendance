@@ -210,9 +210,29 @@ public final class AcademicRules {
 		return validate(ownDepartment ? department : null, stream, year, semester);
 	}
 
-	/** "English, Hindi or Marathi". */
+	/**
+	 * Whether a professor of that department may coordinate a course of that type, or what
+	 * to say if not: an AEC is coordinated by a professor of a department that may offer one
+	 * (V50), and every other type by anybody.
+	 *
+	 * @param department the coordinator's department, or null when not known yet
+	 */
+	@Nullable
+	public static String validateCoordinator(@Nullable CourseType type,
+	                                         @Nullable Department department) {
+
+		List<Department> offering = type == null ? null : type.offeringDepartments();
+
+		if (department == null || offering == null || offering.contains(department)) {
+			return null;
+		}
+		return "An " + type + " course is coordinated by a professor of "
+				+ joinDepartments(offering) + ", not of " + department;
+	}
+
+	/** "English, Hindi or Marathi": a list of departments as a sentence says it. */
 	@NonNull
-	private static String joinDepartments(@NonNull List<Department> departments) {
+	public static String joinDepartments(@NonNull List<Department> departments) {
 
 		StringBuilder out = new StringBuilder();
 

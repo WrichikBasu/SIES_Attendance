@@ -677,6 +677,27 @@ class SyncTest {
 				+ " AND course_topic = 'Indian astronomy'"));
 	}
 
+	@Test
+	void aProfessorOfAnotherDepartmentCannotCoordinateAnAec() throws Exception {
+
+		// The way in V49 left open: any professor may make a course they coordinate (V11),
+		// and this one is a computer scientist making an English AEC (V50).
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+		long courseID = phone.key(653);
+
+		Map<String, Object> course = courseRow(courseID, PROF_CS, "ENG-AEC-9", "AEC");
+		course.put("offeringDepartment", "ENGLISH");
+
+		Reply pushed = push(phone, List.of(intent("courses", List.of(courseID), "UPSERT",
+				course)));
+
+		assertEquals(0, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertTrue(pushed.body().get("rejected").get(0).get("reason").stringValue()
+				.contains("English, Hindi or Marathi"), pushed::toString);
+		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue());
+		assertEquals(0, count("SELECT count(*) FROM courses WHERE course_id = " + courseID));
+	}
+
 	/** A Computer Science course row as a phone would send it. */
 	private static Map<String, Object> courseRow(long courseID, long profID, String code,
 	                                             String type) {

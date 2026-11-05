@@ -686,6 +686,20 @@ public class DomainRulesTest {
 	}
 
 	@Test
+	public void anAecIsCoordinatedByALanguageProfessor() {
+
+		assertNull(AcademicRules.validateCoordinator(CourseType.AEC, Department.HINDI));
+
+		String refused = AcademicRules.validateCoordinator(CourseType.AEC, Department.PHYSICS);
+		assertNotNull(refused);
+		assertTrue(refused, refused.contains("English, Hindi or Marathi"));
+
+		// Anybody coordinates the rest, and an unknown department is not refused here.
+		assertNull(AcademicRules.validateCoordinator(CourseType.MAJOR, Department.PHYSICS));
+		assertNull(AcademicRules.validateCoordinator(CourseType.AEC, null));
+	}
+
+	@Test
 	public void aMajorIsStillHeldToItsDepartmentsStreams() {
 
 		// Nothing is relaxed for the types whose roll is the students majoring in the offering
