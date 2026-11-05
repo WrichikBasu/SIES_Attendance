@@ -912,8 +912,8 @@ public final class SyncWriter {
 					+ "device. The batch is unchanged on the server.";
 			case "courses", "course_instructor" -> "a course is the "
 					+ "department's to withdraw, and withdrawing it is marking it "
-					+ "discontinued rather than deleting it. This deletion stays on this "
-					+ "device.";
+					+ "discontinued rather than deleting it; an IKS or VEC course is an "
+					+ "administrator's alone (V46). This deletion stays on this device.";
 			case "academic_years" -> "a session is the college's, so removing one here cannot "
 					+ "be sent.";
 			default -> "the server would not remove that row: it is not this account's to "
@@ -1007,6 +1007,13 @@ public final class SyncWriter {
 			if (ROSTER_TABLES.contains(table)) {
 				return "the roll is loaded by the office, so this roster stays on this device. "
 						+ "Attendance still syncs.";
+			}
+
+			// Named because it is the refusal a head or a coordinator now meets for a course
+			// they could change before V46, and the generic sentence would not say why.
+			if (table.equals("courses")) {
+				return "the server refused this course: it is not yours to change. An IKS or "
+						+ "VEC course is created and changed by an administrator alone.";
 			}
 
 			return "the server refused this row: it is not yours to change";

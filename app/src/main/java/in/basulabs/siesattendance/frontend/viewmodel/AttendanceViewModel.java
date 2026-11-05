@@ -26,6 +26,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EntityAcademicYear;
@@ -415,6 +416,17 @@ public class AttendanceViewModel extends AndroidViewModel {
 	private static final ExecutorService NETWORK_TASK_EXECUTOR =
 			Executors.newSingleThreadExecutor();
 
+	/**
+	 * Asks whether this server's API answers at an address, before the phone is pointed at it.
+	 * See {@link SyncClient#probe}.
+	 *
+	 * @param onChecked run on the network thread with what answered
+	 */
+	public void checkServer(@NonNull String address,
+	                        @NonNull java.util.function.Consumer<SyncClient.Probe> onChecked) {
+		NETWORK_TASK_EXECUTOR.execute(() -> onChecked.accept(SyncClient.probe(address)));
+	}
+
 	/** How many local changes are waiting to reach the server. */
 	public LiveData<Integer> getPendingChanges() {
 		return repository.observePendingChangeCount();
@@ -426,7 +438,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
-	 * Whether this build has a server at all.
+	 * Whether this phone has a server at all: one typed in on it, or else the build's.
 	 * <p>
 	 * Empty in a release build until somebody configures one, and what
 	 * {@code SignInGuard} consults before insisting on a session: there is no asking somebody to
@@ -723,6 +735,16 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return Permissions.may(DeviceIdentity.accountKind(getApplication()),
 				DeviceIdentity.mayKeepARoll(getApplication()),
 				DeviceIdentity.roles(getApplication()), what);
+	}
+
+	/**
+	 * Whether the signed-in account may make, change or remove a course of that type; see
+	 * {@link Permissions#mayKeepCourseOfType}. An IKS or VEC course is an administrator's.
+	 */
+	public boolean mayKeepCourseOfType(@Nullable CourseType type) {
+		return may(Permissions.Capability.COURSES)
+				&& Permissions.mayKeepCourseOfType(DeviceIdentity.accountKind(getApplication()),
+				DeviceIdentity.roles(getApplication()), type);
 	}
 
 	/**

@@ -133,5 +133,10 @@ public final class SignOut {
 		DeviceIdentity.recordCoordinatedBatches(context, null);
 		DeviceIdentity.recordLastRun(context, 0, 0);
 		DeviceIdentity.clearRefusals(context);
+
+		// The next account starts from a snapshot of its own, so it has nothing to sweep.
+		DeviceIdentity.recordAccessFingerprint(context, null);
+		DeviceIdentity.recordSweepWanted(context, false);
+		DeviceIdentity.recordLastSweepAt(context, 0L);
 	}
 }

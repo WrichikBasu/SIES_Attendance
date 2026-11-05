@@ -956,10 +956,10 @@ class WireTest {
 	void aBadRowCostsOnlyThatRow() throws Exception {
 
 		Reply reply = postCsv("/roster?year=" + SESSION, """
-				rollNo,name,year,stream,majorDept,minorDept
+				rollNo,name,year,stream,majorDept,oeDept
 				CS-FY-010,Good Row,FY,BSc_unaided,COMPUTER_SCIENCE,
 				CS-FY-011,Unknown Department,FY,BSc_unaided,NOT_A_DEPARTMENT,
-				CS-FY-012,Minor Equals Major,FY,BSc_unaided,COMPUTER_SCIENCE,COMPUTER_SCIENCE
+				CS-FY-012,Elective Equals Major,FY,BSc_unaided,COMPUTER_SCIENCE,COMPUTER_SCIENCE
 				""", tokenFor("office@sies.edu.in", "STAFF"));
 
 		assertEquals(200, reply.status(), reply::toString);
@@ -971,7 +971,7 @@ class WireTest {
 		// correct the file.
 		assertTrue(reply.body().get("errors").get(0).stringValue().startsWith("Line 3:"),
 				reply.body().get("errors").toString());
-		assertTrue(reply.body().get("errors").get(1).stringValue().contains("minor department"),
+		assertTrue(reply.body().get("errors").get(1).stringValue().contains("open elective"),
 				reply.body().get("errors").toString());
 
 		assertEquals(1, count("SELECT count(*) FROM student_year "
@@ -1770,6 +1770,19 @@ class WireTest {
 		// Signing out has to take the kept token with it, or "sign out" means "until the
 		// next reload".
 		assertTrue(page.raw().contains("keepToken(null)"), page.raw().length() + " bytes");
+	}
+
+	@Test
+	void theServersOwnAddressLeadsToTheConsole() throws Exception {
+
+		// HttpClient follows no redirects unless asked, so this sees the redirect itself.
+		HttpResponse<String> response = HttpClient.newHttpClient().send(
+				HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/")).GET().build(),
+				HttpResponse.BodyHandlers.ofString());
+
+		assertEquals(302, response.statusCode(), "a redirect a browser does not keep forever");
+		assertTrue(response.headers().firstValue("Location").orElse("absent")
+				.endsWith("/console.html"), response.headers().toString());
 	}
 
 	@Test
@@ -2921,6 +2934,18 @@ class WireTest {
 	void thereIsNoBrowsingWithoutASession() throws Exception {
 
 		Reply refused = get("/data", null, null);
+
+		assertEquals(401, refused.status(), refused::toString);
+		assertEquals("unauthenticated", refused.body().get("code").stringValue());
+	}
+
+	@Test
+	void aPullWithNoTokenIsHowAPhoneKnowsThisServerIsHere() throws Exception {
+
+		// The app's SyncClient.probe asks exactly this before it is pointed at an address,
+		// and takes this answer, and only this one, to mean the API is there. Change the
+		// status or the code and no phone can be moved to this server.
+		Reply refused = get("/sync/pull", null, null);
 
 		assertEquals(401, refused.status(), refused::toString);
 		assertEquals("unauthenticated", refused.body().get("code").stringValue());

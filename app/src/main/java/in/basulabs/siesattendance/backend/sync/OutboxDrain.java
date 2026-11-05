@@ -1,6 +1,7 @@
 package in.basulabs.siesattendance.backend.sync;
 
 import android.database.Cursor;
+import android.database.sqlite.SQLiteConstraintException;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -95,13 +96,24 @@ public final class OutboxDrain {
 	 *
 	 * @param rejected how many the server refused and this device kept, to try again
 	 * @param dropped  how many it refused for good, which are gone from the queue
+	 * @param access   the digest of what decides the account's access that a pull carried, or
+	 *                 null; see {@code SyncWorker}
+	 * @param sweepWanted whether a pull held back a deletion this device's own rows stood in
+	 *                 the way of, so a sweep is owed; see {@link #sweep()}
 	 * @param refusals every refusal the server called final in this batch, newest last. A list
 	 *                 rather than one string: two rows refused for two different reasons are
 	 *                 two things to tell somebody, and the one that used to win was whichever
 	 *                 came last in the batch
 	 */
 	public record Result(int sent, int rejected, int dropped, @NonNull List<String> refusals,
-	                     int applied, boolean morePending) {
+	                     int applied, boolean morePending, @Nullable String access,
+	                     boolean sweepWanted) {
+
+		/** A push's result, or a pull's that carried no digest and held nothing back. */
+		public Result(int sent, int rejected, int dropped, @NonNull List<String> refusals,
+		              int applied, boolean morePending) {
+			this(sent, rejected, dropped, refusals, applied, morePending, null, false);
+		}
 
 		public boolean didSomething() {
 			return sent > 0 || applied > 0;
@@ -260,10 +272,11 @@ public final class OutboxDrain {
 					db.daoOutbox().recordPullSync(page.watermark(),
 							System.currentTimeMillis()));
 
-			return new Result(0, 0, 0, List.of(), 0, page.more());
+			return new Result(0, 0, 0, List.of(), 0, page.more(), page.access(), false);
 		}
 
 		int[] applied = new int[1];
+		heldBack = false;
 
 		db.runInTransaction(() -> {
 
@@ -294,7 +307,154 @@ public final class OutboxDrain {
 			}
 		});
 
-		return new Result(0, 0, 0, List.of(), applied[0], page.more());
+		return new Result(0, 0, 0, List.of(), applied[0], page.more(), page.access(), heldBack);
+	}
+
+	/**
+	 * Whether the page being applied had a deletion this device's own rows stood in the way
+	 * of. Only touched on the worker's thread, inside {@link #pull()}.
+	 */
+	private boolean heldBack;
+
+	/** How many keys one {@code GET /sync/keys} asks for. */
+	private static final int KEY_PAGE = 5000;
+
+	/**
+	 * Removes the rows this device holds that the account may no longer read, and returns how
+	 * many went.
+	 * <p>
+	 * A pull brings what changed, and access can change without the rows changing: a professor
+	 * moved to another department keeps that department's batches, because nothing about the
+	 * batches was written. So the device asks for the keys of everything it may read, table by
+	 * table, and removes what it holds that is not among them. {@link KeySweep} does the
+	 * comparing.
+	 * <p>
+	 * Every list is fetched before anything is removed. A page that does not arrive throws, and
+	 * a sweep stopped half way through the lists would read a key it had not been sent yet as
+	 * one the server left out.
+	 * <p>
+	 * Three kinds of row stay.
+	 * <ul>
+	 *     <li>One with a change still in the outbox. The server has not seen it yet, so its
+	 *     absence from the list says nothing.</li>
+	 *     <li>One something staying points at, which the device's RESTRICT foreign keys keep.
+	 *     Its children went first, as on signing out, so this is a parent of a row above.</li>
+	 *     <li>Nothing else. A row the server refused for good and the device kept is removed:
+	 *     after signing in, what the server holds is what is true.</li>
+	 * </ul>
+	 * <p>
+	 * Called after a snapshot has finished, so whatever the account may read is already here
+	 * and only what it may not is left to remove.
+	 */
+	public int sweep() throws IOException {
+
+		List<DeviceTables.Table> tables = new ArrayList<>(DeviceTables.inDependencyOrder());
+		java.util.Collections.reverse(tables);
+
+		Map<DeviceTables.Table, List<List<Long>>> doomed = new LinkedHashMap<>();
+
+		for (DeviceTables.Table table : tables) {
+
+			List<List<Long>> absent = KeySweep.absentFromServer(localKeys(table),
+					after -> client.keys(table.name(), after, KEY_PAGE));
+
+			if (!absent.isEmpty()) {
+				doomed.put(table, absent);
+			}
+		}
+
+		if (doomed.isEmpty()) {
+			return 0;
+		}
+
+		int[] removed = new int[1];
+
+		db.runInTransaction(() -> {
+
+			// Signed out while the lists were on their way down: the phone is empty already.
+			if (!client.isSignedIn()) {
+				return;
+			}
+
+			SupportSQLiteDatabase sqlite = db.getOpenHelper().getWritableDatabase();
+
+			// As for a pulled page: the server already lacks these rows, and queueing their
+			// deletion would be telling it about rows it never sends this account.
+			db.daoOutbox().setApplyingSync(1);
+
+			try {
+				for (Map.Entry<DeviceTables.Table, List<List<Long>>> entry : doomed.entrySet()) {
+
+					DeviceTables.Table table = entry.getKey();
+					java.util.Set<List<Long>> pending = pendingKeys(table);
+					String delete = DeviceSql.deleteRow(table);
+
+					for (List<Long> key : entry.getValue()) {
+
+						if (pending.contains(key)) {
+							continue;
+						}
+
+						try {
+							sqlite.execSQL(delete, key.toArray());
+							removed[0]++;
+
+						} catch (SQLiteConstraintException stillPointedAt) {
+							// A row that stays points at it.
+							Log.i(TAG, "kept " + table.name() + key + ": a row that stays "
+									+ "points at it");
+						}
+					}
+				}
+
+			} finally {
+				db.daoOutbox().setApplyingSync(0);
+			}
+		});
+
+		Log.i(TAG, "swept " + removed[0] + " rows this account may no longer read");
+		return removed[0];
+	}
+
+	/** Every primary key in one of this device's tables. */
+	@NonNull
+	private List<List<Long>> localKeys(@NonNull DeviceTables.Table table) {
+
+		StringBuilder sql = new StringBuilder("SELECT ");
+
+		for (int at = 0; at < table.primaryKey().size(); at++) {
+			sql.append(at == 0 ? "" : ", ").append('`').append(table.primaryKey().get(at))
+					.append('`');
+		}
+		sql.append(" FROM `").append(table.name()).append('`');
+
+		List<List<Long>> keys = new ArrayList<>();
+
+		try (Cursor cursor = db.getOpenHelper().getReadableDatabase().query(sql.toString())) {
+
+			while (cursor.moveToNext()) {
+
+				List<Long> key = new ArrayList<>();
+
+				for (int at = 0; at < table.primaryKey().size(); at++) {
+					key.add(cursor.getLong(at));
+				}
+				keys.add(key);
+			}
+		}
+		return keys;
+	}
+
+	/** The keys of a table's rows with a change still waiting in the outbox. */
+	@NonNull
+	private java.util.Set<List<Long>> pendingKeys(@NonNull DeviceTables.Table table) {
+
+		java.util.Set<List<Long>> keys = new java.util.HashSet<>();
+
+		for (EntityOutbox entry : db.daoOutbox().pendingForTableSync(table.name())) {
+			keys.add(keyOf(table, entry));
+		}
+		return keys;
 	}
 
 	/**
@@ -413,8 +573,22 @@ public final class OutboxDrain {
 		DeviceTables.Table table = DeviceTables.of(change.table());
 
 		if (change.op() == OutboxOp.DELETE) {
-			sqlite.execSQL(DeviceSql.deleteRow(table), change.key().toArray());
-			return true;
+
+			try {
+				sqlite.execSQL(DeviceSql.deleteRow(table), change.key().toArray());
+				return true;
+
+			} catch (SQLiteConstraintException stillPointedAt) {
+				// Rows here still point at it. Most often a row that went out of this
+				// account's sight -- a batch handed to another department -- whose children
+				// were never written to and so are not in the feed at all. Held back rather
+				// than allowed to fail the page, which would jam every pull behind it, and
+				// the sweep that follows removes it together with them.
+				Log.i(TAG, "held back deleting " + table.name() + change.key()
+						+ ": rows here still point at it, so a sweep follows");
+				heldBack = true;
+				return false;
+			}
 		}
 
 		Parent missing = missingParent(sqlite, table, change.row());

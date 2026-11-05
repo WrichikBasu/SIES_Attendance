@@ -201,18 +201,10 @@ public final class RosterCsv {
 		Department oeDept = parseOptionalEnum(Department.class,
 				optional(cells, columns, "oedept"), "open elective department");
 
-		// The three departments have to be three different departments. This is not the forms'
-		// rule, because the forms cannot offer the same department twice -- it is
-		// student_year_minor_not_major, _oe_not_major and _oe_not_minor from V2, which a CSV is
-		// the only way to reach. Checked here rather than left to PostgreSQL so that the app
+		// The open elective has to be a department of its own: student_year_oe_not_major and
+		// _oe_not_minor from V2. Checked here rather than left to PostgreSQL so that the app
 		// refuses the row for the same reason the server would, and says so with the line
-		// number instead of a constraint name.
-		if (minorDept == majorDept) {
-			throw new IllegalArgumentException(
-					"the minor department is the same as the major department (" + majorDept
-							+ ")");
-		}
-
+		// number instead of a constraint name. The minor may be the major department (V45).
 		if (oeDept != null && (oeDept == majorDept || oeDept == minorDept)) {
 			throw new IllegalArgumentException("the open elective department is the same as the "
 					+ (oeDept == majorDept ? "major" : "minor") + " department (" + oeDept + ")");
@@ -401,8 +393,9 @@ public final class RosterCsv {
 				+ "OPTIONAL COLUMNS (leave out, or leave the cell blank)\n"
 				+ "• pronouns: they/them when blank\n"
 				+ "• email\n"
-				+ "• minorDept, oeDept: the minor and open elective departments, each different "
-				+ "from the major and from each other\n"
+				+ "• minorDept: the minor department, which may be the major one\n"
+				+ "• oeDept: the open elective department, different from the major and the "
+				+ "minor\n"
 				+ "• semester: " + semesters + "\n"
 				+ "• division: A to D, only for the aided BSc and BA\n"
 				+ "• apaarId: digits only. It recognises the same student in a later session, "

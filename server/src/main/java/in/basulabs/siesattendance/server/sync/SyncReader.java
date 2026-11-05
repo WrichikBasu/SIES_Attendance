@@ -34,6 +34,16 @@ import in.basulabs.siesattendance.backend.sync.OutboxOp;
  * gap and it is stated rather than papered over — a key is a number that names no person, and the
  * alternative is a device that never hears about a deleted lecture and shows it for ever.
  *
+ * <h3>A row that changes out of sight</h3>
+ * An {@code UPDATE} entry for a row the caller can no longer read is passed on as a deletion,
+ * by key, like a real one. The row may be on the device from when the caller could read it —
+ * a student since moved to another department — and nothing else would ever tell the device to
+ * let go of it. It gives away what a deletion already does: that a row with that key changed.
+ * <p>
+ * Access that changes without the rows changing — the caller moved to another department — is
+ * not in the feed at all. {@link #accessFingerprint} is what lets the device notice that, and
+ * {@link #keys} what lets it find the rows to remove.
+ *
  * <h3>The first pull, and why it can take several</h3>
  * A device with no watermark gets a snapshot: every row it may read, table by table in dependency
  * order and in key order within each, and then the head of the feed as its watermark. Not a replay
@@ -127,7 +137,9 @@ public final class SyncReader {
 						continue;
 					}
 
-					if ("DELETE".equals(results.getString("action"))) {
+					String action = results.getString("action");
+
+					if ("DELETE".equals(action)) {
 						changes.add(new Change(table, key, OutboxOp.DELETE, null));
 					} else {
 						// Read now, not as the entry recorded it: the device wants the row as
@@ -137,6 +149,15 @@ public final class SyncReader {
 
 						if (row != null) {
 							changes.add(new Change(table, key, OutboxOp.UPSERT, row));
+
+						} else if ("UPDATE".equals(action)) {
+							// Changed, and now out of this actor's sight: a student moved to
+							// another department, a batch handed to another one. The device
+							// may hold it from before, and nothing else would ever tell it
+							// to let go, so it hears of a deletion. An insertion it cannot
+							// read was never its to hold and is still dropped. See the class
+							// notes on what a deletion gives away.
+							changes.add(new Change(table, key, OutboxOp.DELETE, null));
 						}
 					}
 				}
@@ -392,6 +413,106 @@ public final class SyncReader {
 			last.put(change.table() + change.key(), change);
 		}
 		return new ArrayList<>(last.values());
+	}
+
+	/**
+	 * A digest of what decides this actor's own access, sent with every pull. V51 says what is
+	 * in it and what is not; a device that sees it change starts again from a snapshot and
+	 * removes what did not come back.
+	 */
+	@NonNull
+	public static String accessFingerprint(@NonNull Connection connection) throws SQLException {
+
+		try (Statement statement = connection.createStatement();
+		     ResultSet results = statement.executeQuery(
+				     "SELECT actor_access_fingerprint()")) {
+
+			return results.next() && results.getString(1) != null ? results.getString(1) : "";
+		}
+	}
+
+	/**
+	 * One page of the keys this actor may read in a table, for a device's sweep.
+	 *
+	 * @param keys in key order, each in the table's own key order
+	 * @param more true when the limit was reached and another page would bring more
+	 */
+	public record KeyPage(@NonNull List<List<Long>> keys, boolean more) {
+	}
+
+	/**
+	 * The keys of every row of a table this actor may read, after a key, in key order.
+	 * <p>
+	 * What a device compares its own rows against after a snapshot, to find the ones it may
+	 * no longer read. Keys rather than a second snapshot, because the device has just had the
+	 * rows; what it lacks is the list of what is <em>not</em> there. In key order so the device
+	 * can walk its own rows alongside, holding one page at a time rather than a roster.
+	 * <p>
+	 * Under the caller's own policies, exactly as {@link #snapshot} reads, so the two agree on
+	 * what this actor may see.
+	 *
+	 * @param after the last key of the previous page, or empty for the first
+	 * @throws IllegalArgumentException for a table that is not synced, or a key of the wrong
+	 *                                  width: both come from a phone, and both go into a
+	 *                                  statement
+	 */
+	@NonNull
+	public static KeyPage keys(@NonNull Connection connection, @NonNull String tableName,
+	                           @NonNull List<Long> after, int limit) throws SQLException {
+
+		if (!syncedTables(connection).contains(tableName)) {
+			throw new IllegalArgumentException("not a synced table: " + tableName);
+		}
+
+		DeviceTables.Table table = DeviceTables.of(tableName);
+
+		if (!after.isEmpty() && after.size() != table.primaryKey().size()) {
+			throw new IllegalArgumentException("not a key of " + tableName + ": " + after);
+		}
+
+		int capped = Math.max(1, Math.min(limit, 10_000));
+		StringBuilder sql = new StringBuilder("SELECT ").append(keyColumns(table))
+				.append(" FROM ").append(table.name());
+
+		if (!after.isEmpty()) {
+			sql.append(" WHERE (").append(keyColumns(table)).append(") > (");
+
+			for (int at = 0; at < after.size(); at++) {
+				sql.append(at == 0 ? "" : ", ").append("?");
+			}
+			sql.append(")");
+		}
+
+		sql.append(" ORDER BY ").append(keyColumns(table)).append(" LIMIT ").append(capped + 1);
+
+		List<List<Long>> keys = new ArrayList<>();
+		boolean more = false;
+
+		try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+
+			for (int at = 0; at < after.size(); at++) {
+				statement.setLong(at + 1, after.get(at));
+			}
+
+			try (ResultSet results = statement.executeQuery()) {
+
+				while (results.next()) {
+
+					if (keys.size() == capped) {
+						more = true;
+						break;
+					}
+
+					List<Long> key = new ArrayList<>();
+
+					for (int column = 1; column <= table.primaryKey().size(); column++) {
+						key.add(results.getLong(column));
+					}
+					keys.add(key);
+				}
+			}
+		}
+		return new KeyPage(keys, more);
 	}
 
 	/**

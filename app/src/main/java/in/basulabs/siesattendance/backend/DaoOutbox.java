@@ -65,6 +65,11 @@ public interface DaoOutbox {
 			+ "AND key2 = :key2 AND key3 = :key3 AND op = 'DELETE')")
 	boolean isDeletePendingSync(@NonNull String table, long key1, long key2, long key3);
 
+	/** Every change waiting for one table, for a sweep to leave those rows alone. */
+	@NonNull
+	@Query("SELECT * FROM outbox WHERE tableName = :table")
+	List<EntityOutbox> pendingForTableSync(@NonNull String table);
+
 	/**
 	 * Queues an intent by hand, for a row the outbox triggers never saw change.
 	 * <p>

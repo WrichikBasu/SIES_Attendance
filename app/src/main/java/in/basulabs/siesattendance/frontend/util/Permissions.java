@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Set;
 
 import in.basulabs.siesattendance.backend.AccountKind;
+import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
@@ -173,6 +174,26 @@ public final class Permissions {
 			case SESSIONS -> admin || office;
 			case IMPORT_STUDENTS -> who == null || who == AccountKind.PROFESSOR || mayKeepARoll;
 		};
+	}
+
+	/**
+	 * Whether this account may make, change or remove a course of that type, given that it may
+	 * keep courses at all ({@link Capability#COURSES}).
+	 * <p>
+	 * An IKS or VEC course is an administrator's alone (V46). Unknown is permitted, for the
+	 * reason in the class notes: a build with no server has nobody to be an administrator.
+	 *
+	 * @param type  the course's type, or null for one not chosen yet
+	 * @param roles the roles {@code /me} last reported, or null when never recorded
+	 */
+	public static boolean mayKeepCourseOfType(@Nullable AccountKind who,
+	                                          @Nullable Set<String> roles,
+	                                          @Nullable CourseType type) {
+
+		if (type == null || !type.keptByAdministrators() || who == null) {
+			return true;
+		}
+		return roles != null && roles.contains("ADMIN");
 	}
 
 	/**

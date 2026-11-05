@@ -49,3 +49,4 @@ app/src/test/sql/__pycache__/
 
 *.siesbak
 *.csv
+*.pdf

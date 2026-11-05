@@ -190,21 +190,18 @@ public class RosterCsvTest {
 		assertEquals(Department.COMPUTER_SCIENCE, row.majorDept());
 	}
 
-	// ── The three departments have to be three ───────────────────────────
+	// ── Which departments may repeat ─────────────────────────────────────
 
 	@Test
-	public void aMinorEqualToTheMajorIsRefused() throws IOException {
+	public void aMinorInTheMajorDepartmentIsAllowed() throws IOException {
 
-		// student_year_minor_not_major, from V2. A CSV is the only way to reach it -- the forms
-		// cannot offer the same department twice -- and it is checked here so the app refuses
-		// the row for the same reason the server would, with the line number instead of a
-		// constraint name.
+		// V45 dropped student_year_minor_not_major: a student may minor in the department
+		// they major in.
 		RosterCsv.Reading reading = read("rollNo,name,year,stream,majorDept,minorDept\n"
 				+ "2024CS032,Aarav Patil,SY,BSc,COMPUTER_SCIENCE,COMPUTER_SCIENCE\n");
 
-		assertTrue(reading.rows().isEmpty());
-		assertTrue(reading.errors().get(0),
-				reading.errors().get(0).contains("minor department"));
+		assertTrue(reading.errors().toString(), reading.errors().isEmpty());
+		assertEquals(Department.COMPUTER_SCIENCE, reading.rows().get(0).minorDept());
 	}
 
 	@Test

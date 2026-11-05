@@ -29,8 +29,12 @@ import java.util.Map;
  * </pre>
  * A pull's answer:
  * <pre>
- * {"watermark":"2026-10-19T…Z@412","more":false,
+ * {"watermark":"2026-10-19T…Z@412","more":false,"access":"9e1c…",
  *  "changes":[{"table":"attendance","key":[123,45],"op":"DELETE","row":null}]}
+ * </pre>
+ * A page of keys, for a sweep:
+ * <pre>
+ * {"keys":[[123,45],[123,46]],"more":true}
  * </pre>
  * Row values are exactly as the device holds them: 0 or 1 for a boolean, days since 1970 for a
  * date, {@code "epochSecond|nano|zone"} for a timestamp, the constant's name for an enum. The
@@ -39,9 +43,21 @@ import java.util.Map;
  */
 public final class SyncJson {
 
-	/** A pull's answer, parsed. */
+	/**
+	 * A pull's answer, parsed.
+	 *
+	 * @param access a digest of what decides the account's own access (V51), or null from a
+	 *               server too old to send one. The device compares it with the last one and
+	 *               starts again from a snapshot when it changes
+	 */
 	public record PullPage(@NonNull String watermark, boolean more,
-	                       @NonNull List<SyncIntent> changes) {
+	                       @NonNull List<SyncIntent> changes, @Nullable String access) {
+	}
+
+	/**
+	 * One page of {@code GET /sync/keys}: keys of rows the account may read, in key order.
+	 */
+	public record KeyPage(@NonNull List<List<Long>> keys, boolean more) {
 	}
 
 	/** A push's answer, parsed. */
@@ -203,8 +219,25 @@ public final class SyncJson {
 			changes.add(intentFrom(asObject(entry, "a change")));
 		}
 
+		Object access = root.get("access");
+
 		return new PullPage(text(root.get("watermark"), "watermark"),
-				Boolean.TRUE.equals(root.get("more")), changes);
+				Boolean.TRUE.equals(root.get("more")), changes,
+				access instanceof String digest && !digest.isEmpty() ? digest : null);
+	}
+
+	/** A page of keys. */
+	@NonNull
+	public static KeyPage parseKeys(@NonNull String body) {
+
+		Map<String, Object> root = asObject(new Reader(body).readValue(), "the response");
+		List<List<Long>> keys = new ArrayList<>();
+
+		for (Object key : asArray(root.get("keys"), "keys")) {
+			keys.add(keyFrom(key));
+		}
+
+		return new KeyPage(keys, Boolean.TRUE.equals(root.get("more")));
 	}
 
 	/** A push's answer. */

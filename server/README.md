@@ -323,6 +323,7 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 | add or correct a professor | — | — | — | ✓ | — | ✓ |
 | read professors | those teaching their courses | their own department's, and those teaching courses they read | the same, and the departments they head | all | all | all |
 | add or withdraw a course | — | — | the department's | ✓ | — | ✓ |
+| add, change or withdraw an IKS or VEC course | — | — | — | — | — | ✓ |
 | open a new academic session | — | — | — | — | — | ✓ |
 | correct or remove a session | — | — | — | ✓ | — | ✓ |
 | create, edit, delete batches; link them to courses | — | their own department's | their own department's | — | — | ✓ |
@@ -388,6 +389,7 @@ POST /devices                             register an install, get its node numb
 
 POST /sync/push                           the phone's queued changes
 GET  /sync/pull?since=&limit=             a snapshot, or changes since the watermark
+GET  /sync/keys?table=&after=&limit=      the keys of every row in a table the account may read
 
 GET  /export                              a register, as JSON rows
 POST /roster?year=                        a roster CSV (professors for their own department,

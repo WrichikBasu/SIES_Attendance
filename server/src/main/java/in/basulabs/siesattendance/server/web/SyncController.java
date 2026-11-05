@@ -25,7 +25,8 @@ import in.basulabs.siesattendance.server.sync.SyncWriter;
 import jakarta.servlet.http.HttpServletRequest;
 
 /**
- * The two endpoints a phone talks to: push what it has, pull what it has not.
+ * The endpoints a phone talks to: push what it has, pull what it has not, and list what it may
+ * keep.
  * <p>
  * Both run as the request's actor, so the policies in V6 decide every row either way: a push the
  * actor has no authority for is refused by the database, and a pull returns only what the actor
@@ -87,8 +88,21 @@ public final class SyncController {
 	                         @Nullable Map<String, Object> row) {
 	}
 
+	/**
+	 * @param access a digest of what decides this account's own access (V51). A device that
+	 *               sees it change downloads everything again and removes what did not come
+	 *               back. An older device ignores it
+	 */
 	public record PullResponse(@NonNull String watermark, boolean more,
-	                           @NonNull List<ChangeBody> changes) {
+	                           @NonNull List<ChangeBody> changes, @NonNull String access) {
+	}
+
+	/**
+	 * One page of {@code GET /sync/keys}.
+	 *
+	 * @param keys in key order, each in the table's own key order
+	 */
+	public record KeysResponse(@NonNull List<List<Long>> keys, boolean more) {
 	}
 
 	@NonNull
@@ -229,7 +243,45 @@ public final class SyncController {
 						change.row()));
 			}
 
-			return new PullResponse(page.watermark(), page.more(), changes);
+			return new PullResponse(page.watermark(), page.more(), changes,
+					SyncReader.accessFingerprint(connection));
+		});
+	}
+
+	/**
+	 * The keys of every row in a table this account may read, a page at a time, for a device
+	 * to find the rows it holds and may no longer read. See {@link SyncReader#keys}.
+	 *
+	 * @param after the last key of the previous page, comma-separated, or absent for the first
+	 */
+	@GetMapping("/keys")
+	@NonNull
+	public KeysResponse keys(@RequestParam(name = "table") @NonNull String table,
+	                         @RequestParam(name = "after", required = false) @Nullable String after,
+	                         @RequestParam(name = "limit", defaultValue = "5000") int limit,
+	                         @NonNull HttpServletRequest http) throws SQLException {
+
+		RequestActor actor = RequestActor.of(http);
+		List<Long> afterKey = new ArrayList<>();
+
+		if (after != null && !after.isBlank()) {
+			try {
+				for (String part : after.split(",")) {
+					afterKey.add(Long.valueOf(part.trim()));
+				}
+			} catch (NumberFormatException e) {
+				throw new ApiException(400, "bad_key", "That is not a key: " + after);
+			}
+		}
+
+		return database.inTransaction(actor, connection -> {
+			try {
+				SyncReader.KeyPage page = SyncReader.keys(connection, table, afterKey, limit);
+				return new KeysResponse(page.keys(), page.more());
+
+			} catch (IllegalArgumentException e) {
+				throw new ApiException(400, "bad_table", e.getMessage());
+			}
 		});
 	}
 }

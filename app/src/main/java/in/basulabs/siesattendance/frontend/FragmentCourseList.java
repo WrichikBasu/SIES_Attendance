@@ -56,8 +56,9 @@ public class FragmentCourseList extends Fragment {
 			public void onEdit(EntityCourse course) {
 
 				// Read rather than refused: a class representative needs to see who teaches
-				// the course they mark and which batches sit it.
-				if (!viewModel.may(Permissions.Capability.COURSES)) {
+				// the course they mark and which batches sit it. An IKS or VEC course is
+				// shown the same way to everybody but an administrator (V46).
+				if (!viewModel.mayKeepCourseOfType(course.courseType)) {
 					showReadOnly(course);
 					return;
 				}
@@ -73,7 +74,7 @@ public class FragmentCourseList extends Fragment {
 
 				// Discontinuing is an edit, and the gentlest-looking one: it changes what
 				// every later register offers without changing anything already recorded.
-				if (!viewModel.may(Permissions.Capability.COURSES)) {
+				if (!viewModel.mayKeepCourseOfType(course.courseType)) {
 					showReadOnly(course);
 					return;
 				}

@@ -43,7 +43,11 @@ public enum Department {
 	HISTORY("History"),
 	PHILOSOPHY("Philosophy"),
 	PSYCHOLOGY("Psychology"),
-	COMMERCE("Commerce");
+	COMMERCE("Commerce"),
+
+	// Added after the rest, and appended here rather than placed with the arts subjects: the
+	// order is the PostgreSQL enum's, which only grows at the end (V47).
+	MARATHI("Marathi");
 
 	@NonNull
 	private final String label;

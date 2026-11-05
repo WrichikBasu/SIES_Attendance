@@ -503,6 +503,17 @@ public class DomainRulesTest {
 	}
 
 	@Test
+	public void marathiIsStudiedAsABaAndAnMaLikeTheOtherArtsSubjects() {
+
+		assertEquals(Arrays.asList(Stream.BA, Stream.MA),
+				AcademicRules.streamsFor(Department.MARATHI));
+		assertNull(AcademicRules.validate(Department.MARATHI, Stream.BA, Year.FY, 1,
+				Division.A));
+		assertNull(AcademicRules.validate(Department.MARATHI, Stream.MA,
+				Year.Masters_P1, 1, null));
+	}
+
+	@Test
 	public void validateAcceptsADivisionOnADividedStreamAndABlankOneAnywhere() {
 		assertNull(AcademicRules.validate(Department.PHYSICS, Stream.BSc, Year.SY, 3,
 				Division.D));
@@ -652,6 +663,40 @@ public class DomainRulesTest {
 		// the whole reason the course screen needs its own.
 		assertNotNull(AcademicRules.validate(Department.MATHEMATICS, Stream.BSc_unaided,
 				Year.FY, 1));
+	}
+
+	@Test
+	public void anAecIsOfferedByALanguageDepartmentAlone() {
+
+		for (Department language : List.of(Department.ENGLISH, Department.HINDI,
+				Department.MARATHI)) {
+			assertNull(language.name(), AcademicRules.validateCourse(language,
+					Stream.BSc_unaided, Year.FY, 1, CourseType.AEC));
+		}
+
+		String refused = AcademicRules.validateCourse(Department.ECONOMICS, Stream.BA,
+				Year.FY, 1, CourseType.AEC);
+		assertNotNull(refused);
+		assertTrue(refused, refused.contains("English, Hindi or Marathi"));
+
+		// Every other type may be offered by any department, as before.
+		for (CourseType type : CourseType.values()) {
+			assertEquals(type.name(), type == CourseType.AEC, type.offeringDepartments() != null);
+		}
+	}
+
+	@Test
+	public void anAecIsCoordinatedByALanguageProfessor() {
+
+		assertNull(AcademicRules.validateCoordinator(CourseType.AEC, Department.HINDI));
+
+		String refused = AcademicRules.validateCoordinator(CourseType.AEC, Department.PHYSICS);
+		assertNotNull(refused);
+		assertTrue(refused, refused.contains("English, Hindi or Marathi"));
+
+		// Anybody coordinates the rest, and an unknown department is not refused here.
+		assertNull(AcademicRules.validateCoordinator(CourseType.MAJOR, Department.PHYSICS));
+		assertNull(AcademicRules.validateCoordinator(CourseType.AEC, null));
 	}
 
 	@Test

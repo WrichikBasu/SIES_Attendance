@@ -24,10 +24,24 @@ android {
         applicationId = "in.basulabs.siesattendance"
         minSdk = 26
         targetSdk = 37
-        versionCode = 5
-        versionName = "2.0.0-alpha"
+        versionCode = 6
+        versionName = "2.0.0-alpha.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // The release key, supplied only by the release workflow (.github/workflows/release.yml),
+    // which decodes the keystore from a repository secret. Without these variables a local
+    // release build is still produced, just unsigned, so nothing about the key has to live
+    // on a development machine.
+    val releaseKeystore = providers.environmentVariable("SIES_KEYSTORE_FILE").orNull
+    val releaseSigning = releaseKeystore?.let {
+        signingConfigs.create("release") {
+            storeFile = file(it)
+            storePassword = providers.environmentVariable("SIES_KEYSTORE_PASSWORD").get()
+            keyAlias = providers.environmentVariable("SIES_KEY_ALIAS").get()
+            keyPassword = providers.environmentVariable("SIES_KEY_PASSWORD").get()
+        }
     }
 
     buildTypes {
@@ -51,7 +65,7 @@ android {
             resValue("string", "sync_base_url",
                 providers.gradleProperty("sies.debugSyncUrl").orNull
                     ?: localProperties.getProperty("sies.debugSyncUrl")
-                    ?: "http://10.0.2.2:8080/api/v1")
+                    ?: "")
         }
         release {
             // https only: the release network config refuses cleartext, and its pins are
@@ -61,6 +75,7 @@ android {
                 providers.gradleProperty("sies.releaseSyncUrl").orNull
                     ?: localProperties.getProperty("sies.releaseSyncUrl")
                     ?: "")
+            releaseSigning?.let { signingConfig = it }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

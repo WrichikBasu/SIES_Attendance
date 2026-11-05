@@ -17,6 +17,9 @@
 [Unit]
 Description=Add audit_log partitions for the months ahead
 After=postgresql.service
+# The database runs in a container; see sies-attendance.service.
+After=docker.service
+Wants=docker.service
 
 [Service]
 Type=oneshot

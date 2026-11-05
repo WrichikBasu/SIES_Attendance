@@ -16,6 +16,10 @@ Documentation=file:///opt/sies-attendance/README.md
 # no reason.
 After=network-online.target postgresql.service
 Wants=network-online.target
+# The database runs in a container: started before this, so the first connection finds it.
+# Wants, not Requires, so a Docker restart does not take this service down with it.
+After=docker.service
+Wants=docker.service
 
 [Service]
 Type=simple

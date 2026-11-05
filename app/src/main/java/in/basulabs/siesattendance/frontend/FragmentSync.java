@@ -1,5 +1,6 @@
 package in.basulabs.siesattendance.frontend;
 
+import android.content.Context;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -17,8 +18,10 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import in.basulabs.siesattendance.R;
 import in.basulabs.siesattendance.backend.EntitySyncState;
+import in.basulabs.siesattendance.backend.sync.ServerAddress;
 import in.basulabs.siesattendance.backend.sync.SyncClient;
 import in.basulabs.siesattendance.frontend.util.PasswordDialog;
+import in.basulabs.siesattendance.frontend.util.ServerAddressDialog;
 import in.basulabs.siesattendance.frontend.util.SyncAge;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
@@ -38,9 +41,14 @@ import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
  * should not have to think about.
  *
  * <h3>It is honest about doing nothing</h3>
- * A build with no server address — which is every release build today — says so and offers no
- * form. An app that showed a sign-in box with nowhere to send it would be worse than one that
- * admits it is local.
+ * A phone with no server address — a release build that was given none, until somebody types
+ * one in below — says so and offers no form. An app that showed a sign-in box with nowhere to
+ * send it would be worse than one that admits it is local.
+ *
+ * <h3>Changing the server signs out</h3>
+ * Nothing on the phone means anything to another server, so a change made while signed in signs
+ * out first, with the same question about unsent changes that signing out asks, and only then
+ * takes the new address. See {@link ServerAddress}.
  */
 public class FragmentSync extends Fragment {
 
@@ -50,7 +58,7 @@ public class FragmentSync extends Fragment {
 
 	private View groupSignedIn, groupSyncing, cardRefusals;
 
-	private TextView tvRefusalsTitle, tvRefusals;
+	private TextView tvRefusalsTitle, tvRefusals, tvServer;
 
 	@Nullable
 	@Override
@@ -63,19 +71,60 @@ public class FragmentSync extends Fragment {
 	 * Signs out, asking first when that would throw away changes the server does not have.
 	 *
 	 * @param discardUnsent whether somebody has already said yes to losing them
+	 * @param afterwards    run once the phone has been emptied and before the sign-in screen
+	 *                      is shown, off the main thread; null for a plain sign-out
 	 */
-	private void signOut(boolean discardUnsent) {
+	private void signOut(boolean discardUnsent, @Nullable Runnable afterwards) {
 		viewModel.signOut(discardUnsent,
 				unsent -> Ui.onMain(this, () -> new MaterialAlertDialogBuilder(requireContext())
 						.setTitle(R.string.dialog_sign_out_unsent_title)
 						.setMessage(getResources().getQuantityString(
 								R.plurals.dialog_sign_out_unsent_message, unsent, unsent))
 						.setPositiveButton(R.string.action_sign_out_anyway,
-								(d, w) -> signOut(true))
+								(d, w) -> signOut(true, afterwards))
 						.setNegativeButton(R.string.action_cancel, null)
 						.show()),
-				() -> Ui.onMain(this, () -> Navigation.findNavController(requireView())
-						.navigate(R.id.action_global_signIn)));
+				() -> {
+					if (afterwards != null) {
+						afterwards.run();
+					}
+					Ui.onMain(this, () -> Navigation.findNavController(requireView())
+							.navigate(R.id.action_global_signIn));
+				});
+	}
+
+	/**
+	 * Uses another server, signing out first when somebody is signed in.
+	 *
+	 * @param address the new address, normalised, or null for the build's own
+	 */
+	private void changeServer(@Nullable String address) {
+
+		Context application = requireContext().getApplicationContext();
+
+		if (!viewModel.isSignedIn()) {
+			ServerAddress.choose(application, address);
+
+			// A phone that had no server now has one, and the app is behind a sign-in to it.
+			if (viewModel.hasServer()) {
+				Navigation.findNavController(requireView()).navigate(R.id.action_global_signIn);
+			} else {
+				refresh();
+			}
+			return;
+		}
+
+		String shown = address != null ? address : ServerAddress.builtIn(application);
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_change_server_title)
+				.setMessage(getString(R.string.dialog_change_server_message,
+						shown.isEmpty() ? getString(R.string.server_none) : shown))
+				.setPositiveButton(R.string.action_change_server_confirm,
+						(d, w) -> signOut(false,
+								() -> ServerAddress.choose(application, address)))
+				.setNegativeButton(R.string.action_cancel, null)
+				.show();
 	}
 
 	@Override
@@ -92,6 +141,10 @@ public class FragmentSync extends Fragment {
 		cardRefusals = view.findViewById(R.id.cardRefusals);
 		tvRefusalsTitle = view.findViewById(R.id.tvRefusalsTitle);
 		tvRefusals = view.findViewById(R.id.tvRefusals);
+		tvServer = view.findViewById(R.id.tvServerAddress);
+
+		view.<MaterialButton>findViewById(R.id.btnChangeServer).setOnClickListener(v ->
+				ServerAddressDialog.show(this, viewModel, this::changeServer));
 
 		view.<MaterialButton>findViewById(R.id.btnDismissRefusals).setOnClickListener(v -> {
 			viewModel.dismissRefusals();
@@ -114,7 +167,7 @@ public class FragmentSync extends Fragment {
 		// Out means out: the whole graph is popped and the door is what is left, and the
 		// phone is emptied of what this account downloaded -- see SignOut.
 		view.<MaterialButton>findViewById(R.id.btnSignOut).setOnClickListener(v ->
-				signOut(false));
+				signOut(false, null));
 
 		// Both directions, both live. The queue count is a Room query and the state row is
 		// another, so the two lines keep themselves current while a sync is running rather
@@ -200,6 +253,7 @@ public class FragmentSync extends Fragment {
 		// this screen is only ever reached by somebody who has one. The exception is a build
 		// with no server at all, where there is nothing to sign in to and nothing to show.
 		groupSignedIn.setVisibility(signedIn ? View.VISIBLE : View.GONE);
+		tvServer.setText(ServerAddressDialog.describe(requireContext()));
 
 		if (!configured) {
 			tvState.setText(R.string.sync_no_server);

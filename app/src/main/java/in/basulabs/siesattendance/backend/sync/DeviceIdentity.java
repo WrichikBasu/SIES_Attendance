@@ -98,6 +98,12 @@ public final class DeviceIdentity {
 
 	private static final String REGISTRATION_PENDING = "registrationPending";
 
+	private static final String ACCESS = "accessFingerprint";
+
+	private static final String SWEEP_WANTED = "sweepWanted";
+
+	private static final String LAST_SWEEP = "lastSweepAt";
+
 	/** How many refusals are kept. Enough to read; not a log. */
 	private static final int REFUSALS_KEPT = 20;
 
@@ -325,6 +331,15 @@ public final class DeviceIdentity {
 		}
 		prefs(context).edit().putString(key, stored.toString()).apply();
 	}
+
+	/**
+	 * Recorded as the last account when the server address changes while the phone still holds
+	 * the previous server's rows. No account on any server has this number, so whoever signs in
+	 * next is somebody else and the phone starts over: account numbers are only unique within
+	 * one server, and the same number on the new one is not the same person. See
+	 * {@code ServerAddress}.
+	 */
+	public static final long ANOTHER_SERVER = -1L;
 
 	/**
 	 * The account that last signed in on this phone, or 0 when none has been recorded.
@@ -601,6 +616,44 @@ public final class DeviceIdentity {
 
 	public static void recordRegistrationPending(@NonNull Context context, boolean pending) {
 		prefs(context).edit().putBoolean(REGISTRATION_PENDING, pending).apply();
+	}
+
+	/**
+	 * The digest of what decides this account's access that the last pull carried, or null
+	 * before the first. A pull carrying another one means access changed without the rows
+	 * changing, which the feed cannot say; see {@code SyncWorker}.
+	 */
+	@Nullable
+	public static String accessFingerprint(@NonNull Context context) {
+		return prefs(context).getString(ACCESS, null);
+	}
+
+	public static void recordAccessFingerprint(@NonNull Context context,
+	                                           @Nullable String fingerprint) {
+		prefs(context).edit().putString(ACCESS, fingerprint).apply();
+	}
+
+	/**
+	 * Whether the phone owes a sweep: removing the rows it holds that this account may no
+	 * longer read, once the pull it is in the middle of has finished. Kept here rather than in
+	 * memory because a snapshot can take several runs.
+	 */
+	public static boolean sweepWanted(@NonNull Context context) {
+		return prefs(context).getBoolean(SWEEP_WANTED, false);
+	}
+
+	/** Written with commit(), so it is on disk before the watermark it goes with is forgotten. */
+	public static void recordSweepWanted(@NonNull Context context, boolean wanted) {
+		prefs(context).edit().putBoolean(SWEEP_WANTED, wanted).commit();
+	}
+
+	/** When the last sweep finished, or 0 for never. */
+	public static long lastSweepAt(@NonNull Context context) {
+		return prefs(context).getLong(LAST_SWEEP, 0L);
+	}
+
+	public static void recordLastSweepAt(@NonNull Context context, long at) {
+		prefs(context).edit().putLong(LAST_SWEEP, at).apply();
 	}
 
 	// ── Internals ────────────────────────────────────────────────────────

@@ -61,7 +61,9 @@ INSERT INTO academic_years (academic_year, start_date, end_date)
            (2024, '2024-06-01', '2025-05-31');
 
 INSERT INTO professors (prof_id, name, email, department, designation)
-    VALUES (1001, 'A Mehta', 'a.mehta@example.ac.in', 'PHYSICS', 'Assistant Professor');
+    VALUES (1001, 'A Mehta', 'a.mehta@example.ac.in', 'PHYSICS', 'Assistant Professor'),
+           -- An AEC's coordinator is a language department's professor (V50).
+           (1009, 'E Sen',   'e.sen@example.ac.in',   'ENGLISH', 'Assistant Professor');
 
 INSERT INTO students (student_id, name, pronouns, email)
     VALUES (2001, 'B RAO', 'she/her', 'b.rao@example.ac.in'),
@@ -94,7 +96,7 @@ INSERT INTO courses
             'FY', 1, 'MINOR'),
            (3012, 1001, 'ECO-OE-1',   'Basic Economics',      'BSc',         'ECONOMICS',
             'FY', 1, 'OE'),
-           (3013, 1001, 'ENG-AEC-1',  'Communication Skills', 'BSc_unaided', 'ENGLISH',
+           (3013, 1009, 'ENG-AEC-1',  'Communication Skills', 'BSc_unaided', 'ENGLISH',
             'FY', 1, 'AEC');
 
 SELECT assert_equal(
@@ -108,7 +110,9 @@ SELECT assert_equal(
     'BSc'::degree_stream,
     'a major carries its stream into the generated column');
 
-INSERT INTO course_instructor (course_id, prof_id) VALUES (3001, 1001), (3002, 1001);
+-- V37 already adds a course's coordinator as its instructor.
+INSERT INTO course_instructor (course_id, prof_id) VALUES (3001, 1001), (3002, 1001)
+    ON CONFLICT DO NOTHING;
 
 INSERT INTO batch_desc (batch_id, batch_name, batch_desc, academic_year)
     VALUES (4001, 'Batch A', 'Lab 1', 2025),
@@ -263,9 +267,30 @@ SELECT assert_rejected($$
     'a division on a stream that has none');
 
 SELECT assert_rejected($$
-    INSERT INTO student_year (student_id, academic_year, roll_no, year, stream, major_dept, minor_dept)
-    VALUES (2002, 2024, 'X-5', 'FY', 'BSc', 'PHYSICS', 'PHYSICS')$$,
-    'a student minoring in their own major department');
+    INSERT INTO courses (course_id, prof_id, course_code, course_topic, stream,
+                         offering_department, year, semester, course_type)
+    VALUES (3097, 1001, 'PHY-AEC-1', 'Not a language', 'BSc', 'PHYSICS', 'FY', 1, 'AEC')$$,
+    'an AEC offered by a department that is not a language one (V49)');
+
+-- V50: an AEC's coordinator is a language department's professor. 1001 is a
+-- physicist; 1009, who coordinates the English AEC 3013, is not.
+SELECT assert_rejected($$
+    INSERT INTO courses (course_id, prof_id, course_code, course_topic, stream,
+                         offering_department, year, semester, course_type)
+    VALUES (3096, 1001, 'ENG-AEC-2', 'Coordinated by a physicist', 'BSc', 'ENGLISH',
+            'FY', 1, 'AEC')$$,
+    'an AEC coordinated by a professor of another department (V50)');
+
+SELECT assert_rejected($$
+    UPDATE professors SET department = 'PHYSICS' WHERE prof_id = 1009$$,
+    'moving an AEC coordinator out of the language departments (V50)');
+
+-- Allowed since V45: a student minoring in their own major department. Rolled
+-- back with everything else, so the session row it uses stays free.
+SAVEPOINT minor_in_major;
+INSERT INTO student_year (student_id, academic_year, roll_no, year, stream, major_dept, minor_dept)
+    VALUES (2002, 2024, 'X-5', 'FY', 'BSc', 'PHYSICS', 'PHYSICS');
+ROLLBACK TO SAVEPOINT minor_in_major;
 
 SELECT assert_rejected($$
     INSERT INTO student_year (student_id, academic_year, roll_no, year, stream, major_dept, oe_dept)

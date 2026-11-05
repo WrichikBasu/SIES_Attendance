@@ -4,6 +4,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -141,6 +142,33 @@ public enum CourseType {
 	 */
 	public boolean followsOfferingDepartment() {
 		return ownDepartment;
+	}
+
+	/**
+	 * The departments that may offer a course of this type, or null when any department may.
+	 * <p>
+	 * An AEC, the ability enhancement course, is a language course, so it is offered by
+	 * English, Hindi or Marathi alone. The server holds the same list as a check constraint
+	 * (V49), which {@code PostgresSchemaDriftTest} compares with this one.
+	 */
+	@Nullable
+	public List<Department> offeringDepartments() {
+		return this == AEC
+				? Collections.unmodifiableList(Arrays.asList(Department.ENGLISH,
+						Department.HINDI, Department.MARATHI))
+				: null;
+	}
+
+	/**
+	 * Whether only an administrator creates, changes or removes a course of this type.
+	 * <p>
+	 * IKS and VEC: taken by a whole year and stream across departments, so no department's
+	 * head, office or coordinator keeps one. The server enforces it with
+	 * {@code course_type_is_administrators()} (V46); this is the same list, so the app does not
+	 * offer what will be refused. {@code PostgresSchemaDriftTest} holds the two together.
+	 */
+	public boolean keptByAdministrators() {
+		return this == IKS || this == VEC;
 	}
 
 	/**

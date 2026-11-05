@@ -231,6 +231,14 @@ public class FragmentAddCourse extends Fragment {
 				return;
 			}
 			Ui.onMain(this, () -> {
+				// The list offers an IKS or VEC course to an administrator alone; this is
+				// the check for any other way in (V46).
+				if (!viewModel.mayKeepCourseOfType(course.courseType)) {
+					viewModel.sayNotPermitted();
+					Navigation.findNavController(requireView()).popBackStack();
+					return;
+				}
+
 				// Appointed on the server, with the roll it keeps, so not part of the save:
 				// only for a course the server has and lists as this account's to appoint for.
 				viewModel.checkMayAppointFor(course.courseID, may -> Ui.onMain(this, () -> {
@@ -467,21 +475,26 @@ public class FragmentAddCourse extends Fragment {
 					chosenSemester = semester;
 				});
 
-		DropdownBinder.bind(actvType, Arrays.asList(CourseType.values()), null,
+		// IKS and VEC only for an administrator (V46), who is the only one the server lets
+		// make or change one.
+		List<CourseType> types = new ArrayList<>();
+		for (CourseType type : CourseType.values()) {
+			if (viewModel.mayKeepCourseOfType(type)) {
+				types.add(type);
+			}
+		}
+
+		DropdownBinder.bind(actvType, types, null,
 				chosenType, value -> {
 					chosenType = value;
 					academicFields.rebuild();
+					showCoordinatorChoices(true);
 				});
 
 		// Professors are loaded off the main thread, then the dropdown is populated back on it.
 		viewModel.loadProfessorsSync(list -> Ui.onMain(this, () -> {
 			professors = list;
-			List<String> labels = new ArrayList<>();
-			for (EntityProfessor professor : list) {
-				labels.add(professor.name + " (" + professor.department + ")");
-			}
-			actvProfessor.setAdapter(new ArrayAdapter<>(requireContext(),
-					android.R.layout.simple_list_item_1, labels));
+			showCoordinatorChoices(false);
 			applyPendingProfessor();
 			showInstructorSummary();
 		}));
@@ -490,6 +503,48 @@ public class FragmentAddCourse extends Fragment {
 		// name, so both are redrawn rather than left showing the previous choice.
 		actvProfessor.setOnItemClickListener((parent, view, position, id) ->
 				showInstructorSummary());
+	}
+
+	/**
+	 * Fills the coordinator dropdown with the professors who may coordinate a course of the
+	 * chosen type: for an AEC, those of English, Hindi or Marathi (V50), and for every other
+	 * type, everyone.
+	 * <p>
+	 * {@link #professors} stays the whole list, because the co-instructor picker offers anyone:
+	 * the rule is on the coordinator alone.
+	 * <p>
+	 * When the type is changed by hand, a coordinator who may not coordinate the new type is
+	 * cleared, so the form does not show a choice it will refuse. When the form loads it is
+	 * left alone: a course recorded before V50 with a coordinator of another department keeps
+	 * showing who that is, and the save says why it has to change.
+	 */
+	private void showCoordinatorChoices(boolean clearRefused) {
+
+		List<String> labels = new ArrayList<>();
+		for (EntityProfessor professor : professors) {
+			if (AcademicRules.validateCoordinator(chosenType, professor.department) == null) {
+				labels.add(professor.name + " (" + professor.department + ")");
+			}
+		}
+		actvProfessor.setAdapter(new ArrayAdapter<>(requireContext(),
+				android.R.layout.simple_list_item_1, labels));
+
+		if (clearRefused) {
+			int index = indexOfSelectedProfessor();
+			if (index >= 0 && AcademicRules.validateCoordinator(chosenType,
+					professors.get(index).department) != null) {
+				actvProfessor.setText("", false);
+				showInstructorSummary();
+			}
+		}
+
+		// Said rather than left as an empty dropdown, which looks broken.
+		List<Department> offering = chosenType == null ? null : chosenType.offeringDepartments();
+		TextInputLayout layout = requireView().findViewById(R.id.tilProfessor);
+		layout.setHelperText(offering != null && labels.isEmpty() && !professors.isEmpty()
+				? getString(R.string.helper_no_coordinator_for_type,
+						AcademicRules.joinDepartments(offering))
+				: null);
 	}
 
 	/**
@@ -560,6 +615,17 @@ public class FragmentAddCourse extends Fragment {
 			return;
 		}
 		course.profID = professors.get(index).profID;
+
+		String coordinatorProblem = AcademicRules.validateCoordinator(type,
+				professors.get(index).department);
+		if (coordinatorProblem != null) {
+			new MaterialAlertDialogBuilder(requireContext())
+					.setTitle(R.string.dialog_invalid_combination)
+					.setMessage(coordinatorProblem)
+					.setPositiveButton(android.R.string.ok, null)
+					.show();
+			return;
+		}
 
 		// Passed as-is, coordinator and all. setInstructors folds them in and drops the
 		// duplicate, so the form does not have to work out which of the two fields a professor
