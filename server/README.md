@@ -85,6 +85,7 @@ python3 app/src/test/sql/sql_differ.py     # app and server SQL return identical
 ./server/tools/verify-audit.sh             # the audit trail, and that nobody can edit it
 ./server/tools/verify-wire.sh              # the whole service over HTTP
 ./server/tools/verify-sync.sh              # both halves of sync
+./server/tools/verify-backup.sh            # a backup restores to an identical database (needs age)
 ```
 
 The database tests need Docker. Tests that touch row-level security connect as a non-superuser,
@@ -196,8 +197,85 @@ systemctl enable --now sies-audit-partitions.timer
 
 Still needed before phones can use production:
 - TLS with the certificate pinned in the app's `res/xml/network_security_config.xml`
-- a tested backup and restore (`pg_dump` and WAL)
+- point-in-time recovery (WAL archiving), if losing up to a day's registers is not acceptable:
+  the backups below restore the database as it was when each one was taken
 - a different login rate limiter if more than one instance runs: `LoginRateLimiter` counts in memory
+
+### Backups
+
+`sies-backup.timer` takes a `pg_dump` of the whole database every night at about 02:30 and
+encrypts it with [age](https://age-encryption.org) to a public key. One run writes one file,
+`sies-<UTC time>.dump.age`, to `/var/lib/sies-attendance-backups/`. The file holds everything:
+accounts, roles, CR appointments, devices and the audit trail. A `.siesbak` export holds none of
+those. Any machine with Docker, age and the private key can restore it.
+
+**The key.** Make it on your own computer, not on the server, and keep the private half off the
+server. Without it no backup can be read, so keep a second copy somewhere safe:
+
+```sh
+age-keygen -o sies-backup-key.txt          # the private key: password manager, and a copy offline
+age-keygen -y sies-backup-key.txt          # prints the public key, age1...
+```
+
+**On the server:**
+
+```sh
+sudo apt install age                       # Debian and Ubuntu
+
+# The public key(s), one per line. A second line (a spare key kept in a safe) means either can decrypt.
+echo 'age1...' | sudo install -D -m 644 /dev/stdin /etc/sies-attendance/backup-recipients
+
+sudo install -D -m 755 server/deploy/sies-backup.sh      /opt/sies-attendance/sies-backup.sh
+sudo install -D -m 644 server/deploy/sies-backup.service /etc/systemd/system/sies-backup.service
+sudo install -D -m 644 server/deploy/sies-backup.timer   /etc/systemd/system/sies-backup.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now sies-backup.timer
+
+sudo systemctl start sies-backup && journalctl -u sies-backup -n 20   # take one now
+```
+
+- **It runs as root, through `docker exec`, as the database superuser.** `attendance` and
+  `lectures` are under `FORCE ROW LEVEL SECURITY`, so no other role can read every row, and
+  `pg_dump` refuses to write a partial copy. It needs no password.
+- **Nothing is written in plaintext.** The dump streams into age. A run that fails leaves no file.
+- **Kept:** the newest 14 backups, and the first backup of each of the last 12 months. To change
+  that, or to keep the backups on another disk, see `deploy/backup-env.example`.
+- **Roles aren't in the backup.** A restore creates them with `tools/roles.sql`, using the
+  passwords from the password manager, so the old environment files still work.
+
+**Copying them off the machine.** A backup on the same disk as the database doesn't survive the
+disk. The files are encrypted, so any storage will do. Pull them from another machine, so the
+server holds no credentials for wherever the copies end up:
+
+```sh
+# on the other machine, e.g. from cron
+rsync -a --ignore-existing --rsync-path='sudo rsync' \
+    admin@server:/var/lib/sies-attendance-backups/ ~/sies-backups/
+```
+
+The directory is root's, mode 700, so `admin` needs to be allowed `sudo rsync` without a password
+(a one-line sudoers rule). `--ignore-existing` means the copy keeps backups the server has since
+rotated away; prune it on that side.
+
+**Restoring,** on this machine or any other. Use `--check` first: it restores into a throwaway
+container, prints every table's row count and the latest migration, and removes the container.
+Run it now and then, not only when something has gone wrong:
+
+```sh
+./server/tools/restore-backup.sh --identity sies-backup-key.txt sies-20261106T023012Z.dump.age --check
+```
+
+To move to a new machine, or replace a lost database: start the container as in
+[The database, in Docker](#the-database-in-docker), skip the roles step, then:
+
+```sh
+./server/tools/restore-backup.sh --identity sies-backup-key.txt sies-...dump.age --into sies-pg
+```
+
+It asks for the three role passwords (or reads `DB_OWNER_PASSWORD`, `DB_APP_PASSWORD` and
+`DB_AUDITOR_PASSWORD`), and refuses a database that already has tables. The restore runs in one
+transaction. Then carry on from [The service](#the-service): install the jar and units, write the
+environment files, and run the migrate step. It applies only migrations newer than the backup.
 
 ### Updating
 
@@ -220,6 +298,7 @@ sudo bash -c 'set -a; . /etc/sies-attendance/migrate-env; set +a
 
 # A unit in deploy/ changed (copy whichever did):
 sudo install -m 644 server/deploy/sies-attendance.service /etc/systemd/system/
+sudo install -m 755 server/deploy/sies-backup.sh /opt/sies-attendance/   # the backup script
 sudo systemctl daemon-reload
 
 sudo systemctl restart sies-attendance

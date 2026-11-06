@@ -1,0 +1,65 @@
+# One encrypted pg_dump of the whole database. See sies-backup.sh for what it writes and why.
+#
+#   install -D -m 644 server/deploy/sies-backup.service /etc/systemd/system/sies-backup.service
+#   install -D -m 644 server/deploy/sies-backup.timer   /etc/systemd/system/sies-backup.timer
+#   systemctl daemon-reload && systemctl enable --now sies-backup.timer
+#
+# Run one now, and see how it went:
+#
+#   systemctl start sies-backup && journalctl -u sies-backup -n 20
+
+[Unit]
+Description=Encrypted backup of the SIES Attendance database
+# The database runs in a container; see sies-attendance.service.
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+
+# Root, unlike the other two units, because it reaches the database through `docker exec`
+# as the superuser: nothing less can read the rows under FORCE ROW LEVEL SECURITY. Access
+# to the Docker socket is root-equivalent anyway, so a separate user in the docker group
+# would narrow nothing. The hardening below limits where it can write, not what it can do.
+User=root
+
+# Optional: the defaults in sies-backup.sh match the documented install. The leading - lets
+# the unit run without the file.
+EnvironmentFile=-/etc/sies-attendance/backup-env
+
+ExecStart=/opt/sies-attendance/sies-backup.sh
+
+# ProtectHome below hides /root, and with it the docker CLI's config directory. Give it an
+# empty one of its own rather than leave it warning about one it cannot read.
+RuntimeDirectory=sies-backup
+RuntimeDirectoryMode=0700
+Environment=DOCKER_CONFIG=/run/sies-backup
+
+# Where the backups go: /var/lib/sies-attendance-backups, created by systemd, owned by root,
+# mode 0700. StateDirectory rather than ReadWritePaths for the reason in
+# sies-attendance.service: ReadWritePaths fails the unit on a path that does not exist yet.
+#
+# To keep them on another disk instead, set BACKUP_DIR in backup-env, create that directory
+# (mode 700), and let the unit write there with `systemctl edit sies-backup`:
+#
+#   [Service]
+#   ReadWritePaths=/mnt/backups/sies
+StateDirectory=sies-attendance-backups
+StateDirectoryMode=0700
+
+# A day's dump of a college register takes seconds. An hour means something is stuck.
+TimeoutStartSec=1h
+# Never compete with the service for the CPU or the disk.
+Nice=10
+IOSchedulingClass=idle
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# The Docker socket is a Unix socket; nothing here talks to the network.
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=true

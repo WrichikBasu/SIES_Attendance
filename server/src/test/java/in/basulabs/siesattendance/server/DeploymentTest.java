@@ -131,6 +131,42 @@ class DeploymentTest {
 	}
 
 	@Test
+	void theBackupWritesWhereItsUnitLetsItAndOnlyWhenDocumented() throws Exception {
+
+		String unit = read("sies-backup.service");
+		String timer = read("sies-backup.timer");
+		String script = read("sies-backup.sh");
+		Map<String, String> example = variables(read("backup-env.example"));
+
+		// ProtectSystem=strict makes everything read-only but the StateDirectory, so the
+		// script's default has to be that directory or every run fails with EROFS -- on a
+		// timer, at night, where nobody is looking.
+		String stateDirectory = unit.replaceAll("(?s).*\nStateDirectory=(\\S+).*", "$1");
+		String scriptDefault = script.replaceAll(
+				"(?s).*BACKUP_DIR=\"\\$\\{BACKUP_DIR:-([^}]+)}\".*", "$1");
+		assertEquals("/var/lib/" + stateDirectory, scriptDefault,
+				"the script's default BACKUP_DIR must be the unit's StateDirectory");
+
+		// The example documents the defaults, so it must state them truthfully: copying it
+		// unchanged has to change nothing.
+		for (Map.Entry<String, String> entry : example.entrySet()) {
+			String name = entry.getKey();
+			String fallback = script.replaceAll(
+					"(?s).*" + name + "=\"\\$\\{" + name + ":-([^}]*)}\".*", "$1");
+			assertEquals(entry.getValue(), fallback,
+					name + " in backup-env.example must match the script's default");
+		}
+
+		assertTrue(unit.contains("ExecStart=/opt/sies-attendance/sies-backup.sh"), unit);
+		assertTrue(unit.contains("EnvironmentFile=-/etc/sies-attendance/backup-env"),
+				"the environment file is optional, so the unit must not fail without it");
+
+		// A machine switched off at night would otherwise never be backed up.
+		assertTrue(timer.contains("Persistent=true"), timer);
+		assertTrue(timer.contains("Unit=sies-backup.service"), timer);
+	}
+
+	@Test
 	void theUnitStartsTheJarTheBuildProduces() throws Exception {
 
 		String unit = read("sies-attendance.service");

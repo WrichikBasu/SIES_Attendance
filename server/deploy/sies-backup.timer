@@ -1,0 +1,16 @@
+# Daily, in the small hours, when nobody is taking a register.
+#
+# Persistent=true: a machine that was off at 02:30 takes the backup on the next boot rather
+# than skipping the day. Without it, a server switched off every night is never backed up.
+
+[Unit]
+Description=Daily encrypted backup of the SIES Attendance database
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=15min
+Persistent=true
+Unit=sies-backup.service
+
+[Install]
+WantedBy=timers.target

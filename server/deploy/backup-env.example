@@ -1,0 +1,22 @@
+# Optional settings for sies-backup.service. Copy to /etc/sies-attendance/backup-env only
+# if you need to change one; every value below is the default.
+#
+# No passwords here: the backup reaches the database through `docker exec` as the
+# superuser, and encrypts to a public key.
+
+# Where the backups go. Changing it also needs a ReadWritePaths= override; see the unit.
+BACKUP_DIR=/var/lib/sies-attendance-backups
+
+# The age public keys to encrypt to, one per line (age1... or an ssh-ed25519 key). More
+# than one line means any of those keys can decrypt, so keep a second key in a safe as
+# well as the one somebody uses. This file holds public keys only and is not a secret.
+BACKUP_RECIPIENTS=/etc/sies-attendance/backup-recipients
+
+# The PostgreSQL container and database, as in the README's install.
+PG_CONTAINER=sies-pg
+PG_DATABASE=sies
+
+# The newest KEEP_DAILY backups, and the first backup of each of the newest KEEP_MONTHLY
+# months. KEEP_MONTHLY=0 keeps the daily ones only.
+KEEP_DAILY=14
+KEEP_MONTHLY=12
