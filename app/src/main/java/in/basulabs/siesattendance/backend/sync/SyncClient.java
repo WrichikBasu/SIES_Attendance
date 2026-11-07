@@ -342,6 +342,18 @@ public final class SyncClient {
 	}
 
 	/**
+	 * Every batch of a session, for linking to an OE, AEC, IKS or VEC course.
+	 * <p>
+	 * Asked of the server because this phone holds only its own department's batches (V32),
+	 * and those courses take anybody's (V52).
+	 */
+	@NonNull
+	public List<SyncJson.Linkable> linkableBatches(int academicYear) throws IOException {
+		return SyncJson.parseLinkable(call("GET", "/batches/linkable?academicYear="
+				+ academicYear, null));
+	}
+
+	/**
 	 * Makes that student the course's class representative for the session.
 	 *
 	 * @throws Refused when this account may not, or the student is not on the roll

@@ -36,6 +36,13 @@ public abstract class DaoBatch {
 		return insertBatchRow(batch);
 	}
 
+	/**
+	 * A batch the server issued, under the server's own ID. Not {@link #insertBatch}, which
+	 * issues a new one. See {@code AttendanceRepository.adoptServerBatches}.
+	 */
+	@Insert(onConflict = OnConflictStrategy.IGNORE)
+	public abstract void adoptBatchRow(EntityBatchDesc batch);
+
 	@Insert(onConflict = OnConflictStrategy.IGNORE)
 	public abstract void addStudent(EntityBatchStudentMap map);
 

@@ -614,6 +614,7 @@ POST /backup/export                        {"password"}: download everything a p
 GET  /progress/{id}                        how far your import or export sent with X-Progress-Id has got
 
 GET  /batches/unplaced                     batches with no department yet, and their courses and majors (admin)
+GET  /batches/linkable?academicYear=      every batch of a session, by name, department and size, for an OE/AEC/IKS/VEC course
 POST /batches/{id}/department              {"department"}: place one, unlinking other departments' courses (admin)
 
 GET  /courses/{id}/roll?academicYear=     a course's roll, for appointing a CR

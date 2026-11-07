@@ -90,6 +90,16 @@ public final class SyncJson {
 	                        boolean hasAccount, boolean represents) {
 	}
 
+	/**
+	 * One batch an OE, AEC, IKS or VEC course could be linked to, as {@code GET
+	 * /batches/linkable} sends it: named, never listed by member.
+	 *
+	 * @param department the constant name, or null for a batch nobody has placed yet
+	 */
+	public record Linkable(long batchId, @NonNull String batchName, @Nullable String department,
+	                       int academicYear, long members) {
+	}
+
 	private SyncJson() {
 	}
 
@@ -290,6 +300,33 @@ public final class SyncJson {
 					Boolean.TRUE.equals(student.get("represents"))));
 		}
 		return roll;
+	}
+
+	/** The batches a session offers for linking, in the order the server sent them. */
+	@NonNull
+	public static List<Linkable> parseLinkable(@NonNull String body) {
+
+		List<Linkable> batches = new ArrayList<>();
+
+		for (Object entry : asArray(new Reader(body).readValue(), "the batches")) {
+
+			Map<String, Object> batch = asObject(entry, "a batch");
+			Object department = batch.get("department");
+			Object year = batch.get("academicYear");
+			Object members = batch.get("members");
+
+			if (!(year instanceof Number session)) {
+				throw new IllegalArgumentException("academicYear is not a number");
+			}
+
+			batches.add(new Linkable(
+					Long.parseLong(text(batch.get("batchId"), "batchId").trim()),
+					text(batch.get("batchName"), "batchName"),
+					department instanceof String name && !name.isBlank() ? name : null,
+					session.intValue(),
+					members instanceof Number count ? count.longValue() : 0L));
+		}
+		return batches;
 	}
 
 	/** The machine-readable {@code code} of an error body, or null. */

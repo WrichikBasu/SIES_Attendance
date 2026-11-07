@@ -280,7 +280,8 @@ public class FragmentEditBatch extends Fragment {
 
 	/**
 	 * Moves the batch to that department, unlinking the courses of the one it left: the server
-	 * links a batch only to its own department's courses, and would refuse the rest.
+	 * links a batch only to its own department's courses, and would refuse the rest. An OE,
+	 * AEC, IKS or VEC course stays linked, since it takes anybody's batches (V52).
 	 */
 	private void onDepartmentChosen(@Nullable Department department) {
 
@@ -293,7 +294,8 @@ public class FragmentEditBatch extends Fragment {
 		List<String> dropped = new ArrayList<>();
 
 		for (EntityCourse course : courses) {
-			if (linked.contains(course.courseID) && course.offeringDepartment != department) {
+			if (linked.contains(course.courseID)
+					&& !course.courseType.mayLinkBatchOf(course.offeringDepartment, department)) {
 				linked.remove(course.courseID);
 				dropped.add(course.courseCode);
 			}
@@ -449,7 +451,9 @@ public class FragmentEditBatch extends Fragment {
 
 		List<EntityCourse> offered = new ArrayList<>();
 		for (EntityCourse course : courses) {
-			if (course.offeringDepartment == batchDept) {
+			// Its department's courses, and any OE, AEC, IKS or VEC course, which takes
+			// anybody's batches (V52).
+			if (course.courseType.mayLinkBatchOf(course.offeringDepartment, batchDept)) {
 				offered.add(course);
 			}
 		}

@@ -172,6 +172,32 @@ public enum CourseType {
 	}
 
 	/**
+	 * Whether a course of this type may be linked to any department's batches, not only its
+	 * offering department's.
+	 * <p>
+	 * OE, AEC, IKS and VEC are taken by students of every department: an open elective by
+	 * whoever chose it, the others by a whole year and stream. Their roll is other
+	 * departments' batches, which the V31 rule ("a batch is linked only to its own
+	 * department's courses") made impossible to link. The server holds the same list as
+	 * {@code course_takes_any_departments_batches()} (V52), which
+	 * {@code PostgresSchemaDriftTest} compares with this one.
+	 */
+	public boolean takesAnyDepartmentsBatches() {
+		return this == OE || this == AEC || this == IKS || this == VEC;
+	}
+
+	/**
+	 * Whether a batch of {@code batchDepartment} may be linked to a course of this type
+	 * offered by {@code courseDepartment}. A batch nobody has placed in a department yet may
+	 * be linked anywhere, as on the server.
+	 */
+	public boolean mayLinkBatchOf(@Nullable Department courseDepartment,
+	                              @Nullable Department batchDepartment) {
+		return batchDepartment == null || takesAnyDepartmentsBatches()
+				|| batchDepartment == courseDepartment;
+	}
+
+	/**
 	 * The types whose offering department is the student's own, in declaration order: exactly
 	 * the types the server's {@code courses} to {@code department_stream} foreign key applies
 	 * to. {@code PostgresSchemaDriftTest} compares this list against the committed SQL.

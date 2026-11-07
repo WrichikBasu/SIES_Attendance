@@ -173,12 +173,7 @@ public class FragmentAddCourse extends Fragment {
 		etBatches = view.findViewById(R.id.etCourseBatches);
 
 		if (mayAssignBatches) {
-			etBatches.setOnClickListener(v -> BatchPicker.show(requireContext(), offeredBatches(),
-					batchIDs, picked -> {
-						batchIDs.clear();
-						batchIDs.addAll(picked);
-						showBatchSummary();
-					}));
+			etBatches.setOnClickListener(v -> chooseBatches());
 			loadBatches();
 		} else {
 			view.findViewById(R.id.tilCourseBatches).setVisibility(View.GONE);
@@ -302,19 +297,60 @@ public class FragmentAddCourse extends Fragment {
 				}));
 	}
 
+	/** Whether the type chosen above takes any department's batches (V52). */
+	private boolean takesAnyDepartmentsBatches() {
+		return chosenType != null && chosenType.takesAnyDepartmentsBatches();
+	}
+
+	/**
+	 * Opens the batch picker. For an OE, AEC, IKS or VEC course the server is asked for the
+	 * session's batches first, since this phone holds only its own department's.
+	 */
+	private void chooseBatches() {
+
+		boolean anyDepartment = takesAnyDepartmentsBatches();
+		boolean keeps = chosenDept != null && viewModel.mayKeepBatchesOf(chosenDept);
+
+		java.util.function.Consumer<List<EntityBatchDesc>> show = options ->
+				BatchPicker.show(requireContext(), options, batchIDs, chosenDept,
+						anyDepartment, keeps, viewModel.academicYearValue(), picked -> {
+							batchIDs.clear();
+							batchIDs.addAll(picked);
+							showBatchSummary();
+						});
+
+		if (!anyDepartment) {
+			show.accept(offeredBatches());
+			return;
+		}
+
+		viewModel.addServerBatches(offeredBatches(), merged -> Ui.onMain(this, () -> {
+			// Kept, so the summary can name a server batch once it is ticked.
+			for (EntityBatchDesc batch : merged) {
+				if (!isListed(batch.batchID)) {
+					batchOptions.add(batch);
+				}
+			}
+			show.accept(merged);
+		}));
+	}
+
 	/**
 	 * What the Batches field offers: the session's batches of the department chosen above,
 	 * when this account keeps that department's batches, and whatever is linked already so it
-	 * can be unticked. A batch is linked only to its own department's courses (V31).
+	 * can be unticked. A batch is linked only to its own department's courses (V31), except
+	 * that an OE, AEC, IKS or VEC course takes anybody's (V52), and is offered every one.
 	 */
 	@NonNull
 	private List<EntityBatchDesc> offeredBatches() {
 
+		boolean anyDepartment = takesAnyDepartmentsBatches();
 		boolean keeps = chosenDept != null && viewModel.mayKeepBatchesOf(chosenDept);
 		List<EntityBatchDesc> offered = new ArrayList<>();
 
 		for (EntityBatchDesc batch : batchOptions) {
-			if ((keeps && batch.department == chosenDept) || batchIDs.contains(batch.batchID)) {
+			if (anyDepartment || (keeps && batch.department == chosenDept)
+					|| batchIDs.contains(batch.batchID)) {
 				offered.add(batch);
 			}
 		}
@@ -656,13 +692,14 @@ public class FragmentAddCourse extends Fragment {
 
 		if (mayAssignBatches && batchesLoaded) {
 
-			// A batch of another department cannot stay linked once the department above
-			// has changed: the server would refuse the link. One with no department yet
-			// is left as it was.
+			// A batch of another department cannot stay linked once the department or the
+			// type above has changed: the server would refuse the link. One with no
+			// department yet is left as it was, and an OE, AEC, IKS or VEC course keeps
+			// every one (V52).
 			chosenBatches = new ArrayList<>();
 			for (EntityBatchDesc batch : batchOptions) {
 				if (batchIDs.contains(batch.batchID)
-						&& (batch.department == null || batch.department == chosenDept)) {
+						&& type.mayLinkBatchOf(chosenDept, batch.department)) {
 					chosenBatches.add(batch.batchID);
 				}
 			}

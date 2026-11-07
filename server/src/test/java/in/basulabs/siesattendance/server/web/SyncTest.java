@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -701,6 +702,121 @@ class SyncTest {
 				.contains("English, Hindi or Marathi"), pushed::toString);
 		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue());
 		assertEquals(0, count("SELECT count(*) FROM courses WHERE course_id = " + courseID));
+	}
+
+	// ── V52: a cross-department course takes any department's batches ────
+
+	/** A Chemistry open elective coordinated by B CHEM, and a Computer Science batch. */
+	private void anOpenElectiveAndAnotherDepartmentsBatch() throws SQLException {
+		postgres.asSuperuser("""
+				INSERT INTO courses
+				    (course_id, prof_id, course_code, course_topic, stream,
+				     offering_department, year, semester, course_type) VALUES
+				    (3060, 1002, 'CH-OE1', 'Chemistry in daily life', 'BSc',
+				     'CHEMISTRY', 'FY', 1, 'OE');
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year, department)
+				    VALUES (5960, 'FY CS OE', %d, 'COMPUTER_SCIENCE');
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year)
+				    VALUES (5960, 2001, %d);
+				""".formatted(SESSION, SESSION));
+	}
+
+	private static Map<String, Object> link(long courseID, long batchID) {
+		return intent("course_batch_map", List.of(courseID, batchID), "UPSERT",
+				Map.of("courseID", courseID, "batchID", batchID));
+	}
+
+	@Test
+	void anOpenElectivesCoordinatorLinksAnotherDepartmentsBatch() throws Exception {
+
+		// Found on the app: an Environmental Science open elective, a session full of other
+		// departments' batches, and "No batches in this session" -- because V31 linked a
+		// batch only to its own department's courses, and an open elective's students are
+		// everybody else's.
+		anOpenElectiveAndAnotherDepartmentsBatch();
+
+		Phone phone = signInWithAPhone("b.chem@sies.edu.in");
+		String before = get(phone, "/sync/pull").body().get("access").stringValue();
+
+		Reply pushed = push(phone, List.of(link(3060, 5960)));
+
+		assertEquals(1, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertEquals(1, count("SELECT count(*) FROM course_batch_map "
+				+ "WHERE course_id = 3060 AND batch_id = 5960"));
+
+		// The batch is now read through the link, and the link is a row in another table:
+		// the feed would never carry the batch. The fingerprint changing is what makes the
+		// phone download everything again, batch and members included.
+		Reply pulled = get(phone, "/sync/pull");
+		assertNotEquals(before, pulled.body().get("access").stringValue(),
+				"a link to the actor's own course changes what they may read");
+		assertFalse(changesFor(pulled.body(), "batch_desc").isEmpty(),
+				"and a first snapshot now carries the batch: " + pulled);
+	}
+
+	@Test
+	void anOrdinaryCourseStillTakesOnlyItsOwnDepartmentsBatches() throws Exception {
+
+		anOpenElectiveAndAnotherDepartmentsBatch();
+
+		// The batch's own keeper, so the policies admit it and the trigger is what refuses.
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+		Reply pushed = push(phone, List.of(link(COURSE_CHEM, 5960)));
+
+		assertEquals(0, pushed.body().get("accepted").intValue(), pushed::toString);
+		String reason = pushed.body().get("rejected").get(0).get("reason").stringValue();
+		assertTrue(reason.contains("OE, AEC, IKS or VEC"), reason);
+		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue());
+
+		// And the coordinator of a major cannot link another department's batch either.
+		Reply chemistry = push(signInWithAPhone("b.chem@sies.edu.in"),
+				List.of(link(COURSE_CHEM, 5960)));
+		assertEquals(0, chemistry.body().get("accepted").intValue(), chemistry::toString);
+	}
+
+	@Test
+	void aCourseCannotStopBeingAnOpenElectiveWhileItHoldsAnotherDepartmentsBatch()
+			throws Exception {
+
+		anOpenElectiveAndAnotherDepartmentsBatch();
+		postgres.asSuperuser("INSERT INTO course_batch_map (course_id, batch_id) "
+				+ "VALUES (3060, 5960)");
+
+		SQLException refused = assertThrows(SQLException.class, () -> postgres.asSuperuser(
+				"UPDATE courses SET course_type = 'MAJOR' WHERE course_id = 3060"));
+		assertTrue(refused.getMessage().contains("unlink them first"), refused.getMessage());
+
+		// Setting the same type again is not a change, which a push does on every write.
+		postgres.asSuperuser("UPDATE courses SET course_type = 'OE' WHERE course_id = 3060");
+
+		// And a batch it holds may still change department: the course takes anybody's.
+		postgres.asSuperuser("UPDATE batch_desc SET department = 'HISTORY' "
+				+ "WHERE batch_id = 5960");
+	}
+
+	@Test
+	void everyBatchOfTheSessionIsListedForLinkingByNameAndNotByMember() throws Exception {
+
+		anOpenElectiveAndAnotherDepartmentsBatch();
+
+		Reply listed = get(signInWithAPhone("b.chem@sies.edu.in"),
+				"/batches/linkable?academicYear=" + SESSION);
+
+		assertEquals(200, listed.status(), listed::toString);
+
+		JsonNode batch = null;
+		for (JsonNode entry : listed.body()) {
+			if ("5960".equals(entry.get("batchId").stringValue())) {
+				batch = entry;
+			}
+		}
+
+		assertNotNull(batch, "a Chemistry professor is offered the Computer Science batch, "
+				+ "which their phone is otherwise never sent: " + listed);
+		assertEquals("FY CS OE", batch.get("batchName").stringValue());
+		assertEquals("COMPUTER_SCIENCE", batch.get("department").stringValue());
+		assertEquals(1, batch.get("members").intValue());
+		assertFalse(listed.raw().contains("R RAO"), "a size, never the members: " + listed);
 	}
 
 	/** A Computer Science course row as a phone would send it. */
