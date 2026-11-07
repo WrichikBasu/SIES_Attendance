@@ -1,5 +1,6 @@
 package in.basulabs.siesattendance.frontend;
 
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -9,6 +10,7 @@ import android.widget.AutoCompleteTextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.widget.NestedScrollView;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
@@ -501,8 +503,10 @@ public class FragmentAddCourse extends Fragment {
 
 		// Changing the coordinator changes who the picker may offer and who the summary may
 		// name, so both are redrawn rather than left showing the previous choice.
-		actvProfessor.setOnItemClickListener((parent, view, position, id) ->
-				showInstructorSummary());
+		actvProfessor.setOnItemClickListener((parent, view, position, id) -> {
+			((TextInputLayout) requireView().findViewById(R.id.tilProfessor)).setError(null);
+			showInstructorSummary();
+		});
 	}
 
 	/**
@@ -558,19 +562,21 @@ public class FragmentAddCourse extends Fragment {
 	 */
 	private void onSave(@NonNull View button) {
 
-		tilCode.setError(null);
-		tilTopic.setError(null);
-		((TextInputLayout) requireView().findViewById(R.id.tilSemester)).setError(null);
+		for (int id : new int[]{R.id.tilCourseCode, R.id.tilCourseTopic, R.id.tilStream,
+				R.id.tilDepartment, R.id.tilYear, R.id.tilSemester, R.id.tilProfessor,
+				R.id.tilCourseType}) {
+			((TextInputLayout) requireView().findViewById(id)).setError(null);
+		}
 
 		String code = etCode.getText() == null ? "" : etCode.getText().toString().trim();
 		String topic = etTopic.getText() == null ? "" : etTopic.getText().toString().trim();
 
 		if (code.isEmpty()) {
-			tilCode.setError(getString(R.string.error_required));
+			refuse(R.id.tilCourseCode);
 			return;
 		}
 		if (topic.isEmpty()) {
-			tilTopic.setError(getString(R.string.error_required));
+			refuse(R.id.tilCourseTopic);
 			return;
 		}
 
@@ -579,13 +585,26 @@ public class FragmentAddCourse extends Fragment {
 		Year year = chosenYear;
 		CourseType type = chosenType;
 
-		if (stream == null || dept == null || year == null || type == null) {
+		// Each of these used to return without a word, which reads as a Save button that
+		// does nothing.
+		if (stream == null) {
+			refuse(R.id.tilStream);
 			return;
 		}
-
+		if (dept == null) {
+			refuse(R.id.tilDepartment);
+			return;
+		}
+		if (year == null) {
+			refuse(R.id.tilYear);
+			return;
+		}
 		if (chosenSemester == null) {
-			((TextInputLayout) requireView().findViewById(R.id.tilSemester))
-					.setError(getString(R.string.error_required));
+			refuse(R.id.tilSemester);
+			return;
+		}
+		if (type == null) {
+			refuse(R.id.tilCourseType);
 			return;
 		}
 
@@ -610,8 +629,7 @@ public class FragmentAddCourse extends Fragment {
 		// EntityCourse carries a profID foreign key, so a professor must be chosen.
 		int index = indexOfSelectedProfessor();
 		if (index < 0) {
-			((TextInputLayout) requireView().findViewById(R.id.tilProfessor))
-					.setError(getString(R.string.error_required));
+			refuse(R.id.tilProfessor);
 			return;
 		}
 		course.profID = professors.get(index).profID;
@@ -680,6 +698,30 @@ public class FragmentAddCourse extends Fragment {
 	 * Where the currently chosen professor sits in {@link #professors}, or -1 when none is
 	 * chosen. Used to preselect the entry in the picker dialog.
 	 */
+	/**
+	 * Marks a field as required and brings it into view.
+	 * <p>
+	 * The error alone was not enough. Save is at the foot of a long form, so the field it
+	 * complained about, the coordinator most often, was scrolled out of sight and the button
+	 * looked as if it did nothing.
+	 */
+	private void refuse(int fieldId) {
+
+		View root = requireView();
+		TextInputLayout field = root.findViewById(fieldId);
+		field.setError(getString(R.string.error_required));
+
+		if (root instanceof NestedScrollView scroll) {
+			scroll.post(() -> {
+				Rect where = new Rect();
+				field.getDrawingRect(where);
+				scroll.offsetDescendantRectToMyCoords(field, where);
+				int margin = getResources().getDimensionPixelSize(R.dimen.activity_vertical_margin);
+				scroll.smoothScrollTo(0, Math.max(0, where.top - margin));
+			});
+		}
+	}
+
 	private int indexOfSelectedProfessor() {
 		String selected = actvProfessor.getText().toString().trim();
 		for (int i = 0; i < professors.size(); i++) {
