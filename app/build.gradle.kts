@@ -24,8 +24,8 @@ android {
         applicationId = "in.basulabs.siesattendance"
         minSdk = 26
         targetSdk = 37
-        versionCode = 7
-        versionName = "2.0.0-alpha.2"
+        versionCode = 8
+        versionName = "2.0.0-alpha.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
