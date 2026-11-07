@@ -1,0 +1,16 @@
+# Nightly, half an hour after the pg_dump in sies-backup.timer, so the two never compete.
+#
+# The more often this runs, the less WAL a recovery replays, and the faster it is. Nightly
+# keeps a week's recovery to a day's WAL at most.
+
+[Unit]
+Description=Nightly base backup of the SIES Attendance database
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=15min
+Persistent=true
+Unit=sies-basebackup.service
+
+[Install]
+WantedBy=timers.target

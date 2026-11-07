@@ -86,6 +86,7 @@ python3 app/src/test/sql/sql_differ.py     # app and server SQL return identical
 ./server/tools/verify-wire.sh              # the whole service over HTTP
 ./server/tools/verify-sync.sh              # both halves of sync
 ./server/tools/verify-backup.sh            # a backup restores to an identical database (needs age)
+./server/tools/verify-pitr.sh              # recovery to a chosen moment (needs age)
 ```
 
 The database tests need Docker. Tests that touch row-level security connect as a non-superuser,
@@ -197,27 +198,107 @@ systemctl enable --now sies-audit-partitions.timer
 
 Still needed before phones can use production:
 - TLS with the certificate pinned in the app's `res/xml/network_security_config.xml`
-- point-in-time recovery (WAL archiving), if losing up to a day's registers is not acceptable:
-  the backups below restore the database as it was when each one was taken
 - a different login rate limiter if more than one instance runs: `LoginRateLimiter` counts in memory
 
 ### Backups
 
-`sies-backup.timer` takes a `pg_dump` of the whole database every night at about 02:30 and
-encrypts it with [age](https://age-encryption.org) to a public key. One run writes one file,
-`sies-<UTC time>.dump.age`, to `/var/lib/sies-attendance-backups/`. The file holds everything:
-accounts, roles, CR appointments, devices and the audit trail. A `.siesbak` export holds none of
-those. Any machine with Docker, age and the private key can restore it.
+There are two kinds of backup. Both are encrypted with [age](https://age-encryption.org) to the
+same public key, written to the same directory, and restored with the same private key. They
+answer different questions, and you need both.
 
-**The key.** Make it on your own computer, not on the server, and keep the private half off the
-server. Without it no backup can be read, so keep a second copy somewhere safe:
+| | **Dumps** | **Point-in-time (base backups + WAL)** |
+|---|---|---|
+| What it is | `pg_dump`: the database as SQL-level data | `pg_basebackup`: a copy of the database files, plus every change since (the WAL) |
+| Brings back | the database as it was at 02:30 on one night | the database as it was at **any second** in the last 7 days |
+| Taken | nightly, about 02:30 (`sies-backup.timer`) | base backup nightly at about 03:00 (`sies-basebackup.timer`); WAL every minute (`sies-wal-ship.timer`) |
+| Kept on the server | newest 14, plus the first of each of the last 12 months | the last 7 base backups and the WAL after the oldest of them |
+| Files | one self-contained file per night | a set: a base backup reaches no further than the night it was taken without the WAL after it, and WAL is useless without a base backup before it |
+| Restores into | any PostgreSQL 18 or later, on any machine | PostgreSQL 18 only, on the same kind of CPU (x86-64 to x86-64) |
+| Roles and passwords | not included: recreated from the password manager | included: the whole cluster comes back as it was |
+| Restored with | `tools/restore-backup.sh` | `tools/pitr-restore.sh` |
+
+Point-in-time recovery is the one for "someone deleted a register at 11:40": go back to 11:39,
+and keep the rest of the morning's attendance. The dumps cover what it can't: anything older than
+a week, a move to a new PostgreSQL version or another kind of machine, and a last resort if the
+WAL chain is broken.
+
+#### What is in the backup directory
+
+```
+/var/lib/sies-attendance-backups/            root's, mode 700
+  sies-20261106T023012Z.dump.age             a dump: restore on its own
+  base/
+    base-20261106T030411Z.tar.gz.age         a base backup
+    base-20261106T030411Z.start              the WAL file replay starts from (a file name, not secret)
+  wal/
+    000000010000000000000042.gz.age          WAL segments, one every few minutes
+    00000002.history.gz.age                  ...and timeline files, after a recovery
+  .lock  .wal.lock  .base.lock               locks: ignore
+  *.partial                                  a run in progress or killed: ignore
+```
+
+Two other places hold backup data and must **not** be copied off the machine:
+`wal-staging/` inside the database container's volume, which is WAL waiting for the shipper
+(unencrypted, and gone within a minute), and the private key, which is never on the server at all.
+
+#### What to copy off the machine
+
+A backup on the same disk as the database doesn't survive that disk. **Copy the whole directory**,
+`/var/lib/sies-attendance-backups/`, except the locks and `.partial` files, to at least one other
+machine, **every five minutes**. That one copy covers both kinds. The dumps only change nightly,
+but WAL arrives all day, and only WAL that has left the machine survives losing it. Everything in
+the directory is encrypted, so the destination doesn't need to be trusted with the data.
+
+Pull from the other machine rather than push from the server, so the server holds no credentials
+for wherever the copies end up:
+
+```sh
+# on the other machine, in cron: */5 * * * *
+rsync -a --ignore-existing --exclude='.*lock' --exclude='*.partial' --rsync-path='sudo rsync' \
+    admin@server:/var/lib/sies-attendance-backups/ ~/sies-backups/
+```
+
+- **`admin` needs `sudo rsync` without a password** (a one-line sudoers rule), because the
+  directory is root's.
+- **`--ignore-existing`, never `--delete`.** The copy keeps what the server has rotated away, so a
+  wiped or compromised server can't empty the copies too. Prune the copy yourself. Delete old dumps
+  freely. Delete a base backup's `.tar.gz.age` and `.start` together, and WAL only if it's older
+  than the oldest `.start` you still keep. Or let it grow: a quiet day's WAL is under 10 MB.
+- **Keep `base/` and `wal/` together.** `pitr-restore.sh` needs both: the base backup to start
+  from, and every WAL file after it to reach the moment you ask for.
+
+Keep these elsewhere, not with the backups:
+
+| | where | needed for |
+|---|---|---|
+| the private key (`sies-backup-key.txt`) | password manager, plus one copy offline | every restore. Stored next to the backups, it would undo the encryption |
+| the three role passwords | password manager | restoring a dump (point-in-time brings the roles back itself) |
+| `/etc/sies-attendance/env` and `migrate-env` | password manager | rebuilding the service on a new machine |
+
+#### Which to restore
+
+| What happened | Restore | From |
+|---|---|---|
+| Data deleted or changed by mistake, in the last 7 days | point-in-time, `--to` just before it | the server's own directory |
+| The server or its disk is gone | point-in-time `--to latest`, which loses at most the last few minutes. If that fails, the newest dump, which loses everything since 02:30 | the off-machine copy |
+| Something older than 7 days | the dump from that night, or that month | the off-machine copy, if the server has rotated it away |
+| A new machine with a newer PostgreSQL, or another kind of CPU | a dump | either |
+| Checking the backups work | `--check` on both, now and then | either |
+
+Every restore goes into a new, empty database or container, never over the live one. Look at
+the result first, then swap it in. Both scripts print the steps.
+
+#### The key
+
+Make it on your own computer, not on the server, and keep the private half off the server.
+Without it no backup can be read, so keep a second copy somewhere safe:
 
 ```sh
 age-keygen -o sies-backup-key.txt          # the private key: password manager, and a copy offline
 age-keygen -y sies-backup-key.txt          # prints the public key, age1...
 ```
 
-**On the server:**
+#### Setting up the dumps
 
 ```sh
 sudo apt install age                       # Debian and Ubuntu
@@ -238,28 +319,44 @@ sudo systemctl start sies-backup && journalctl -u sies-backup -n 20   # take one
   `lectures` are under `FORCE ROW LEVEL SECURITY`, so no other role can read every row, and
   `pg_dump` refuses to write a partial copy. It needs no password.
 - **Nothing is written in plaintext.** The dump streams into age. A run that fails leaves no file.
-- **Kept:** the newest 14 backups, and the first backup of each of the last 12 months. To change
-  that, or to keep the backups on another disk, see `deploy/backup-env.example`.
-- **Roles aren't in the backup.** A restore creates them with `tools/roles.sql`, using the
-  passwords from the password manager, so the old environment files still work.
+- **Retention and location** are set in `deploy/backup-env.example`.
 
-**Copying them off the machine.** A backup on the same disk as the database doesn't survive the
-disk. The files are encrypted, so any storage will do. Pull them from another machine, so the
-server holds no credentials for wherever the copies end up:
+#### Setting up point-in-time recovery
+
+After the dumps, since it uses the same key and `age`:
 
 ```sh
-# on the other machine, e.g. from cron
-rsync -a --ignore-existing --rsync-path='sudo rsync' \
-    admin@server:/var/lib/sies-attendance-backups/ ~/sies-backups/
+sudo install -D -m 755 server/deploy/sies-wal-archiving.sh /opt/sies-attendance/sies-wal-archiving.sh
+sudo install -D -m 755 server/deploy/sies-wal-ship.sh      /opt/sies-attendance/sies-wal-ship.sh
+sudo install -D -m 755 server/deploy/sies-basebackup.sh    /opt/sies-attendance/sies-basebackup.sh
+for unit in sies-wal-ship.service sies-wal-ship.timer sies-basebackup.service sies-basebackup.timer; do
+    sudo install -D -m 644 server/deploy/$unit /etc/systemd/system/$unit
+done
+sudo systemctl daemon-reload
+
+sudo /opt/sies-attendance/sies-wal-archiving.sh enable     # restarts sies-pg: a few seconds' outage
+sudo systemctl enable --now sies-wal-ship.timer sies-basebackup.timer
+sudo systemctl start sies-basebackup                       # the first base backup; recovery starts here
+
+sudo /opt/sies-attendance/sies-wal-archiving.sh status     # any time
 ```
 
-The directory is root's, mode 700, so `admin` needs to be allowed `sudo rsync` without a password
-(a one-line sudoers rule). `--ignore-existing` means the copy keeps backups the server has since
-rotated away; prune it on that side.
+- **How WAL gets out.** PostgreSQL hands every finished WAL segment to a hook, which stages it
+  in the container's volume. A quiet database closes a segment at least every 5 minutes
+  (`archive_timeout`). Every minute the shipper gzips and encrypts what is staged into `wal/`,
+  then deletes the staged copy. Each nightly base backup deletes the base backups beyond
+  `KEEP_BASE` (7), and the WAL only they needed.
+- **Watch `status`.** If staging stops working, PostgreSQL keeps every segment it couldn't archive
+  in `pg_wal` and retries. Nothing is lost, but the disk fills, and then the database stops.
+  `failed` and `waiting` show it starting long before then. The same goes for `staged` if the
+  shipper stops.
+- **Staged WAL is plaintext,** in the database's own volume next to the database files, which
+  are plaintext too. Everything in the backup directory is encrypted.
 
-**Restoring,** on this machine or any other. Use `--check` first: it restores into a throwaway
-container, prints every table's row count and the latest migration, and removes the container.
-Run it now and then, not only when something has gone wrong:
+#### Restoring a dump
+
+On this machine or any other. Use `--check` first: it restores into a throwaway container,
+prints every table's row count and the latest migration, and removes the container:
 
 ```sh
 ./server/tools/restore-backup.sh --identity sies-backup-key.txt sies-20261106T023012Z.dump.age --check
@@ -276,6 +373,30 @@ It asks for the three role passwords (or reads `DB_OWNER_PASSWORD`, `DB_APP_PASS
 `DB_AUDITOR_PASSWORD`), and refuses a database that already has tables. The restore runs in one
 transaction. Then carry on from [The service](#the-service): install the jar and units, write the
 environment files, and run the migrate step. It applies only migrations newer than the backup.
+
+#### Restoring to a moment
+
+Point `--from` at a directory holding `base/` and `wal/`: the server's own directory, or the
+off-machine copy. Find the right moment with `--check`, which replays into a throwaway
+container, prints where it stopped and every table's row count, and removes the container:
+
+```sh
+./server/tools/pitr-restore.sh --identity sies-backup-key.txt \
+    --from /var/lib/sies-attendance-backups --to '2026-11-06 11:39 +05:30' --check
+```
+
+Recovery stops just before the first transaction that committed after `--to`. Always give a
+zone. `--to latest` replays everything that was shipped. With `--into NAME` instead of `--check`,
+it leaves the result running in a new container `NAME` on a new volume `NAME-data`. It touches
+nothing that already exists, and prints the steps to make that copy the live database.
+
+- **It refuses rather than guess.** A moment before the oldest base backup, a gap in the WAL, a
+  moment later than the last shipped transaction, or the wrong key: each one stops it with an
+  error. It never brings up a database that silently stops short.
+- **The restored copy has archiving off,** so it can't write into the archive it came from.
+  Once it's live, run `sies-wal-archiving.sh enable` and take a base backup straight away. The
+  recovery started a new timeline, and the old timeline's WAL after that moment doesn't replay
+  onto it.
 
 ### Updating
 
@@ -298,7 +419,7 @@ sudo bash -c 'set -a; . /etc/sies-attendance/migrate-env; set +a
 
 # A unit in deploy/ changed (copy whichever did):
 sudo install -m 644 server/deploy/sies-attendance.service /etc/systemd/system/
-sudo install -m 755 server/deploy/sies-backup.sh /opt/sies-attendance/   # the backup script
+sudo install -m 755 server/deploy/sies-*.sh /opt/sies-attendance/        # the backup scripts
 sudo systemctl daemon-reload
 
 sudo systemctl restart sies-attendance

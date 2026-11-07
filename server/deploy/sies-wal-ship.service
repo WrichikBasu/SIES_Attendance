@@ -1,0 +1,42 @@
+# Moves archived WAL out of the database container, encrypted. See sies-wal-archiving.sh.
+#
+#   install -D -m 644 server/deploy/sies-wal-ship.service /etc/systemd/system/sies-wal-ship.service
+#   install -D -m 644 server/deploy/sies-wal-ship.timer   /etc/systemd/system/sies-wal-ship.timer
+#   systemctl daemon-reload && systemctl enable --now sies-wal-ship.timer
+#
+# Root and docker exec, for the reasons in sies-backup.service. Every setting below is that
+# unit's, so the two write to the same place under the same limits.
+
+[Unit]
+Description=Ship archived WAL of the SIES Attendance database
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/sies-attendance/backup-env
+ExecStart=/opt/sies-attendance/sies-wal-ship.sh
+
+RuntimeDirectory=sies-wal-ship
+RuntimeDirectoryMode=0700
+Environment=DOCKER_CONFIG=/run/sies-wal-ship
+
+StateDirectory=sies-attendance-backups
+StateDirectoryMode=0700
+
+# A minute's WAL ships in well under a second; ten minutes means it is stuck, and the next
+# tick should get its turn.
+TimeoutStartSec=10min
+Nice=10
+IOSchedulingClass=idle
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=true

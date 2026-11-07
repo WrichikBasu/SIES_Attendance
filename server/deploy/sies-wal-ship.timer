@@ -1,0 +1,18 @@
+# Every minute. Together with archive_timeout (five minutes, see sies-wal-archiving.sh) this
+# bounds how much attendance a lost disk can take with it to about six minutes -- as long as
+# the shipped files are also copied off the machine at least that often.
+#
+# OnUnitActiveSec counts from the last run's start, so a slow run is never overlapped: the
+# next one waits for it.
+
+[Unit]
+Description=Ship archived WAL every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=sies-wal-ship.service
+
+[Install]
+WantedBy=timers.target

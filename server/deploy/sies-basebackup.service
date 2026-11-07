@@ -1,0 +1,40 @@
+# A physical base backup for point-in-time recovery, and the pruning of WAL nothing needs.
+# See sies-basebackup.sh.
+#
+#   install -D -m 644 server/deploy/sies-basebackup.service /etc/systemd/system/sies-basebackup.service
+#   install -D -m 644 server/deploy/sies-basebackup.timer   /etc/systemd/system/sies-basebackup.timer
+#   systemctl daemon-reload && systemctl enable --now sies-basebackup.timer
+#
+# Root and docker exec, for the reasons in sies-backup.service.
+
+[Unit]
+Description=Base backup of the SIES Attendance database
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/sies-attendance/backup-env
+ExecStart=/opt/sies-attendance/sies-basebackup.sh
+
+RuntimeDirectory=sies-basebackup
+RuntimeDirectoryMode=0700
+Environment=DOCKER_CONFIG=/run/sies-basebackup
+
+StateDirectory=sies-attendance-backups
+StateDirectoryMode=0700
+
+TimeoutStartSec=1h
+Nice=10
+IOSchedulingClass=idle
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=true

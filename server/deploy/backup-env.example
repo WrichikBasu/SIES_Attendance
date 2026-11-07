@@ -20,3 +20,8 @@ PG_DATABASE=sies
 # months. KEEP_MONTHLY=0 keeps the daily ones only.
 KEEP_DAILY=14
 KEEP_MONTHLY=12
+
+# Point-in-time recovery (sies-basebackup.sh): how many base backups to keep. With the
+# nightly timer, the number of days back a recovery can reach. WAL older than the oldest
+# kept base backup is deleted with it.
+KEEP_BASE=7
