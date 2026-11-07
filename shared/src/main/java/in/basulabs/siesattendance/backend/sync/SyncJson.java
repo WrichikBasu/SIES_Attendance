@@ -71,9 +71,12 @@ public final class SyncJson {
 	 *                  field means false, which is the cautious reading: an older server that
 	 *                  does not send it gets the behaviour it was written for, where every
 	 *                  refusal is kept and retried
+	 * @param about     which row it is, in words, or null: absent from an older server, and
+	 *                  null where the server could name nothing better than the table
 	 */
 	public record Rejection(@NonNull String table, @NonNull List<Long> key,
-	                        @NonNull String reason, boolean permanent) {
+	                        @NonNull String reason, boolean permanent,
+	                        @Nullable String about) {
 	}
 
 	/**
@@ -254,7 +257,9 @@ public final class SyncJson {
 			rejected.add(new Rejection(text(rejection.get("table"), "table"),
 					keyFrom(rejection.get("key")),
 					text(rejection.get("reason"), "reason"),
-					Boolean.TRUE.equals(rejection.get("permanent"))));
+					Boolean.TRUE.equals(rejection.get("permanent")),
+					rejection.get("about") instanceof String about && !about.isBlank()
+							? about : null));
 		}
 
 		Object accepted = root.get("accepted");

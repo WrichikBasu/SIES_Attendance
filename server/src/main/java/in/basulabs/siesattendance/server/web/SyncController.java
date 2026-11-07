@@ -70,9 +70,15 @@ public final class SyncController {
 	 *                  refusal about the row or the actor, false for one about the state of the
 	 *                  database — a parent that has not arrived yet is the common case and is
 	 *                  worth another go
+	 * @param about     which row it is, in words — "R RAO's mark in SIUCSMJ211 on Tue 20 Oct
+	 *                  2026, 10:00" — or null where nothing better than the table could be
+	 *                  found. The reason says why; this says what, which the device cannot
+	 *                  always say for itself about a row it has already deleted. See
+	 *                  {@link RefusalNames}. An older device ignores it
 	 */
 	public record RejectionBody(@NonNull String table, @NonNull List<Long> key,
-	                            @NonNull String reason, boolean permanent) {
+	                            @NonNull String reason, boolean permanent,
+	                            @Nullable String about) {
 	}
 
 	/**
@@ -159,10 +165,12 @@ public final class SyncController {
 					priorNodeOf(connection, actor.session().deviceId()));
 
 			List<RejectionBody> rejected = new ArrayList<>();
+			List<String> about = RefusalNames.describe(connection, intents, result.rejected());
 
-			for (SyncWriter.Rejection rejection : result.rejected()) {
+			for (int at = 0; at < result.rejected().size(); at++) {
+				SyncWriter.Rejection rejection = result.rejected().get(at);
 				rejected.add(new RejectionBody(rejection.table(), rejection.key(),
-						rejection.reason(), rejection.permanent()));
+						rejection.reason(), rejection.permanent(), about.get(at)));
 			}
 
 			// No audit entry of its own: the triggers on lectures and attendance wrote one per

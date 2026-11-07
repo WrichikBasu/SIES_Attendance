@@ -137,6 +137,18 @@ public class SyncJsonTest {
 		assertEquals(1, outcome.rejected().size());
 		assertEquals("lectures", outcome.rejected().get(0).table());
 		assertEquals("not yours to change", outcome.rejected().get(0).reason());
+		assertNull("an older server names nothing", outcome.rejected().get(0).about());
+	}
+
+	@Test
+	public void aRefusalSaysWhichRow() {
+
+		SyncJson.PushOutcome outcome = SyncJson.parsePushOutcome(
+				"{\"accepted\":0,\"rejected\":[{\"table\":\"students\",\"key\":[9],"
+						+ "\"reason\":\"the roll is loaded by the office\","
+						+ "\"permanent\":true,\"about\":\"student R RAO\"}]}");
+
+		assertEquals("student R RAO", outcome.rejected().get(0).about());
 	}
 
 	@Test

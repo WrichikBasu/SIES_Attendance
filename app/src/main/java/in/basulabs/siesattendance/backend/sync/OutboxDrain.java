@@ -100,10 +100,11 @@ public final class OutboxDrain {
 	 *                 null; see {@code SyncWorker}
 	 * @param sweepWanted whether a pull held back a deletion this device's own rows stood in
 	 *                 the way of, so a sweep is owed; see {@link #sweep()}
-	 * @param refusals every refusal the server called final in this batch, newest last. A list
-	 *                 rather than one string: two rows refused for two different reasons are
-	 *                 two things to tell somebody, and the one that used to win was whichever
-	 *                 came last in the batch
+	 * @param refusals every refusal the server called final in this batch, one entry per
+	 *                 reason and naming the rows it covers ({@link RefusalText}), newest last.
+	 *                 A list rather than one string: two rows refused for two different
+	 *                 reasons are two things to tell somebody, and the one that used to win
+	 *                 was whichever came last in the batch
 	 */
 	public record Result(int sent, int rejected, int dropped, @NonNull List<String> refusals,
 	                     int applied, boolean morePending, @Nullable String access,
@@ -189,7 +190,7 @@ public final class OutboxDrain {
 		List<Long> accepted = new ArrayList<>(sequences);
 		List<Long> keep = new ArrayList<>();
 		List<Long> drop = new ArrayList<>();
-		List<String> refusals = new ArrayList<>();
+		List<SyncJson.Rejection> refused = new ArrayList<>();
 		boolean drifted = false;
 
 		for (SyncJson.Rejection rejection : outcome.rejected()) {
@@ -204,6 +205,7 @@ public final class OutboxDrain {
 
 			accepted.remove(sequence);
 			Log.w(TAG, "the server refused " + rejection.table() + rejection.key()
+					+ (rejection.about() == null ? "" : " (" + rejection.about() + ")")
 					+ ": " + rejection.reason());
 
 			if (rejection.permanent()) {
@@ -214,7 +216,7 @@ public final class OutboxDrain {
 				// it is somebody else's news rather than an older version of the same. The
 				// drain reports them and SyncWorker is what remembers them, because keeping
 				// them is a preferences job and this class is the database and the wire.
-				refusals.add(rejection.reason());
+				refused.add(rejection);
 
 				// The row is gone from here and staying on the server. See the class notes.
 				drifted |= entry.operation() == OutboxOp.DELETE;
@@ -247,6 +249,9 @@ public final class OutboxDrain {
 
 			db.daoOutbox().recordPushSync(System.currentTimeMillis());
 		});
+
+		// One entry per reason, naming the rows it refused: see RefusalText.
+		List<String> refusals = RefusalText.summarise(refused);
 
 		return new Result(accepted.size(), keep.size(), drop.size(), refusals, 0,
 				db.daoOutbox().countPendingSync() > keep.size());

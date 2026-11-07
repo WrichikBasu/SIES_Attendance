@@ -295,6 +295,10 @@ class SyncTest {
 				pushed.body().get("rejected").toString());
 		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
 				"a key from the wrong node will be the wrong node tomorrow too");
+		assertEquals("the CS-101 lecture on Mon 14 Jul 2025, 09:00",
+				pushed.body().get("rejected").get(0).get("about").stringValue(),
+				"and it says which lecture, from the row the phone sent: the server has "
+						+ "never had it");
 
 		assertEquals(0, count("SELECT count(*) FROM lectures"),
 				"a phone must not be able to CREATE rows claiming to be another phone's");
@@ -984,6 +988,11 @@ class SyncTest {
 		assertEquals(1, count("SELECT count(*) FROM students WHERE student_id = " + student),
 				"the student is still there, which was always true -- the news is that the "
 						+ "phone is told");
+
+		// Which student, from the server's copy: the phone has already deleted its own, so
+		// the server is the only place the name still is.
+		assertEquals("student D DELETABLE",
+				pushed.body().get("rejected").get(0).get("about").stringValue());
 	}
 
 	@Test

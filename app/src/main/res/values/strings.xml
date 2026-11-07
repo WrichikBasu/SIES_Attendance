@@ -666,10 +666,7 @@
         plural counts them because "3 things could not be sent" is the part that decides
         whether to read on.
     -->
-    <plurals name="sync_refused_title">
-        <item quantity="one">The server would not accept one change</item>
-        <item quantity="other">The server would not accept %d changes</item>
-    </plurals>
+    <string name="sync_refused_title">What the server would not accept</string>
     <string name="action_dismiss">Dismiss</string>
 
     <!-- The buckets SyncAge sorts a moment into. -->
