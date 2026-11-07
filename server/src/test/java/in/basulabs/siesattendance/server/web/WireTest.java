@@ -2475,17 +2475,62 @@ class WireTest {
 				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3001, 5904);
 				""");
 
-		Reply refused = post("/courses/" + COURSE_CS + "/representatives", json(
+		// As the head, the trigger refuses it: the headship is for 2025-26.
+		java.sql.SQLException refused = assertThrows(java.sql.SQLException.class,
+				() -> postgres.asSuperuser("INSERT INTO attendance_delegate "
+						+ "(student_id, course_id, academic_year, granted_by, granted_as) "
+						+ "VALUES (" + STUDENT_CR + ", " + COURSE_CS + ", " + (SESSION + 1)
+						+ ", " + accountHeadCs + ", 'HOD')"));
+		assertTrue(refused.getMessage().contains("cannot designate"), refused.getMessage());
+
+		// The head is a professor of Computer Science as well, and any professor of the
+		// department may appoint for its courses (V56), in every session. That is the
+		// capacity the appointment is made in, not the headship.
+		Reply appointed = post("/courses/" + COURSE_CS + "/representatives", json(
 				"studentId", Long.toString(STUDENT_CR),
 				"academicYear", SESSION + 1), tokenFor("c.head@sies.edu.in", "STAFF"), null);
 
-		assertEquals(403, refused.status(), refused::toString);
-		assertEquals("not_yours_to_grant", refused.body().get("code").stringValue());
+		assertEquals(200, appointed.status(), appointed::toString);
+		assertEquals("DEPARTMENT", appointed.body().get("grantedAs").stringValue());
 
-		// The administrator may, because ADMIN is not scoped to a session at all.
+		// The administrator may too, because ADMIN is not scoped to a session at all.
+		post("/courses/" + COURSE_CS + "/representatives/revoke", json(
+				"studentId", Long.toString(STUDENT_CR),
+				"academicYear", SESSION + 1), admin, null);
 		assertEquals(200, post("/courses/" + COURSE_CS + "/representatives", json(
 				"studentId", Long.toString(STUDENT_CR),
 				"academicYear", SESSION + 1), admin, null).status());
+	}
+
+	@Test
+	void aProfessorOfTheDepartmentAppointsForItsCoursesAndNoOthers() throws Exception {
+
+		// V56: a Computer Science professor who neither teaches the course nor heads the
+		// department.
+		postgres.asSuperuser("""
+				INSERT INTO professors (prof_id, name, email, department, designation) VALUES
+				    (1004, 'D CS', 'd.cs@sies.edu.in', 'COMPUTER_SCIENCE', 'Assistant Professor');
+				""");
+		account(AccountKind.PROFESSOR, 1004L, null, "d.cs@sies.edu.in");
+		String colleague = tokenFor("d.cs@sies.edu.in", "STAFF");
+
+		assertEquals(List.of(COURSE_CS), SyncJson.courseIdsIn(
+				get("/me", colleague, null).raw(), "appoints"), "their department's course");
+
+		assertEquals(200, post("/courses/" + COURSE_CS + "/representatives/revoke", json(
+				"studentId", Long.toString(STUDENT_CR),
+				"academicYear", SESSION), colleague, null).status(), "ending one");
+
+		Reply appointed = post("/courses/" + COURSE_CS + "/representatives", json(
+				"studentId", Long.toString(STUDENT_CR),
+				"academicYear", SESSION), colleague, null);
+
+		assertEquals(200, appointed.status(), appointed::toString);
+		assertEquals("DEPARTMENT", appointed.body().get("grantedAs").stringValue());
+
+		Reply chemistry = get("/courses/" + COURSE_CHEM + "/roll?academicYear=" + SESSION,
+				colleague, null);
+		assertEquals(403, chemistry.status(), "not another department's: " + chemistry);
 	}
 
 	@Test

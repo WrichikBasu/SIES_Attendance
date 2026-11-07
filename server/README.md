@@ -512,33 +512,33 @@ Everything below is enforced in SQL. `GET /api/v1/me` tells the phone and the co
 offer, but whatever they offer is still checked row by row. An account's permissions are the
 union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR appointments.
 
-| | student (CR) | professor | head of department | office | auditor | admin |
-|---|---|---|---|---|---|---|
-| sign in on the phone | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| sign in on the web console | — | ✓ | ✓ | ✓ | ✓ | ✓ |
-| take and edit a register | courses they represent | their courses | the department's | — | — | ✓ |
+| | student (CR) | professor                                                                                              | head of department | office | auditor | admin |
+|---|---|--------------------------------------------------------------------------------------------------------|---|---|---|---|
+| sign in on the phone | ✓ | ✓                                                                                                      | ✓ | ✓ | ✓ | ✓ |
+| sign in on the web console | — | ✓                                                                                                      | ✓ | ✓ | ✓ | ✓ |
+| take and edit a register | courses they represent | their courses                                                                                          | the department's | — | — | ✓ |
 | read students | their courses' rolls | the rolls of their department's courses, and every student with their department as major, minor or OE | the department's | all | all | all |
-| add or correct students and enrolments | — | their own department | the department's | ✓ | — | ✓ |
-| remove students | — | — | the department's | ✓ | — | ✓ |
-| add or correct a professor | — | — | — | ✓ | — | ✓ |
-| read professors | those teaching their courses | their own department's, and those teaching courses they read | the same, and the departments they head | all | all | all |
-| add a course | — | for their own department | the department's | ✓ | — | ✓ |
-| remove a course | — | — | the department's | ✓ | — | ✓ |
-| edit or discontinue a course, change who teaches it | — | every course their department offers | the department's | ✓ | — | ✓ |
-| add, change or withdraw an IKS or VEC course | — | — | — | — | — | ✓ |
-| open a new academic session | — | — | — | — | — | ✓ |
-| correct or remove a session | — | — | — | ✓ | — | ✓ |
-| create, edit, delete batches; link them to courses | — | their own department's | their own department's | — | — | ✓ |
-| rename a batch and change its members | — | their own department's, and those serving only courses they coordinate | the same | — | — | ✓ |
-| read batches | those linked to their courses | their own department's, and those their courses use | the department's, and those their courses use | all | all | all |
-| import students (CSV) | — | their own department | the department's | ✓ | — | ✓ |
-| import attendance (CSV) | — | their courses | the department's | — | — | ✓ |
-| appoint a CR | — | their courses | the department's | — | — | ✓ |
-| create accounts, grant or revoke roles | — | — | — | — | — | ✓ |
-| import or export a backup (.siesbak) | — | — | — | — | — | ✓ |
-| read the audit trail | their own actions | their department's teaching | their department's | their own actions | all | all |
-| read courses, their lectures and registers | courses they represent | every course their department offers | the department's | all | all | all |
-| export a register | courses they represent | every course their department offers | the department's | all | all | all |
+| add or correct students and enrolments | — | their own department                                                                                   | the department's | ✓ | — | ✓ |
+| remove students | — | —                                                                                                      | the department's | ✓ | — | ✓ |
+| add or correct a professor | — | —                                                                                                      | — | ✓ | — | ✓ |
+| read professors | those teaching their courses | their own department's, and those teaching courses they read                                           | the same, and the departments they head | all | all | all |
+| add a course | — | for their own department                                                                               | the department's | ✓ | — | ✓ |
+| remove a course | — | —                                                                                                      | the department's | ✓ | — | ✓ |
+| edit or discontinue a course, change who teaches it | — | every course their department offers                                                                   | the department's | ✓ | — | ✓ |
+| add, change or withdraw an IKS or VEC course | — | —                                                                                                      | — | — | — | ✓ |
+| open a new academic session | — | —                                                                                                      | — | — | — | ✓ |
+| correct or remove a session | — | —                                                                                                      | — | ✓ | — | ✓ |
+| create, edit, delete batches; link them to courses | — | their own department's                                                                                 | their own department's | — | — | ✓ |
+| rename a batch and change its members | — | their own department's, and those serving only courses they coordinate                                 | the same | — | — | ✓ |
+| read batches | those linked to their courses | their own department's, and those their courses use                                                    | the department's, and those their courses use | all | all | all |
+| import students (CSV) | — | their own department                                                                                   | the department's | ✓ | — | ✓ |
+| import attendance (CSV) | — | their courses                                                                                          | the department's | — | — | ✓ |
+| appoint a CR | — | courses their department offers                                                                        | the department's | — | — | ✓ |
+| create accounts, grant or revoke roles | — | —                                                                                                      | — | — | — | ✓ |
+| import or export a backup (.siesbak) | — | —                                                                                                      | — | — | — | ✓ |
+| read the audit trail | their own actions | their department's teaching                                                                            | their department's | their own actions | all | all |
+| read courses, their lectures and registers | courses they represent | every course their department offers                                                                   | the department's | all | all | all |
+| export a register | courses they represent | every course their department offers                                                                   | the department's | all | all | all |
 
 - **A professor reads their whole department's teaching** (V53): every course it offers, who
   teaches it, its batches, its lectures and their registers, in every session. They may also
@@ -564,24 +564,6 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
   course a batch is linked to is one they coordinate (`courses.prof_id`). That covers renaming it
   and moving students in or out. Making, removing and linking a batch stay with its department
   (V42). Its other instructors read the batch and change nothing.
-
-### A course's roll
-
-`course_admits()` is the single definition, and both `roll_for_course()` and visibility use it.
-A course's roll is the members of the batches linked to it for the session, from any department,
-year or stream. A course with no batch linked for that session has nobody on its roll. Until V41
-such a course fell back on rules about its type; attendance is taken only against a batch, so the
-fallback was removed.
-
-The app uses the same rule in `DaoStudent.getRollForCourseSync` and both export builders. Change
-all of them together; `PostgresSchemaDriftTest` and the SQL differ check that they agree.
-
-Students with a leave date are not on any roll (`roll_for_course()`), so they can't be appointed
-CR. A late joiner's lectures count from their `join_date`, in the export and the statistics, on
-both sides (`PgSqlBits.COUNTS_FOR_ENROLMENT` and `SqlBits.COUNTS_FOR_ENROLMENT`).
-
-A CR can read the rolls of the courses they represent, anyone marked on those courses' lectures,
-and themselves.
 
 ## API
 

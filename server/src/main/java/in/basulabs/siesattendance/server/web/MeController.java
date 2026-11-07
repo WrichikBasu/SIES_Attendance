@@ -85,8 +85,8 @@ public final class MeController {
 
 	/**
 	 * One course this account may appoint a representative for, asked the way
-	 * {@code Delegates.capacityFor} asks it: one they teach, one their department offers if they
-	 * head it, or any for an administrator. Discontinued courses are left out, as the console's
+	 * {@code Delegates.capacityFor} asks it: one they teach, one their department offers (V56),
+	 * or any for an administrator. Discontinued courses are left out, as the console's
 	 * picker leaves them out.
 	 *
 	 * @param courseId a key, as digits in a string like every key on this wire
@@ -246,6 +246,7 @@ public final class MeController {
 				"SELECT course_id FROM courses WHERE date_discontinued IS NULL "
 						+ "  AND (actor_instructs(course_id) "
 						+ "       OR actor_heads(offering_department) "
+						+ "       OR actor_reads_department_of(offering_department) "
 						+ "       OR actor_has_role('ADMIN')) "
 						+ "ORDER BY course_id");
 		     ResultSet results = statement.executeQuery()) {

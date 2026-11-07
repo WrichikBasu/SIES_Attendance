@@ -67,7 +67,8 @@ public final class Delegates {
 	 * Asked of the database's own helpers rather than reassembled here, so there is one answer
 	 * to "who may do this" and it is the one the policies use. The order is the order the
 	 * authority is really held in: a professor who teaches the course is its instructor even if
-	 * they also happen to be the head of the department.
+	 * they also happen to be the head of the department, and a head is the head before they are
+	 * one of the department's professors (V56).
 	 */
 	@Nullable
 	public static GrantAuthority capacityFor(@NonNull Connection connection, long courseId,
@@ -77,11 +78,15 @@ public final class Delegates {
 				"SELECT actor_instructs(?) AS instructs,"
 						+ "       EXISTS (SELECT 1 FROM courses c WHERE c.course_id = ?"
 						+ "               AND actor_is_hod_of(c.offering_department, ?)) AS heads,"
+						+ "       EXISTS (SELECT 1 FROM courses c WHERE c.course_id = ?"
+						+ "               AND actor_reads_department_of(c.offering_department))"
+						+ "           AS department,"
 						+ "       actor_has_role('ADMIN') AS administers")) {
 
 			statement.setLong(1, courseId);
 			statement.setLong(2, courseId);
 			statement.setInt(3, academicYear);
+			statement.setLong(4, courseId);
 
 			try (ResultSet results = statement.executeQuery()) {
 
@@ -95,6 +100,10 @@ public final class Delegates {
 
 				if (results.getBoolean("heads")) {
 					return GrantAuthority.HOD;
+				}
+
+				if (results.getBoolean("department")) {
+					return GrantAuthority.DEPARTMENT;
 				}
 
 				return results.getBoolean("administers") ? GrantAuthority.ADMIN : null;
