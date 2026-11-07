@@ -222,6 +222,11 @@
     <string name="filter_show_left">Show students who have left</string>
     <string name="label_apaar">APAAR ID</string>
     <string name="label_not_recorded">Not recorded</string>
+    <string name="label_major">Major</string>
+    <string name="label_minor">Minor</string>
+    <string name="label_oe">OE</string>
+    <!-- A student with no minor or no open elective recorded. -->
+    <string name="label_none_recorded">None</string>
     <string name="label_sessions">Sessions</string>
     <string name="message_sync_before_import">Sync once first, so the app knows which departments you may import into.</string>
     <string name="dialog_sign_out_unsent_title">Changes not sent yet</string>

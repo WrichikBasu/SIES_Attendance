@@ -190,6 +190,9 @@ public class FragmentStudentDetail extends Fragment {
 	 */
 	private TextView apaarId, enrolmentDates;
 
+	/** The departments this student's major, minor and open elective are in, that session. */
+	private TextView major, minor, openElective;
+
 	private com.google.android.material.chip.ChipGroup sessions;
 
 	private int academicYear;
@@ -220,6 +223,9 @@ public class FragmentStudentDetail extends Fragment {
 		pronouns = view.findViewById(R.id.tvPronouns);
 		email = view.findViewById(R.id.tvEmail);
 		apaarId = view.findViewById(R.id.tvApaarId);
+		major = view.findViewById(R.id.tvMajor);
+		minor = view.findViewById(R.id.tvMinor);
+		openElective = view.findViewById(R.id.tvOe);
 		enrolmentDates = view.findViewById(R.id.tvEnrolmentDates);
 		sessions = view.findViewById(R.id.cgSessions);
 		overallPercentage = view.findViewById(R.id.tvOverallPercentage);
@@ -965,6 +971,11 @@ public class FragmentStudentDetail extends Fragment {
 		initials.setText(student.initials());
 		name.setText(student.displayName());
 		rollNo.setText(student.rollNo);
+		major.setText(student.majorDept.toString());
+		minor.setText(student.minorDept == null
+				? getString(R.string.label_none_recorded) : student.minorDept.toString());
+		openElective.setText(student.oeDept == null
+				? getString(R.string.label_none_recorded) : student.oeDept.toString());
 		classLabel.setText(student.classLabel());
 		pronouns.setText(student.pronouns);
 		email.setText(student.email == null || student.email.isEmpty()
