@@ -201,6 +201,15 @@ public interface AttendanceRepository {
 
 	void setBatchCourses(long batchID, @NonNull List<Long> courseIDs);
 
+	/**
+	 * Stores batches the server listed for linking and this phone does not hold, as the
+	 * server's own rows rather than this phone's edits: nothing is queued to send back. A
+	 * link needs its batch here, and an OE, AEC, IKS or VEC course takes batches of
+	 * departments this phone is not otherwise sent (V52). The next pull replaces them with
+	 * the server's full rows, members and all.
+	 */
+	void adoptServerBatches(@NonNull List<EntityBatchDesc> batches);
+
 
 	// ── Students ─────────────────────────────────────────────────────────
 	@NonNull

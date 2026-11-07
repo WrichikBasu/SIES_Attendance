@@ -271,11 +271,13 @@ public final class SyncClient {
 	 *                     administrator, who keeps every department's
 	 * @param appoints     the courses this account may appoint a class representative for, or
 	 *                     null when the server did not say
+	 * @param readsOnly    the courses this account reads because its department offers them
+	 *                     and may not change (V53), or null when the server did not say
 	 */
 	public record Me(boolean mayKeepARoll, @Nullable List<Long> represents,
 	                 @Nullable List<String> roles, @Nullable List<String> importDepartments,
 	                 @Nullable List<String> batchDepartments, @Nullable List<Long> appoints,
-	                 @Nullable List<Long> coordinatedBatches) {
+	                 @Nullable List<Long> coordinatedBatches, @Nullable List<Long> readsOnly) {
 	}
 
 	/**
@@ -323,7 +325,10 @@ public final class SyncClient {
 		return new Me(SyncJson.flagIn(body, "mayKeepARoll", fallback),
 				SyncJson.courseIdsIn(body, "represents"),
 				SyncJson.textsIn(body, "roles", "role"), departments, batchDepartments,
-				SyncJson.courseIdsIn(body, "appoints"), coordinatedBatches);
+				SyncJson.courseIdsIn(body, "appoints"), coordinatedBatches,
+				// Null from a server older than V53, whose professors read no course they
+				// may not change.
+				SyncJson.courseIdsIn(body, "readsOnly"));
 	}
 
 	/**
@@ -338,6 +343,18 @@ public final class SyncClient {
 	@NonNull
 	public List<SyncJson.OnTheRoll> roll(long courseId, int academicYear) throws IOException {
 		return SyncJson.parseRoll(call("GET", "/courses/" + courseId + "/roll?academicYear="
+				+ academicYear, null));
+	}
+
+	/**
+	 * Every batch of a session, for linking to an OE, AEC, IKS or VEC course.
+	 * <p>
+	 * Asked of the server because this phone holds only its own department's batches (V32),
+	 * and those courses take anybody's (V52).
+	 */
+	@NonNull
+	public List<SyncJson.Linkable> linkableBatches(int academicYear) throws IOException {
+		return SyncJson.parseLinkable(call("GET", "/batches/linkable?academicYear="
 				+ academicYear, null));
 	}
 

@@ -1,5 +1,6 @@
 package in.basulabs.siesattendance.frontend;
 
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -9,6 +10,7 @@ import android.widget.AutoCompleteTextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.widget.NestedScrollView;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
@@ -141,7 +143,12 @@ public class FragmentAddCourse extends Fragment {
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
 
-		if (!viewModel.may(Permissions.Capability.COURSES)) {
+		editingCourseID = getArguments() == null ? -1L : getArguments().getLong("courseID", -1L);
+
+		// A new course is for whoever keeps courses, and for a professor in their own
+		// department (V55). An existing one may also be edited by a professor of its
+		// department (V54), which is asked once it is read; see prefillFromExisting.
+		if (editingCourseID <= 0 && !viewModel.mayAddCourse()) {
 			// On the screen itself, as well as at the controls that lead here. The controls
 			// are the courtesy; this is the one check that cannot be forgotten when somebody
 			// adds a fourth way in -- which is exactly what happened to the sign-in gate.
@@ -149,8 +156,6 @@ public class FragmentAddCourse extends Fragment {
 			Navigation.findNavController(view).popBackStack();
 			return;
 		}
-
-		editingCourseID = getArguments() == null ? -1L : getArguments().getLong("courseID", -1L);
 
 		etCode = view.findViewById(R.id.etCourseCode);
 		etTopic = view.findViewById(R.id.etCourseTopic);
@@ -171,15 +176,16 @@ public class FragmentAddCourse extends Fragment {
 		etBatches = view.findViewById(R.id.etCourseBatches);
 
 		if (mayAssignBatches) {
-			etBatches.setOnClickListener(v -> BatchPicker.show(requireContext(), offeredBatches(),
-					batchIDs, picked -> {
-						batchIDs.clear();
-						batchIDs.addAll(picked);
-						showBatchSummary();
-					}));
+			etBatches.setOnClickListener(v -> chooseBatches());
 			loadBatches();
 		} else {
 			view.findViewById(R.id.tilCourseBatches).setVisibility(View.GONE);
+		}
+
+		// A professor's new course goes in their own department, so it starts there.
+		if (editingCourseID <= 0 && !viewModel.may(Permissions.Capability.COURSES)
+				&& !viewModel.batchDepartments().isEmpty()) {
+			chosenDept = viewModel.batchDepartments().get(0);
 		}
 
 		bindDropdowns();
@@ -231,9 +237,10 @@ public class FragmentAddCourse extends Fragment {
 				return;
 			}
 			Ui.onMain(this, () -> {
-				// The list offers an IKS or VEC course to an administrator alone; this is
-				// the check for any other way in (V46).
-				if (!viewModel.mayKeepCourseOfType(course.courseType)) {
+				// The list offers an IKS or VEC course to an administrator alone (V46), and
+				// another department's course to nobody who does not keep courses (V54);
+				// this is the check for any other way in.
+				if (!viewModel.mayEditCourse(course)) {
 					viewModel.sayNotPermitted();
 					Navigation.findNavController(requireView()).popBackStack();
 					return;
@@ -300,19 +307,60 @@ public class FragmentAddCourse extends Fragment {
 				}));
 	}
 
+	/** Whether the type chosen above takes any department's batches (V52). */
+	private boolean takesAnyDepartmentsBatches() {
+		return chosenType != null && chosenType.takesAnyDepartmentsBatches();
+	}
+
+	/**
+	 * Opens the batch picker. For an OE, AEC, IKS or VEC course the server is asked for the
+	 * session's batches first, since this phone holds only its own department's.
+	 */
+	private void chooseBatches() {
+
+		boolean anyDepartment = takesAnyDepartmentsBatches();
+		boolean keeps = chosenDept != null && viewModel.mayKeepBatchesOf(chosenDept);
+
+		java.util.function.Consumer<List<EntityBatchDesc>> show = options ->
+				BatchPicker.show(requireContext(), options, batchIDs, chosenDept,
+						anyDepartment, keeps, viewModel.academicYearValue(), picked -> {
+							batchIDs.clear();
+							batchIDs.addAll(picked);
+							showBatchSummary();
+						});
+
+		if (!anyDepartment) {
+			show.accept(offeredBatches());
+			return;
+		}
+
+		viewModel.addServerBatches(offeredBatches(), merged -> Ui.onMain(this, () -> {
+			// Kept, so the summary can name a server batch once it is ticked.
+			for (EntityBatchDesc batch : merged) {
+				if (!isListed(batch.batchID)) {
+					batchOptions.add(batch);
+				}
+			}
+			show.accept(merged);
+		}));
+	}
+
 	/**
 	 * What the Batches field offers: the session's batches of the department chosen above,
 	 * when this account keeps that department's batches, and whatever is linked already so it
-	 * can be unticked. A batch is linked only to its own department's courses (V31).
+	 * can be unticked. A batch is linked only to its own department's courses (V31), except
+	 * that an OE, AEC, IKS or VEC course takes anybody's (V52), and is offered every one.
 	 */
 	@NonNull
 	private List<EntityBatchDesc> offeredBatches() {
 
+		boolean anyDepartment = takesAnyDepartmentsBatches();
 		boolean keeps = chosenDept != null && viewModel.mayKeepBatchesOf(chosenDept);
 		List<EntityBatchDesc> offered = new ArrayList<>();
 
 		for (EntityBatchDesc batch : batchOptions) {
-			if ((keeps && batch.department == chosenDept) || batchIDs.contains(batch.batchID)) {
+			if (anyDepartment || (keeps && batch.department == chosenDept)
+					|| batchIDs.contains(batch.batchID)) {
 				offered.add(batch);
 			}
 		}
@@ -479,7 +527,7 @@ public class FragmentAddCourse extends Fragment {
 		// make or change one.
 		List<CourseType> types = new ArrayList<>();
 		for (CourseType type : CourseType.values()) {
-			if (viewModel.mayKeepCourseOfType(type)) {
+			if (viewModel.mayHoldCourseType(type)) {
 				types.add(type);
 			}
 		}
@@ -501,8 +549,10 @@ public class FragmentAddCourse extends Fragment {
 
 		// Changing the coordinator changes who the picker may offer and who the summary may
 		// name, so both are redrawn rather than left showing the previous choice.
-		actvProfessor.setOnItemClickListener((parent, view, position, id) ->
-				showInstructorSummary());
+		actvProfessor.setOnItemClickListener((parent, view, position, id) -> {
+			((TextInputLayout) requireView().findViewById(R.id.tilProfessor)).setError(null);
+			showInstructorSummary();
+		});
 	}
 
 	/**
@@ -558,19 +608,21 @@ public class FragmentAddCourse extends Fragment {
 	 */
 	private void onSave(@NonNull View button) {
 
-		tilCode.setError(null);
-		tilTopic.setError(null);
-		((TextInputLayout) requireView().findViewById(R.id.tilSemester)).setError(null);
+		for (int id : new int[]{R.id.tilCourseCode, R.id.tilCourseTopic, R.id.tilStream,
+				R.id.tilDepartment, R.id.tilYear, R.id.tilSemester, R.id.tilProfessor,
+				R.id.tilCourseType}) {
+			((TextInputLayout) requireView().findViewById(id)).setError(null);
+		}
 
 		String code = etCode.getText() == null ? "" : etCode.getText().toString().trim();
 		String topic = etTopic.getText() == null ? "" : etTopic.getText().toString().trim();
 
 		if (code.isEmpty()) {
-			tilCode.setError(getString(R.string.error_required));
+			refuse(R.id.tilCourseCode);
 			return;
 		}
 		if (topic.isEmpty()) {
-			tilTopic.setError(getString(R.string.error_required));
+			refuse(R.id.tilCourseTopic);
 			return;
 		}
 
@@ -579,13 +631,33 @@ public class FragmentAddCourse extends Fragment {
 		Year year = chosenYear;
 		CourseType type = chosenType;
 
-		if (stream == null || dept == null || year == null || type == null) {
+		// Each of these used to return without a word, which reads as a Save button that
+		// does nothing.
+		if (stream == null) {
+			refuse(R.id.tilStream);
+			return;
+		}
+		if (dept == null) {
+			refuse(R.id.tilDepartment);
 			return;
 		}
 
+		// A professor adds and edits their department's courses without keeping courses at
+		// large (V54, V55), and the server keeps the course in that department.
+		if (!viewModel.may(Permissions.Capability.COURSES) && !viewModel.mayKeepBatchesOf(dept)) {
+			refuse(R.id.tilDepartment, R.string.error_course_stays_in_department);
+			return;
+		}
+		if (year == null) {
+			refuse(R.id.tilYear);
+			return;
+		}
 		if (chosenSemester == null) {
-			((TextInputLayout) requireView().findViewById(R.id.tilSemester))
-					.setError(getString(R.string.error_required));
+			refuse(R.id.tilSemester);
+			return;
+		}
+		if (type == null) {
+			refuse(R.id.tilCourseType);
 			return;
 		}
 
@@ -610,8 +682,7 @@ public class FragmentAddCourse extends Fragment {
 		// EntityCourse carries a profID foreign key, so a professor must be chosen.
 		int index = indexOfSelectedProfessor();
 		if (index < 0) {
-			((TextInputLayout) requireView().findViewById(R.id.tilProfessor))
-					.setError(getString(R.string.error_required));
+			refuse(R.id.tilProfessor);
 			return;
 		}
 		course.profID = professors.get(index).profID;
@@ -638,13 +709,14 @@ public class FragmentAddCourse extends Fragment {
 
 		if (mayAssignBatches && batchesLoaded) {
 
-			// A batch of another department cannot stay linked once the department above
-			// has changed: the server would refuse the link. One with no department yet
-			// is left as it was.
+			// A batch of another department cannot stay linked once the department or the
+			// type above has changed: the server would refuse the link. One with no
+			// department yet is left as it was, and an OE, AEC, IKS or VEC course keeps
+			// every one (V52).
 			chosenBatches = new ArrayList<>();
 			for (EntityBatchDesc batch : batchOptions) {
 				if (batchIDs.contains(batch.batchID)
-						&& (batch.department == null || batch.department == chosenDept)) {
+						&& type.mayLinkBatchOf(chosenDept, batch.department)) {
 					chosenBatches.add(batch.batchID);
 				}
 			}
@@ -680,6 +752,35 @@ public class FragmentAddCourse extends Fragment {
 	 * Where the currently chosen professor sits in {@link #professors}, or -1 when none is
 	 * chosen. Used to preselect the entry in the picker dialog.
 	 */
+	/**
+	 * Marks a field as required and brings it into view.
+	 * <p>
+	 * The error alone was not enough. Save is at the foot of a long form, so the field it
+	 * complained about, the coordinator most often, was scrolled out of sight and the button
+	 * looked as if it did nothing.
+	 */
+	private void refuse(int fieldId) {
+		refuse(fieldId, R.string.error_required);
+	}
+
+	/** The same, saying why. */
+	private void refuse(int fieldId, int message) {
+
+		View root = requireView();
+		TextInputLayout field = root.findViewById(fieldId);
+		field.setError(getString(message));
+
+		if (root instanceof NestedScrollView scroll) {
+			scroll.post(() -> {
+				Rect where = new Rect();
+				field.getDrawingRect(where);
+				scroll.offsetDescendantRectToMyCoords(field, where);
+				int margin = getResources().getDimensionPixelSize(R.dimen.activity_vertical_margin);
+				scroll.smoothScrollTo(0, Math.max(0, where.top - margin));
+			});
+		}
+	}
+
 	private int indexOfSelectedProfessor() {
 		String selected = actvProfessor.getText().toString().trim();
 		for (int i = 0; i < professors.size(); i++) {

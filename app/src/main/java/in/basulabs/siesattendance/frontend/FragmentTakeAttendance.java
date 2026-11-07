@@ -385,10 +385,12 @@ public class FragmentTakeAttendance extends Fragment {
 			}
 
 			// The course's own department's batches (V31), and any nobody has placed yet,
-			// which could be anybody's.
+			// which could be anybody's. Every department's, for an OE, AEC, IKS or VEC
+			// course (V52).
 			List<EntityBatchDesc> list = new ArrayList<>();
 			for (EntityBatchDesc batch : all) {
-				if (batch.department == null || batch.department == course.offeringDepartment) {
+				if (course.courseType.mayLinkBatchOf(course.offeringDepartment,
+						batch.department)) {
 					list.add(batch);
 				}
 			}

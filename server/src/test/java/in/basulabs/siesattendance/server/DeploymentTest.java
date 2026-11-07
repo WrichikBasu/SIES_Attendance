@@ -14,6 +14,8 @@ import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * The deployment files, held to what the code actually requires.
@@ -128,6 +130,62 @@ class DeploymentTest {
 						+ "s shutdown phase");
 
 		assertTrue(unit.contains("KillSignal=SIGTERM"), "which is what graceful listens for");
+	}
+
+	@Test
+	void theBackupWritesWhereItsUnitLetsItAndOnlyWhenDocumented() throws Exception {
+
+		String unit = read("sies-backup.service");
+		String timer = read("sies-backup.timer");
+		String script = read("sies-backup.sh");
+		Map<String, String> example = variables(read("backup-env.example"));
+
+		// ProtectSystem=strict makes everything read-only but the StateDirectory, so the
+		// script's default has to be that directory or every run fails with EROFS -- on a
+		// timer, at night, where nobody is looking.
+		String stateDirectory = unit.replaceAll("(?s).*\nStateDirectory=(\\S+).*", "$1");
+		String scriptDefault = script.replaceAll(
+				"(?s).*BACKUP_DIR=\"\\$\\{BACKUP_DIR:-([^}]+)}\".*", "$1");
+		assertEquals("/var/lib/" + stateDirectory, scriptDefault,
+				"the script's default BACKUP_DIR must be the unit's StateDirectory");
+
+		// The example documents the defaults, so it must state them truthfully: copying it
+		// unchanged has to change nothing. Every script that reads the file is held to it:
+		// each variable has to be defaulted by at least one of them, and identically by
+		// every one that defaults it.
+		List<String> scripts = List.of("sies-backup.sh", "sies-basebackup.sh",
+				"sies-wal-ship.sh", "sies-wal-archiving.sh");
+		for (Map.Entry<String, String> entry : example.entrySet()) {
+			String name = entry.getKey();
+			Pattern fallback = Pattern.compile(
+					"\n" + name + "=\"\\$\\{" + name + ":-([^}]*)}\"");
+			int defaulted = 0;
+			for (String other : scripts) {
+				Matcher m = fallback.matcher(read(other));
+				if (m.find()) {
+					defaulted++;
+					assertEquals(entry.getValue(), m.group(1),
+							name + " in backup-env.example must match the default in " + other);
+				}
+			}
+			assertTrue(defaulted > 0, name + " is in backup-env.example but no script reads it");
+		}
+
+		// The point-in-time units read the same file and write to the same directory.
+		for (String name : List.of("sies-backup", "sies-basebackup", "sies-wal-ship")) {
+			String service = read(name + ".service");
+			assertTrue(service.contains("ExecStart=/opt/sies-attendance/" + name + ".sh"), name);
+			assertTrue(service.contains("EnvironmentFile=-/etc/sies-attendance/backup-env"),
+					name + ": the environment file is optional, so the unit must not fail without it");
+			assertTrue(service.contains("\nStateDirectory=" + stateDirectory + "\n"),
+					name + " must write where sies-backup does");
+			assertTrue(read(name + ".timer").contains("Unit=" + name + ".service"), name);
+		}
+
+		// A machine switched off at night would otherwise never be backed up.
+		assertTrue(timer.contains("Persistent=true"), timer);
+		assertTrue(read("sies-basebackup.timer").contains("Persistent=true"),
+				"a base backup skipped is a night the recovery window shrinks by");
 	}
 
 	@Test

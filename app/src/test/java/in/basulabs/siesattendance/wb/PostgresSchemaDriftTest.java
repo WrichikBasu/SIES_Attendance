@@ -252,6 +252,35 @@ public class PostgresSchemaDriftTest {
 	}
 
 	@Test
+	public void theCrossDepartmentCourseTypesMatchV52() throws IOException {
+
+		String function = normalise(statementContaining(
+				read("V52__a_cross_department_course_takes_any_batch.sql"),
+				"CREATE FUNCTION course_takes_any_departments_batches"));
+
+		Matcher list = Pattern.compile("IN \\(([^)]*)\\)").matcher(function);
+		assertTrue("course_takes_any_departments_batches has no IN (...) list: " + function,
+				list.find());
+
+		List<String> actual = new ArrayList<>();
+		for (String quoted : list.group(1).split(",")) {
+			actual.add(quoted.trim().replace("'", ""));
+		}
+
+		List<String> expected = new ArrayList<>();
+		for (CourseType type : CourseType.values()) {
+			if (type.takesAnyDepartmentsBatches()) {
+				expected.add(type.name());
+			}
+		}
+
+		java.util.Collections.sort(actual);
+		java.util.Collections.sort(expected);
+		assertEquals("CourseType.takesAnyDepartmentsBatches() and V52 disagree about which "
+				+ "courses take any department's batches", expected, actual);
+	}
+
+	@Test
 	public void theAecDepartmentsMatchV49() throws IOException {
 
 		String function = normalise(statementContaining(

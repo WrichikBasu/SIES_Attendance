@@ -59,19 +59,34 @@ public final class MeController {
 	 *                          answer and the page says so rather than offering an empty table
 	 * @param appoints          the courses this caller may appoint a class representative
 	 *                          for, so the phone offers the roll on those and no others
+	 * @param readsOnly         the courses of this caller's department whose registers they
+	 *                          read (V53) and may not change, because they neither teach the
+	 *                          course nor head the department. The phone shows those
+	 *                          lectures and registers without offering edits the server would
+	 *                          refuse. The course itself they may still edit (V54)
 	 */
 	public record Who(long accountId, @NonNull String kind, @NonNull String displayName,
 	                  boolean mustRotate, boolean mayManageAccounts, boolean mayKeepARoll,
 	                  @NonNull String auditEntries, @NonNull List<Held> roles,
 	                  @NonNull List<Delegates.Delegation> represents,
 	                  @NonNull Imports imports, @NonNull Batches batches,
-	                  @NonNull List<Appointable> appoints) {
+	                  @NonNull List<Appointable> appoints,
+	                  @NonNull List<ReadOnly> readsOnly) {
+	}
+
+	/**
+	 * One course of the caller's department whose registers they read and may not change
+	 * (V53).
+	 *
+	 * @param courseId a key, as digits in a string like every key on this wire
+	 */
+	public record ReadOnly(@NonNull String courseId) {
 	}
 
 	/**
 	 * One course this account may appoint a representative for, asked the way
-	 * {@code Delegates.capacityFor} asks it: one they teach, one their department offers if they
-	 * head it, or any for an administrator. Discontinued courses are left out, as the console's
+	 * {@code Delegates.capacityFor} asks it: one they teach, one their department offers (V56),
+	 * or any for an administrator. Discontinued courses are left out, as the console's
 	 * picker leaves them out.
 	 *
 	 * @param courseId a key, as digits in a string like every key on this wire
@@ -190,8 +205,34 @@ public final class MeController {
 					roles, represents, imports,
 					new Batches(asked(connection, "SELECT actor_has_role('ADMIN')"),
 							ownDepartment(connection), coordinates(connection)),
-					appoints(connection));
+					appoints(connection), readsOnly(connection));
 		});
+	}
+
+	/**
+	 * See {@link ReadOnly}: the department's courses this caller neither teaches nor heads, which
+	 * is who the lecture and attendance policies let take and correct a register (V6). Empty for
+	 * anybody who is not a professor.
+	 */
+	@NonNull
+	private static List<ReadOnly> readsOnly(@NonNull java.sql.Connection connection)
+			throws SQLException {
+
+		List<ReadOnly> courses = new ArrayList<>();
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT course_id FROM courses "
+						+ "WHERE actor_reads_department_of(offering_department) "
+						+ "  AND NOT actor_instructs(course_id) "
+						+ "  AND NOT actor_heads(offering_department) "
+						+ "ORDER BY course_id");
+		     ResultSet results = statement.executeQuery()) {
+
+			while (results.next()) {
+				courses.add(new ReadOnly(Long.toString(results.getLong(1))));
+			}
+		}
+		return courses;
 	}
 
 	/** See {@link Appointable}. Empty for a student, who teaches and heads nothing. */
@@ -205,6 +246,7 @@ public final class MeController {
 				"SELECT course_id FROM courses WHERE date_discontinued IS NULL "
 						+ "  AND (actor_instructs(course_id) "
 						+ "       OR actor_heads(offering_department) "
+						+ "       OR actor_reads_department_of(offering_department) "
 						+ "       OR actor_has_role('ADMIN')) "
 						+ "ORDER BY course_id");
 		     ResultSet results = statement.executeQuery()) {

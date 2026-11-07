@@ -170,3 +170,7 @@ shared/src/main/java/in/basulabs/siesattendance/backend/
   util/             roster CSV parser, backup container and encryption
 server/             see server/README.md
 ```
+
+## Credits
+- Thanks to Shubham Yadav [@YShubhamCodes](https://github.com/YShubhamCodes) for further testing the code.
+

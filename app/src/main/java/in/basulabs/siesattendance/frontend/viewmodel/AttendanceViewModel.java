@@ -23,6 +23,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -558,6 +559,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				DeviceIdentity.recordBatchDepartments(getApplication(), null);
 				DeviceIdentity.recordAppoints(getApplication(), null);
 				DeviceIdentity.recordCoordinatedBatches(getApplication(), null);
+				DeviceIdentity.recordReadsOnly(getApplication(), null);
 
 				// What the server will let this account change, and which courses a class
 				// representative may mark. Asked here rather than guessed from the account
@@ -767,6 +769,39 @@ public class AttendanceViewModel extends AndroidViewModel {
 				&& Permissions.mayEditBatch(DeviceIdentity.accountKind(getApplication()),
 				DeviceIdentity.batchDepartments(getApplication()),
 				DeviceIdentity.coordinatedBatches(getApplication()), batch);
+	}
+
+	/**
+	 * Whether this account may edit that course; see {@link Permissions#mayEditCourse}.
+	 */
+	public boolean mayEditCourse(@NonNull EntityCourse course) {
+		return Permissions.mayEditCourse(DeviceIdentity.accountKind(getApplication()),
+				may(Permissions.Capability.COURSES), DeviceIdentity.roles(getApplication()),
+				DeviceIdentity.batchDepartments(getApplication()), course);
+	}
+
+	/** Whether to offer adding a course; see {@link Permissions#mayAddCourse}. */
+	public boolean mayAddCourse() {
+		return Permissions.mayAddCourse(DeviceIdentity.accountKind(getApplication()),
+				may(Permissions.Capability.COURSES),
+				DeviceIdentity.batchDepartments(getApplication()));
+	}
+
+	/**
+	 * Whether a course of that type may be kept by this account at all, whoever's it is:
+	 * IKS and VEC by an administrator alone (V46). What the editor's type list offers.
+	 */
+	public boolean mayHoldCourseType(@Nullable CourseType type) {
+		return Permissions.mayKeepCourseOfType(DeviceIdentity.accountKind(getApplication()),
+				DeviceIdentity.roles(getApplication()), type);
+	}
+
+	/**
+	 * Whether this account may take that course's registers or correct them; see
+	 * {@link Permissions#mayKeepRegistersOf}.
+	 */
+	public boolean mayKeepRegistersOf(long courseId) {
+		return Permissions.mayKeepRegistersOf(DeviceIdentity.readsOnly(getApplication()), courseId);
 	}
 
 	/**
@@ -1618,6 +1653,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				repository.setCourseInstructors(course.courseID, instructorIDs);
 
 				if (batchIDs != null) {
+					adoptPicked(batchIDs);
 					repository.setCourseBatches(course.courseID, batchIDs);
 				}
 				toastMessage.postValue("Course saved");
@@ -1645,11 +1681,20 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * This is what makes {@link #discontinueCourse} mean anything: without it a retired course
 	 * stays in the take-attendance dropdown and can go on collecting lectures, which is the
 	 * whole thing marking it discontinued is supposed to stop.
+	 * <p>
+	 * Without the courses this account only reads (V53), for the same reason: a register taken
+	 * for one would be refused at the next sync.
 	 */
 	public void loadActiveCoursesSync(
 			@NonNull java.util.function.Consumer<List<EntityCourse>> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(visible(repository.activeCoursesSync())));
+				cb.accept(markable(visible(repository.activeCoursesSync()))));
+	}
+
+	/** That list without the courses this account only reads; see {@link #loadActiveCoursesSync}. */
+	@NonNull
+	private List<EntityCourse> markable(@NonNull List<EntityCourse> courses) {
+		return Permissions.markableCourses(DeviceIdentity.readsOnly(getApplication()), courses);
 	}
 
 	/**
@@ -1669,7 +1714,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 
 			List<EntityCourse> courses = new ArrayList<>(
-					visible(repository.activeCoursesSync()));
+					markable(visible(repository.activeCoursesSync())));
 
 			boolean present = false;
 			for (EntityCourse course : courses) {
@@ -2333,6 +2378,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				repository.setCourseInstructors(course.courseID, instructorIDs);
 
 				if (batchIDs != null) {
+					adoptPicked(batchIDs);
 					repository.setCourseBatches(course.courseID, batchIDs);
 				}
 				toastMessage.postValue("Course updated");
@@ -2393,10 +2439,92 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
+	/**
+	 * Batches the server listed for linking that this phone does not hold, by ID. Kept until
+	 * a link is saved, which stores the ones it uses first; see {@link #adoptPicked}.
+	 */
+	private final Map<Long, EntityBatchDesc> serverBatches = new ConcurrentHashMap<>();
+
+	/**
+	 * Adds every batch of the session the server lists to the options a cross-department
+	 * course offers, for an OE, AEC, IKS or VEC course (V52). This phone holds only its own
+	 * department's batches (V32), and those courses take anybody's.
+	 *
+	 * @param local    the batches already on offer, which win over the server's copy
+	 * @param onLoaded run on a background thread with the merged list. Run with
+	 *                 {@code local} alone when there is no server, or it cannot be reached:
+	 *                 the reason goes to {@link #getToastMessage()}
+	 */
+	public void addServerBatches(@NonNull List<EntityBatchDesc> local,
+	                             @NonNull java.util.function.Consumer<List<EntityBatchDesc>>
+			                             onLoaded) {
+
+		if (!hasServer() || !isSignedIn()) {
+			onLoaded.accept(local);
+			return;
+		}
+
+		int session = academicYearValue();
+
+		NETWORK_TASK_EXECUTOR.execute(() -> {
+
+			List<EntityBatchDesc> merged = new ArrayList<>(local);
+
+			try {
+				Set<Long> held = new HashSet<>();
+				for (EntityBatchDesc batch : local) {
+					held.add(batch.batchID);
+				}
+
+				for (SyncJson.Linkable linkable
+						: new SyncClient(getApplication()).linkableBatches(session)) {
+
+					if (held.contains(linkable.batchId())) {
+						continue;
+					}
+
+					EntityBatchDesc batch = new EntityBatchDesc(linkable.batchName(),
+							linkable.academicYear(), null,
+							linkable.department() == null ? null
+									: Department.fromAny(linkable.department()));
+					batch.batchID = linkable.batchId();
+
+					serverBatches.put(batch.batchID, batch);
+					merged.add(batch);
+				}
+
+			} catch (java.io.IOException e) {
+				toastMessage.postValue(e instanceof SyncClient.Unavailable
+						? "The server could not be reached, so only this phone's batches are "
+								+ "listed."
+						: e.getMessage() == null ? "Could not list the server's batches"
+								: e.getMessage());
+			}
+
+			onLoaded.accept(merged);
+		});
+	}
+
+	/** Stores the server's batches among these before they are linked; see the field. */
+	private void adoptPicked(@NonNull List<Long> batchIDs) {
+
+		List<EntityBatchDesc> adopt = new ArrayList<>();
+
+		for (long batchID : batchIDs) {
+			EntityBatchDesc batch = serverBatches.get(batchID);
+			if (batch != null) {
+				adopt.add(batch);
+			}
+		}
+
+		repository.adoptServerBatches(adopt);
+	}
+
 	/** Links a course to exactly these batches, for a professor who is not editing the course. */
 	public void setCourseBatches(long courseID, @NonNull List<Long> batchIDs) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
+				adoptPicked(batchIDs);
 				repository.setCourseBatches(courseID, batchIDs);
 				toastMessage.postValue("Batches updated");
 			} catch (Exception e) {

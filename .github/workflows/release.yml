@@ -47,10 +47,13 @@ jobs:
             exit 1
           fi
           echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
-          echo "SIES_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
 
+      # The signing variables are set on this step only. Every Gradle run configures :app,
+      # so if the keystore path leaked into a later step without its passwords, that step
+      # would fail even though it never signs anything.
       - name: Build signed APK and AAB
         env:
+          SIES_KEYSTORE_FILE: ${{ runner.temp }}/release.jks
           SIES_KEYSTORE_PASSWORD: ${{ secrets.SIES_KEYSTORE_PASSWORD }}
           SIES_KEY_ALIAS: ${{ secrets.SIES_KEY_ALIAS }}
           SIES_KEY_PASSWORD: ${{ secrets.SIES_KEY_PASSWORD }}

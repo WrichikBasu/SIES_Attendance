@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -295,6 +296,10 @@ class SyncTest {
 				pushed.body().get("rejected").toString());
 		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
 				"a key from the wrong node will be the wrong node tomorrow too");
+		assertEquals("the CS-101 lecture on Mon 14 Jul 2025, 09:00",
+				pushed.body().get("rejected").get(0).get("about").stringValue(),
+				"and it says which lecture, from the row the phone sent: the server has "
+						+ "never had it");
 
 		assertEquals(0, count("SELECT count(*) FROM lectures"),
 				"a phone must not be able to CREATE rows claiming to be another phone's");
@@ -699,6 +704,256 @@ class SyncTest {
 		assertEquals(0, count("SELECT count(*) FROM courses WHERE course_id = " + courseID));
 	}
 
+	// ── V52: a cross-department course takes any department's batches ────
+
+	/** A Chemistry open elective coordinated by B CHEM, and a Computer Science batch. */
+	private void anOpenElectiveAndAnotherDepartmentsBatch() throws SQLException {
+		postgres.asSuperuser("""
+				INSERT INTO courses
+				    (course_id, prof_id, course_code, course_topic, stream,
+				     offering_department, year, semester, course_type) VALUES
+				    (3060, 1002, 'CH-OE1', 'Chemistry in daily life', 'BSc',
+				     'CHEMISTRY', 'FY', 1, 'OE');
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year, department)
+				    VALUES (5960, 'FY CS OE', %d, 'COMPUTER_SCIENCE');
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year)
+				    VALUES (5960, 2001, %d);
+				""".formatted(SESSION, SESSION));
+	}
+
+	private static Map<String, Object> link(long courseID, long batchID) {
+		return intent("course_batch_map", List.of(courseID, batchID), "UPSERT",
+				Map.of("courseID", courseID, "batchID", batchID));
+	}
+
+	@Test
+	void anOpenElectivesCoordinatorLinksAnotherDepartmentsBatch() throws Exception {
+
+		// Found on the app: an Environmental Science open elective, a session full of other
+		// departments' batches, and "No batches in this session" -- because V31 linked a
+		// batch only to its own department's courses, and an open elective's students are
+		// everybody else's.
+		anOpenElectiveAndAnotherDepartmentsBatch();
+
+		Phone phone = signInWithAPhone("b.chem@sies.edu.in");
+		String before = get(phone, "/sync/pull").body().get("access").stringValue();
+
+		Reply pushed = push(phone, List.of(link(3060, 5960)));
+
+		assertEquals(1, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertEquals(1, count("SELECT count(*) FROM course_batch_map "
+				+ "WHERE course_id = 3060 AND batch_id = 5960"));
+
+		// The batch is now read through the link, and the link is a row in another table:
+		// the feed would never carry the batch. The fingerprint changing is what makes the
+		// phone download everything again, batch and members included.
+		Reply pulled = get(phone, "/sync/pull");
+		assertNotEquals(before, pulled.body().get("access").stringValue(),
+				"a link to the actor's own course changes what they may read");
+		assertFalse(changesFor(pulled.body(), "batch_desc").isEmpty(),
+				"and a first snapshot now carries the batch: " + pulled);
+	}
+
+	@Test
+	void anOrdinaryCourseStillTakesOnlyItsOwnDepartmentsBatches() throws Exception {
+
+		anOpenElectiveAndAnotherDepartmentsBatch();
+
+		// The batch's own keeper, so the policies admit it and the trigger is what refuses.
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+		Reply pushed = push(phone, List.of(link(COURSE_CHEM, 5960)));
+
+		assertEquals(0, pushed.body().get("accepted").intValue(), pushed::toString);
+		String reason = pushed.body().get("rejected").get(0).get("reason").stringValue();
+		assertTrue(reason.contains("OE, AEC, IKS or VEC"), reason);
+		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue());
+
+		// And the coordinator of a major cannot link another department's batch either.
+		Reply chemistry = push(signInWithAPhone("b.chem@sies.edu.in"),
+				List.of(link(COURSE_CHEM, 5960)));
+		assertEquals(0, chemistry.body().get("accepted").intValue(), chemistry::toString);
+	}
+
+	@Test
+	void aCourseCannotStopBeingAnOpenElectiveWhileItHoldsAnotherDepartmentsBatch()
+			throws Exception {
+
+		anOpenElectiveAndAnotherDepartmentsBatch();
+		postgres.asSuperuser("INSERT INTO course_batch_map (course_id, batch_id) "
+				+ "VALUES (3060, 5960)");
+
+		SQLException refused = assertThrows(SQLException.class, () -> postgres.asSuperuser(
+				"UPDATE courses SET course_type = 'MAJOR' WHERE course_id = 3060"));
+		assertTrue(refused.getMessage().contains("unlink them first"), refused.getMessage());
+
+		// Setting the same type again is not a change, which a push does on every write.
+		postgres.asSuperuser("UPDATE courses SET course_type = 'OE' WHERE course_id = 3060");
+
+		// And a batch it holds may still change department: the course takes anybody's.
+		postgres.asSuperuser("UPDATE batch_desc SET department = 'HISTORY' "
+				+ "WHERE batch_id = 5960");
+	}
+
+	@Test
+	void everyBatchOfTheSessionIsListedForLinkingByNameAndNotByMember() throws Exception {
+
+		anOpenElectiveAndAnotherDepartmentsBatch();
+
+		Reply listed = get(signInWithAPhone("b.chem@sies.edu.in"),
+				"/batches/linkable?academicYear=" + SESSION);
+
+		assertEquals(200, listed.status(), listed::toString);
+
+		JsonNode batch = null;
+		for (JsonNode entry : listed.body()) {
+			if ("5960".equals(entry.get("batchId").stringValue())) {
+				batch = entry;
+			}
+		}
+
+		assertNotNull(batch, "a Chemistry professor is offered the Computer Science batch, "
+				+ "which their phone is otherwise never sent: " + listed);
+		assertEquals("FY CS OE", batch.get("batchName").stringValue());
+		assertEquals("COMPUTER_SCIENCE", batch.get("department").stringValue());
+		assertEquals(1, batch.get("members").intValue());
+		assertFalse(listed.raw().contains("R RAO"), "a size, never the members: " + listed);
+	}
+
+	// ── V53: a professor reads every course their department offers ──────
+
+	/** A second Computer Science professor, who teaches nothing, signed in on a phone. */
+	private Phone aColleagueWhoTeachesNothing() throws Exception {
+		postgres.asSuperuser("""
+				INSERT INTO professors (prof_id, name, email, department, designation) VALUES
+				    (1004, 'D CS', 'd.cs@sies.edu.in', 'COMPUTER_SCIENCE', 'Assistant Professor');
+				""");
+		account(AccountKind.PROFESSOR, 1004L, null, "d.cs@sies.edu.in");
+		return signInWithAPhone("d.cs@sies.edu.in");
+	}
+
+	@Test
+	void aProfessorReadsTheirDepartmentsCoursesLecturesAndRegisters() throws Exception {
+
+		Phone teacher = signInWithAPhone("a.cs@sies.edu.in");
+		long lectureID = teacher.key(5300);
+		Reply taken = push(teacher, List.of(lectureIntent(lectureID, COURSE_CS, 9),
+				attendanceIntent(lectureID, STUDENT_CS, true)));
+		assertEquals(2, taken.body().get("accepted").intValue(), taken::toString);
+
+		Reply pulled = get(aColleagueWhoTeachesNothing(), "/sync/pull");
+
+		assertEquals(200, pulled.status(), pulled::toString);
+		assertEquals(COURSE_CS,
+				changesFor(pulled.body(), "courses").get(0).get("key").get(0).longValue(),
+				"a colleague's course in their own department: " + pulled);
+		assertEquals(1, changesFor(pulled.body(), "courses").size(),
+				"and not another department's: " + pulled);
+		assertEquals(1, changesFor(pulled.body(), "lectures").size(), pulled::toString);
+		assertEquals(1, changesFor(pulled.body(), "attendance").size(), pulled::toString);
+		assertFalse(changesFor(pulled.body(), "course_instructor").isEmpty(),
+				"who teaches it: " + pulled);
+	}
+
+	@Test
+	void aDepartmentsCourseIsReadAndNotChangedByAProfessorWhoDoesNotTeachIt()
+			throws Exception {
+
+		Phone teacher = signInWithAPhone("a.cs@sies.edu.in");
+		long lectureID = teacher.key(5310);
+		push(teacher, List.of(lectureIntent(lectureID, COURSE_CS, 10),
+				attendanceIntent(lectureID, STUDENT_CS, true)));
+
+		Phone colleague = aColleagueWhoTeachesNothing();
+
+		// Correcting the mark, and taking a register of their own on the course.
+		Reply corrected = push(colleague, List.of(attendanceIntent(lectureID, STUDENT_CS, false)));
+		assertEquals(0, corrected.body().get("accepted").intValue(), corrected::toString);
+		assertEquals(0, count("SELECT count(*) FROM attendance WHERE NOT present"));
+
+		Reply taken = push(colleague, List.of(lectureIntent(colleague.key(5311), COURSE_CS, 11)));
+		assertEquals(0, taken.body().get("accepted").intValue(), taken::toString);
+
+		// /me says so, so the phone shows the course without offering the edits.
+		Reply me = get(colleague, "/me");
+		assertEquals(List.of(COURSE_CS), SyncJson.courseIdsIn(me.raw(), "readsOnly"), me::toString);
+
+		Reply teachers = get(teacher, "/me");
+		assertEquals(List.of(), SyncJson.courseIdsIn(teachers.raw(), "readsOnly"),
+				"the course's own instructor changes it: " + teachers);
+	}
+
+	// ── V54: a professor edits every course their department offers ──────
+
+	/** A Computer Science minor the head made on their phone, coordinated by the head. */
+	private long aDepartmentsCourse() throws Exception {
+		Phone head = signInWithAPhone("c.head@sies.edu.in");
+		long courseID = head.key(5400);
+		Reply made = push(head, List.of(intent("courses", List.of(courseID), "UPSERT",
+				courseRow(courseID, 1003L, "CS-MN1", "MINOR"))));
+		assertEquals(1, made.body().get("accepted").intValue(), made::toString);
+		return courseID;
+	}
+
+	/** That course as a phone would send it after an edit. */
+	private static Map<String, Object> edited(long courseID, String topic, String department) {
+		Map<String, Object> course = courseRow(courseID, 1003L, "CS-MN1", "MINOR");
+		course.put("courseTopic", topic);
+		course.put("offeringDepartment", department);
+		return intent("courses", List.of(courseID), "UPSERT", course);
+	}
+
+	@Test
+	void aProfessorEditsTheirDepartmentsCourseAndWhoTeachesIt() throws Exception {
+
+		long courseID = aDepartmentsCourse();
+		Phone colleague = aColleagueWhoTeachesNothing();
+
+		Reply pushed = push(colleague, List.of(edited(courseID, "Programming in C",
+						"COMPUTER_SCIENCE"),
+				intent("course_instructor", List.of(courseID, 1004L), "UPSERT",
+						Map.of("courseID", courseID, "profID", 1004L))));
+
+		assertEquals(2, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertEquals(1, count("SELECT count(*) FROM courses WHERE course_id = " + courseID
+				+ " AND course_topic = 'Programming in C'"));
+		assertEquals(1, count("SELECT count(*) FROM course_instructor WHERE course_id = "
+				+ courseID + " AND prof_id = 1004"));
+	}
+
+	@Test
+	void aProfessorKeepsTheirDepartmentsCourseInTheDepartment() throws Exception {
+
+		long courseID = aDepartmentsCourse();
+		Phone colleague = aColleagueWhoTeachesNothing();
+
+		// Moving it to Chemistry would put it out of the department's reach.
+		Reply moved = push(colleague, List.of(edited(courseID, "Values", "CHEMISTRY")));
+		assertEquals(0, moved.body().get("accepted").intValue(), moved::toString);
+		assertEquals(1, count("SELECT count(*) FROM courses WHERE course_id = " + courseID
+				+ " AND offering_department = 'COMPUTER_SCIENCE'"));
+
+		// V55: a course added for the department, coordinated by somebody else.
+		long added = colleague.key(5401);
+		Reply adding = push(colleague, List.of(intent("courses", List.of(added), "UPSERT",
+				courseRow(added, 1003L, "CS-MN2", "MINOR"))));
+		assertEquals(1, adding.body().get("accepted").intValue(), adding::toString);
+
+		// And not one for another department.
+		long elsewhere = colleague.key(5402);
+		Map<String, Object> chemistryMinor = courseRow(elsewhere, 1002L, "CH-MN2", "MINOR");
+		chemistryMinor.put("offeringDepartment", "CHEMISTRY");
+		Reply refused = push(colleague, List.of(intent("courses", List.of(elsewhere), "UPSERT",
+				chemistryMinor)));
+		assertEquals(0, refused.body().get("accepted").intValue(), refused::toString);
+
+		// And another department's course is not theirs to edit at all.
+		Reply chemistry = push(signInWithAPhone("b.chem@sies.edu.in"),
+				List.of(edited(courseID, "Chemistry for programmers", "COMPUTER_SCIENCE")));
+		assertEquals(0, chemistry.body().get("accepted").intValue(), chemistry::toString);
+		assertEquals(0, count("SELECT count(*) FROM courses "
+				+ "WHERE course_topic = 'Chemistry for programmers'"));
+	}
+
 	/** A Computer Science course row as a phone would send it. */
 	private static Map<String, Object> courseRow(long courseID, long profID, String code,
 	                                             String type) {
@@ -984,6 +1239,11 @@ class SyncTest {
 		assertEquals(1, count("SELECT count(*) FROM students WHERE student_id = " + student),
 				"the student is still there, which was always true -- the news is that the "
 						+ "phone is told");
+
+		// Which student, from the server's copy: the phone has already deleted its own, so
+		// the server is the only place the name still is.
+		assertEquals("student D DELETABLE",
+				pushed.body().get("rejected").get(0).get("about").stringValue());
 	}
 
 	@Test

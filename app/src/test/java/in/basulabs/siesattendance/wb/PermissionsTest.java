@@ -71,6 +71,56 @@ public class PermissionsTest {
 	}
 
 	@Test
+	public void aDepartmentsCourseThisAccountOnlyReadsIsNotOfferedForChange() {
+
+		List<EntityCourse> all = List.of(course(3001, "CS-101"), course(3002, "CS-102"));
+
+		// V53: /me listed a colleague's course, which this professor reads and does not teach.
+		assertFalse(Permissions.mayKeepRegistersOf(Set.of(3002L), 3002));
+		assertTrue(Permissions.mayKeepRegistersOf(Set.of(3002L), 3001));
+		assertEquals(List.of(all.get(0)), Permissions.markableCourses(Set.of(3002L), all));
+
+		// A server that never said, older than V53, sent no course this account may not change.
+		assertTrue(Permissions.mayKeepRegistersOf(null, 3002));
+		assertEquals(all, Permissions.markableCourses(null, all));
+	}
+
+	@Test
+	public void aProfessorEditsTheirDepartmentsCoursesAndNoOthers() {
+
+		EntityCourse ours = course(3001, "CS-101");
+		ours.offeringDepartment = Department.COMPUTER_SCIENCE;
+		EntityCourse theirs = course(3002, "CH-101");
+		theirs.offeringDepartment = Department.CHEMISTRY;
+		Set<String> computerScience = Set.of(Department.COMPUTER_SCIENCE.name());
+
+		// V54: without keeping courses at large, by being a professor of the department.
+		assertTrue(Permissions.mayEditCourse(AccountKind.PROFESSOR, false, Set.of(),
+				computerScience, ours));
+		assertFalse(Permissions.mayEditCourse(AccountKind.PROFESSOR, false, Set.of(),
+				computerScience, theirs));
+
+		// A head keeps courses, and still not an IKS course, which is an administrator's.
+		assertTrue(Permissions.mayEditCourse(AccountKind.PROFESSOR, true, Set.of("HOD"),
+				computerScience, theirs));
+		ours.courseType = CourseType.IKS;
+		assertFalse(Permissions.mayEditCourse(AccountKind.PROFESSOR, true, Set.of("HOD"),
+				computerScience, ours));
+	}
+
+	@Test
+	public void aProfessorIsOfferedAddingACourseForTheirDepartment() {
+
+		Set<String> computerScience = Set.of(Department.COMPUTER_SCIENCE.name());
+
+		// V55: a professor without keeping courses at large, once /me said their department.
+		assertTrue(Permissions.mayAddCourse(AccountKind.PROFESSOR, false, computerScience));
+		assertFalse(Permissions.mayAddCourse(AccountKind.PROFESSOR, false, null));
+		assertFalse(Permissions.mayAddCourse(AccountKind.STUDENT, false, computerScience));
+		assertTrue(Permissions.mayAddCourse(AccountKind.STAFF, true, Set.of()));
+	}
+
+	@Test
 	public void anIksOrVecCourseIsAnAdministratorsAlone() {
 
 		Set<String> head = Set.of("HOD");

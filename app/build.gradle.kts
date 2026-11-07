@@ -24,8 +24,8 @@ android {
         applicationId = "in.basulabs.siesattendance"
         minSdk = 26
         targetSdk = 37
-        versionCode = 6
-        versionName = "2.0.0-alpha.1"
+        versionCode = 7
+        versionName = "2.0.0-alpha.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -34,13 +34,16 @@ android {
     // which decodes the keystore from a repository secret. Without these variables a local
     // release build is still produced, just unsigned, so nothing about the key has to live
     // on a development machine.
+    fun requiredEnv(name: String): String =
+        providers.environmentVariable(name).orNull?.takeIf { it.isNotEmpty() }
+            ?: throw GradleException("SIES_KEYSTORE_FILE is set but $name is missing or empty.")
     val releaseKeystore = providers.environmentVariable("SIES_KEYSTORE_FILE").orNull
     val releaseSigning = releaseKeystore?.let {
         signingConfigs.create("release") {
             storeFile = file(it)
-            storePassword = providers.environmentVariable("SIES_KEYSTORE_PASSWORD").get()
-            keyAlias = providers.environmentVariable("SIES_KEY_ALIAS").get()
-            keyPassword = providers.environmentVariable("SIES_KEY_PASSWORD").get()
+            storePassword = requiredEnv("SIES_KEYSTORE_PASSWORD")
+            keyAlias = requiredEnv("SIES_KEY_ALIAS")
+            keyPassword = requiredEnv("SIES_KEY_PASSWORD")
         }
     }
 

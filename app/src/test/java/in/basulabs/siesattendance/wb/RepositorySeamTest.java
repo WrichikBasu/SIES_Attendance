@@ -100,17 +100,20 @@ public class RepositorySeamTest {
 	 * <p>
 	 * This is what makes extracting the interface provably inert rather than merely intended to
 	 * be: if each method is the call the ViewModel used to make, in the same order with the same
-	 * arguments, then no behaviour moved. The two exceptions are the two the ViewModel already
-	 * ran inside {@code runInTransaction}, and they are named here so that adding a third
-	 * multi-statement method is a decision somebody has to come and make rather than something
-	 * that happens quietly.
+	 * arguments, then no behaviour moved. Two exceptions are the two the ViewModel already ran
+	 * inside {@code runInTransaction}. The third, {@code adoptServerBatches} (V52), stores
+	 * batches the server listed as though a pull had written them, which needs the outbox's
+	 * applying flag set and cleared around the inserts in one transaction. They are named here
+	 * so that adding another multi-statement method is a decision somebody has to come and make
+	 * rather than something that happens quietly.
 	 */
 	@Test
 	public void theRoomRepositoryIsOneDaoCallPerMethod() throws IOException {
 
 		String source = withoutComments(read(ROOM_REPOSITORY));
 
-		List<String> transactional = List.of("recordLectureWithMarks", "duplicateLecture");
+		List<String> transactional = List.of("recordLectureWithMarks", "duplicateLecture",
+				"adoptServerBatches");
 
 		Matcher matcher = Pattern.compile(
 				"\\n\\tpublic [^\\n]*?\\b([a-zA-Z0-9_]+)\\((?:[^{]*?)\\) \\{(.*?)\\n\\t\\}",

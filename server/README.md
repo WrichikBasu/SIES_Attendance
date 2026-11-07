@@ -85,6 +85,8 @@ python3 app/src/test/sql/sql_differ.py     # app and server SQL return identical
 ./server/tools/verify-audit.sh             # the audit trail, and that nobody can edit it
 ./server/tools/verify-wire.sh              # the whole service over HTTP
 ./server/tools/verify-sync.sh              # both halves of sync
+./server/tools/verify-backup.sh            # a backup restores to an identical database (needs age)
+./server/tools/verify-pitr.sh              # recovery to a chosen moment (needs age)
 ```
 
 The database tests need Docker. Tests that touch row-level security connect as a non-superuser,
@@ -196,8 +198,205 @@ systemctl enable --now sies-audit-partitions.timer
 
 Still needed before phones can use production:
 - TLS with the certificate pinned in the app's `res/xml/network_security_config.xml`
-- a tested backup and restore (`pg_dump` and WAL)
 - a different login rate limiter if more than one instance runs: `LoginRateLimiter` counts in memory
+
+### Backups
+
+There are two kinds of backup. Both are encrypted with [age](https://age-encryption.org) to the
+same public key, written to the same directory, and restored with the same private key. They
+answer different questions, and you need both.
+
+| | **Dumps** | **Point-in-time (base backups + WAL)** |
+|---|---|---|
+| What it is | `pg_dump`: the database as SQL-level data | `pg_basebackup`: a copy of the database files, plus every change since (the WAL) |
+| Brings back | the database as it was at 02:30 on one night | the database as it was at **any second** in the last 7 days |
+| Taken | nightly, about 02:30 (`sies-backup.timer`) | base backup nightly at about 03:00 (`sies-basebackup.timer`); WAL every minute (`sies-wal-ship.timer`) |
+| Kept on the server | newest 14, plus the first of each of the last 12 months | the last 7 base backups and the WAL after the oldest of them |
+| Files | one self-contained file per night | a set: a base backup reaches no further than the night it was taken without the WAL after it, and WAL is useless without a base backup before it |
+| Restores into | any PostgreSQL 18 or later, on any machine | PostgreSQL 18 only, on the same kind of CPU (x86-64 to x86-64) |
+| Roles and passwords | not included: recreated from the password manager | included: the whole cluster comes back as it was |
+| Restored with | `tools/restore-backup.sh` | `tools/pitr-restore.sh` |
+
+Point-in-time recovery is the one for "someone deleted a register at 11:40": go back to 11:39,
+and keep the rest of the morning's attendance. The dumps cover what it can't: anything older than
+a week, a move to a new PostgreSQL version or another kind of machine, and a last resort if the
+WAL chain is broken.
+
+#### What is in the backup directory
+
+```
+/var/lib/sies-attendance-backups/            root's, mode 700
+  sies-20261106T023012Z.dump.age             a dump: restore on its own
+  base/
+    base-20261106T030411Z.tar.gz.age         a base backup
+    base-20261106T030411Z.start              the WAL file replay starts from (a file name, not secret)
+  wal/
+    000000010000000000000042.gz.age          WAL segments, one every few minutes
+    00000002.history.gz.age                  ...and timeline files, after a recovery
+  .lock  .wal.lock  .base.lock               locks: ignore
+  *.partial                                  a run in progress or killed: ignore
+```
+
+Two other places hold backup data and must **not** be copied off the machine:
+`wal-staging/` inside the database container's volume, which is WAL waiting for the shipper
+(unencrypted, and gone within a minute), and the private key, which is never on the server at all.
+
+#### What to copy off the machine
+
+A backup on the same disk as the database doesn't survive that disk. **Copy the whole directory**,
+`/var/lib/sies-attendance-backups/`, except the locks and `.partial` files, to at least one other
+machine, **every five minutes**. That one copy covers both kinds. The dumps only change nightly,
+but WAL arrives all day, and only WAL that has left the machine survives losing it. Everything in
+the directory is encrypted, so the destination doesn't need to be trusted with the data.
+
+Pull from the other machine rather than push from the server, so the server holds no credentials
+for wherever the copies end up:
+
+```sh
+# on the other machine, in cron: */5 * * * *
+rsync -a --ignore-existing --exclude='.*lock' --exclude='*.partial' --rsync-path='sudo rsync' \
+    admin@server:/var/lib/sies-attendance-backups/ ~/sies-backups/
+```
+
+- **`admin` needs `sudo rsync` without a password** (a one-line sudoers rule), because the
+  directory is root's.
+- **`--ignore-existing`, never `--delete`.** The copy keeps what the server has rotated away, so a
+  wiped or compromised server can't empty the copies too. Prune the copy yourself. Delete old dumps
+  freely. Delete a base backup's `.tar.gz.age` and `.start` together, and WAL only if it's older
+  than the oldest `.start` you still keep. Or let it grow: a quiet day's WAL is under 10 MB.
+- **Keep `base/` and `wal/` together.** `pitr-restore.sh` needs both: the base backup to start
+  from, and every WAL file after it to reach the moment you ask for.
+
+Keep these elsewhere, not with the backups:
+
+| | where | needed for |
+|---|---|---|
+| the private key (`sies-backup-key.txt`) | password manager, plus one copy offline | every restore. Stored next to the backups, it would undo the encryption |
+| the three role passwords | password manager | restoring a dump (point-in-time brings the roles back itself) |
+| `/etc/sies-attendance/env` and `migrate-env` | password manager | rebuilding the service on a new machine |
+
+#### Which to restore
+
+| What happened | Restore | From |
+|---|---|---|
+| Data deleted or changed by mistake, in the last 7 days | point-in-time, `--to` just before it | the server's own directory |
+| The server or its disk is gone | point-in-time `--to latest`, which loses at most the last few minutes. If that fails, the newest dump, which loses everything since 02:30 | the off-machine copy |
+| Something older than 7 days | the dump from that night, or that month | the off-machine copy, if the server has rotated it away |
+| A new machine with a newer PostgreSQL, or another kind of CPU | a dump | either |
+| Checking the backups work | `--check` on both, now and then | either |
+
+Every restore goes into a new, empty database or container, never over the live one. Look at
+the result first, then swap it in. Both scripts print the steps.
+
+#### The key
+
+Make it on your own computer, not on the server, and keep the private half off the server.
+Without it no backup can be read, so keep a second copy somewhere safe:
+
+```sh
+age-keygen -o sies-backup-key.txt          # the private key: password manager, and a copy offline
+age-keygen -y sies-backup-key.txt          # prints the public key, age1...
+```
+
+#### Setting up the dumps
+
+```sh
+sudo apt install age                       # Debian and Ubuntu
+
+# The public key(s), one per line. A second line (a spare key kept in a safe) means either can decrypt.
+echo 'age1...' | sudo install -D -m 644 /dev/stdin /etc/sies-attendance/backup-recipients
+
+sudo install -D -m 755 server/deploy/sies-backup.sh      /opt/sies-attendance/sies-backup.sh
+sudo install -D -m 644 server/deploy/sies-backup.service /etc/systemd/system/sies-backup.service
+sudo install -D -m 644 server/deploy/sies-backup.timer   /etc/systemd/system/sies-backup.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now sies-backup.timer
+
+sudo systemctl start sies-backup && journalctl -u sies-backup -n 20   # take one now
+```
+
+- **It runs as root, through `docker exec`, as the database superuser.** `attendance` and
+  `lectures` are under `FORCE ROW LEVEL SECURITY`, so no other role can read every row, and
+  `pg_dump` refuses to write a partial copy. It needs no password.
+- **Nothing is written in plaintext.** The dump streams into age. A run that fails leaves no file.
+- **Retention and location** are set in `deploy/backup-env.example`.
+
+#### Setting up point-in-time recovery
+
+After the dumps, since it uses the same key and `age`:
+
+```sh
+sudo install -D -m 755 server/deploy/sies-wal-archiving.sh /opt/sies-attendance/sies-wal-archiving.sh
+sudo install -D -m 755 server/deploy/sies-wal-ship.sh      /opt/sies-attendance/sies-wal-ship.sh
+sudo install -D -m 755 server/deploy/sies-basebackup.sh    /opt/sies-attendance/sies-basebackup.sh
+for unit in sies-wal-ship.service sies-wal-ship.timer sies-basebackup.service sies-basebackup.timer; do
+    sudo install -D -m 644 server/deploy/$unit /etc/systemd/system/$unit
+done
+sudo systemctl daemon-reload
+
+sudo /opt/sies-attendance/sies-wal-archiving.sh enable     # restarts sies-pg: a few seconds' outage
+sudo systemctl enable --now sies-wal-ship.timer sies-basebackup.timer
+sudo systemctl start sies-basebackup                       # the first base backup; recovery starts here
+
+sudo /opt/sies-attendance/sies-wal-archiving.sh status     # any time
+```
+
+- **How WAL gets out.** PostgreSQL hands every finished WAL segment to a hook, which stages it
+  in the container's volume. A quiet database closes a segment at least every 5 minutes
+  (`archive_timeout`). Every minute the shipper gzips and encrypts what is staged into `wal/`,
+  then deletes the staged copy. Each nightly base backup deletes the base backups beyond
+  `KEEP_BASE` (7), and the WAL only they needed.
+- **Watch `status`.** If staging stops working, PostgreSQL keeps every segment it couldn't archive
+  in `pg_wal` and retries. Nothing is lost, but the disk fills, and then the database stops.
+  `failed` and `waiting` show it starting long before then. The same goes for `staged` if the
+  shipper stops.
+- **Staged WAL is plaintext,** in the database's own volume next to the database files, which
+  are plaintext too. Everything in the backup directory is encrypted.
+
+#### Restoring a dump
+
+On this machine or any other. Use `--check` first: it restores into a throwaway container,
+prints every table's row count and the latest migration, and removes the container:
+
+```sh
+./server/tools/restore-backup.sh --identity sies-backup-key.txt sies-20261106T023012Z.dump.age --check
+```
+
+To move to a new machine, or replace a lost database: start the container as in
+[The database, in Docker](#the-database-in-docker), skip the roles step, then:
+
+```sh
+./server/tools/restore-backup.sh --identity sies-backup-key.txt sies-...dump.age --into sies-pg
+```
+
+It asks for the three role passwords (or reads `DB_OWNER_PASSWORD`, `DB_APP_PASSWORD` and
+`DB_AUDITOR_PASSWORD`), and refuses a database that already has tables. The restore runs in one
+transaction. Then carry on from [The service](#the-service): install the jar and units, write the
+environment files, and run the migrate step. It applies only migrations newer than the backup.
+
+#### Restoring to a moment
+
+Point `--from` at a directory holding `base/` and `wal/`: the server's own directory, or the
+off-machine copy. Find the right moment with `--check`, which replays into a throwaway
+container, prints where it stopped and every table's row count, and removes the container:
+
+```sh
+./server/tools/pitr-restore.sh --identity sies-backup-key.txt \
+    --from /var/lib/sies-attendance-backups --to '2026-11-06 11:39 +05:30' --check
+```
+
+Recovery stops just before the first transaction that committed after `--to`. Always give a
+zone. `--to latest` replays everything that was shipped. With `--into NAME` instead of `--check`,
+it leaves the result running in a new container `NAME` on a new volume `NAME-data`. It touches
+nothing that already exists, and prints the steps to make that copy the live database.
+
+- **It refuses rather than guess.** A moment before the oldest base backup, a gap in the WAL, a
+  moment later than the last shipped transaction, or the wrong key: each one stops it with an
+  error. It never brings up a database that silently stops short.
+- **The restored copy has archiving off,** so it can't write into the archive it came from.
+  Once it's live, run `sies-wal-archiving.sh enable` and take a base backup straight away. The
+  recovery started a new timeline, and the old timeline's WAL after that moment doesn't replay
+  onto it.
 
 ### Updating
 
@@ -220,6 +419,7 @@ sudo bash -c 'set -a; . /etc/sies-attendance/migrate-env; set +a
 
 # A unit in deploy/ changed (copy whichever did):
 sudo install -m 644 server/deploy/sies-attendance.service /etc/systemd/system/
+sudo install -m 755 server/deploy/sies-*.sh /opt/sies-attendance/        # the backup scripts
 sudo systemctl daemon-reload
 
 sudo systemctl restart sies-attendance
@@ -312,31 +512,40 @@ Everything below is enforced in SQL. `GET /api/v1/me` tells the phone and the co
 offer, but whatever they offer is still checked row by row. An account's permissions are the
 union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR appointments.
 
-| | student (CR) | professor | head of department | office | auditor | admin |
-|---|---|---|---|---|---|---|
-| sign in on the phone | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| sign in on the web console | — | ✓ | ✓ | ✓ | ✓ | ✓ |
-| take and edit a register | courses they represent | their courses | the department's | — | — | ✓ |
-| read students | their courses' rolls | their courses' rolls, and every student with their department as major, minor or OE | the department's | all | all | all |
-| add or correct students and enrolments | — | their own department | the department's | ✓ | — | ✓ |
-| remove students | — | — | the department's | ✓ | — | ✓ |
-| add or correct a professor | — | — | — | ✓ | — | ✓ |
-| read professors | those teaching their courses | their own department's, and those teaching courses they read | the same, and the departments they head | all | all | all |
-| add or withdraw a course | — | — | the department's | ✓ | — | ✓ |
-| add, change or withdraw an IKS or VEC course | — | — | — | — | — | ✓ |
-| open a new academic session | — | — | — | — | — | ✓ |
-| correct or remove a session | — | — | — | ✓ | — | ✓ |
-| create, edit, delete batches; link them to courses | — | their own department's | their own department's | — | — | ✓ |
-| rename a batch and change its members | — | their own department's, and those serving only courses they coordinate | the same | — | — | ✓ |
-| read batches | those linked to their courses | their own department's, and those their courses use | the department's, and those their courses use | all | all | all |
-| import students (CSV) | — | their own department | the department's | ✓ | — | ✓ |
-| import attendance (CSV) | — | their courses | the department's | — | — | ✓ |
-| appoint a CR | — | their courses | the department's | — | — | ✓ |
-| create accounts, grant or revoke roles | — | — | — | — | — | ✓ |
-| import or export a backup (.siesbak) | — | — | — | — | — | ✓ |
-| read the audit trail | their own actions | their department's teaching | their department's | their own actions | all | all |
-| export a register | courses they represent | their courses | the department's | all | all | all |
+| | student (CR) | professor                                                                                              | head of department | office | auditor | admin |
+|---|---|--------------------------------------------------------------------------------------------------------|---|---|---|---|
+| sign in on the phone | ✓ | ✓                                                                                                      | ✓ | ✓ | ✓ | ✓ |
+| sign in on the web console | — | ✓                                                                                                      | ✓ | ✓ | ✓ | ✓ |
+| take and edit a register | courses they represent | their courses                                                                                          | the department's | — | — | ✓ |
+| read students | their courses' rolls | the rolls of their department's courses, and every student with their department as major, minor or OE | the department's | all | all | all |
+| add or correct students and enrolments | — | their own department                                                                                   | the department's | ✓ | — | ✓ |
+| remove students | — | —                                                                                                      | the department's | ✓ | — | ✓ |
+| add or correct a professor | — | —                                                                                                      | — | ✓ | — | ✓ |
+| read professors | those teaching their courses | their own department's, and those teaching courses they read                                           | the same, and the departments they head | all | all | all |
+| add a course | — | for their own department                                                                               | the department's | ✓ | — | ✓ |
+| remove a course | — | —                                                                                                      | the department's | ✓ | — | ✓ |
+| edit or discontinue a course, change who teaches it | — | every course their department offers                                                                   | the department's | ✓ | — | ✓ |
+| add, change or withdraw an IKS or VEC course | — | —                                                                                                      | — | — | — | ✓ |
+| open a new academic session | — | —                                                                                                      | — | — | — | ✓ |
+| correct or remove a session | — | —                                                                                                      | — | ✓ | — | ✓ |
+| create, edit, delete batches; link them to courses | — | their own department's                                                                                 | their own department's | — | — | ✓ |
+| rename a batch and change its members | — | their own department's, and those serving only courses they coordinate                                 | the same | — | — | ✓ |
+| read batches | those linked to their courses | their own department's, and those their courses use                                                    | the department's, and those their courses use | all | all | all |
+| import students (CSV) | — | their own department                                                                                   | the department's | ✓ | — | ✓ |
+| import attendance (CSV) | — | their courses                                                                                          | the department's | — | — | ✓ |
+| appoint a CR | — | courses their department offers                                                                        | the department's | — | — | ✓ |
+| create accounts, grant or revoke roles | — | —                                                                                                      | — | — | — | ✓ |
+| import or export a backup (.siesbak) | — | —                                                                                                      | — | — | — | ✓ |
+| read the audit trail | their own actions | their department's teaching                                                                            | their department's | their own actions | all | all |
+| read courses, their lectures and registers | courses they represent | every course their department offers                                                                   | the department's | all | all | all |
+| export a register | courses they represent | every course their department offers                                                                   | the department's | all | all | all |
 
+- **A professor reads their whole department's teaching** (V53): every course it offers, who
+  teaches it, its batches, its lectures and their registers, in every session. They may also
+  edit those courses (V54): the details, the coordinator, who teaches them, discontinuing them,
+  and the batches of an OE, AEC, IKS or VEC. They may add courses to their department too,
+  with any coordinator (V55), but not remove one or move one to another department. The registers stay with the course's instructors and the head, and the
+  phone shows them read-only to everybody else.
 - **A student account can do nothing until someone appoints it CR** of a course
   (`attendance_delegate`). Appointments are per course and per session.
 - **A HOD grant names a department and, optionally, a session.** With no session it lasts until
@@ -355,24 +564,6 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
   course a batch is linked to is one they coordinate (`courses.prof_id`). That covers renaming it
   and moving students in or out. Making, removing and linking a batch stay with its department
   (V42). Its other instructors read the batch and change nothing.
-
-### A course's roll
-
-`course_admits()` is the single definition, and both `roll_for_course()` and visibility use it.
-A course's roll is the members of the batches linked to it for the session, from any department,
-year or stream. A course with no batch linked for that session has nobody on its roll. Until V41
-such a course fell back on rules about its type; attendance is taken only against a batch, so the
-fallback was removed.
-
-The app uses the same rule in `DaoStudent.getRollForCourseSync` and both export builders. Change
-all of them together; `PostgresSchemaDriftTest` and the SQL differ check that they agree.
-
-Students with a leave date are not on any roll (`roll_for_course()`), so they can't be appointed
-CR. A late joiner's lectures count from their `join_date`, in the export and the statistics, on
-both sides (`PgSqlBits.COUNTS_FOR_ENROLMENT` and `SqlBits.COUNTS_FOR_ENROLMENT`).
-
-A CR can read the rolls of the courses they represent, anyone marked on those courses' lectures,
-and themselves.
 
 ## API
 
@@ -414,6 +605,7 @@ POST /backup/export                        {"password"}: download everything a p
 GET  /progress/{id}                        how far your import or export sent with X-Progress-Id has got
 
 GET  /batches/unplaced                     batches with no department yet, and their courses and majors (admin)
+GET  /batches/linkable?academicYear=      every batch of a session, by name, department and size, for an OE/AEC/IKS/VEC course
 POST /batches/{id}/department              {"department"}: place one, unlinking other departments' courses (admin)
 
 GET  /courses/{id}/roll?academicYear=     a course's roll, for appointing a CR

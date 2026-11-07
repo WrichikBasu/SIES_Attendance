@@ -15,9 +15,13 @@ import androidx.annotation.Nullable;
  * Each constant is a different check, which is why this could not be a foreign key.
  * {@code INSTRUCTOR} is a join onto {@code course_instructor}; {@code HOD} is a join onto
  * {@code user_role} by the course's own department <em>and</em> the grant's session;
- * {@code ADMIN} is a join onto {@code user_role} alone. A constraint covering only the first
- * would read as a guarantee while being a third of one, so all three live in
+ * {@code ADMIN} is a join onto {@code user_role} alone; {@code DEPARTMENT} is a join onto
+ * {@code professors} by the course's own department. A constraint covering only the first
+ * would read as a guarantee while being a fraction of one, so all of them live in
  * {@code attendance_delegate_authorised()}.
+ * <p>
+ * Stored by name, and the server's {@code grant_authority} enum can only grow at the end, so a
+ * new constant is appended, never inserted.
  */
 public enum GrantAuthority {
 
@@ -28,7 +32,10 @@ public enum GrantAuthority {
 	HOD("Head of department"),
 
 	/** An administrator, anywhere in the college. */
-	ADMIN("Administrator");
+	ADMIN("Administrator"),
+
+	/** A professor of the department that offers the course (V56). */
+	DEPARTMENT("Professor of the department");
 
 	@NonNull
 	private final String label;

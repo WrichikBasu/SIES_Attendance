@@ -298,6 +298,30 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 		db.daoBatch().setCourseLinks(batchID, courseIDs);
 	}
 
+	@Override
+	public void adoptServerBatches(@NonNull List<EntityBatchDesc> batches) {
+
+		if (batches.isEmpty()) {
+			return;
+		}
+
+		// With sync_state.applying set, as a pull writes, so the outbox triggers stay quiet:
+		// the batch is the server's, and pushing it back would be refused as not this
+		// account's to make. Set and cleared inside the transaction, as the drain does.
+		db.runInTransaction(() -> {
+			db.daoOutbox().setApplyingSync(1);
+			try {
+				for (EntityBatchDesc batch : batches) {
+					if (db.daoBatch().getByIdSync(batch.batchID) == null) {
+						db.daoBatch().adoptBatchRow(batch);
+					}
+				}
+			} finally {
+				db.daoOutbox().setApplyingSync(0);
+			}
+		});
+	}
+
 	// ── Students ─────────────────────────────────────────────────────────
 	@Override
 	@NonNull

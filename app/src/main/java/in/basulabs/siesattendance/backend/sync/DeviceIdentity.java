@@ -86,6 +86,8 @@ public final class DeviceIdentity {
 
 	private static final String APPOINTS = "appoints";
 
+	private static final String READS_ONLY = "readsOnly";
+
 	private static final String LAST_ACCOUNT = "lastAccountId";
 
 	private static final String ROLES = "roles";
@@ -420,6 +422,10 @@ public final class DeviceIdentity {
 		if (me.coordinatedBatches() != null) {
 			recordCoordinatedBatches(context, me.coordinatedBatches());
 		}
+
+		if (me.readsOnly() != null) {
+			recordReadsOnly(context, me.readsOnly());
+		}
 	}
 
 	/**
@@ -446,6 +452,22 @@ public final class DeviceIdentity {
 	@Nullable
 	public static Set<Long> appoints(@NonNull Context context) {
 		return courseIdsAt(context, APPOINTS);
+	}
+
+	/**
+	 * The courses this account reads only because its department offers them (V53), as
+	 * {@code /me} last said, or null when it has never said. The phone shows them, their
+	 * lectures and their registers, and offers no change to any of it.
+	 */
+	@Nullable
+	public static Set<Long> readsOnly(@NonNull Context context) {
+		return courseIdsAt(context, READS_ONLY);
+	}
+
+	/** Null forgets them, as signing in again and signing out do. */
+	public static void recordReadsOnly(@NonNull Context context,
+	                                   @Nullable Collection<Long> courses) {
+		recordCourseIdsAt(context, READS_ONLY, courses);
 	}
 
 	/** Null forgets them, as signing in again and signing out do. */

@@ -17,6 +17,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.EntityBatchDesc;
 import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.frontend.adapter.AdapterCourse;
 import in.basulabs.siesattendance.frontend.util.BatchPicker;
@@ -57,8 +58,9 @@ public class FragmentCourseList extends Fragment {
 
 				// Read rather than refused: a class representative needs to see who teaches
 				// the course they mark and which batches sit it. An IKS or VEC course is
-				// shown the same way to everybody but an administrator (V46).
-				if (!viewModel.mayKeepCourseOfType(course.courseType)) {
+				// shown the same way to everybody but an administrator (V46), and so is
+				// another department's course to a professor (V54).
+				if (!viewModel.mayEditCourse(course)) {
 					showReadOnly(course);
 					return;
 				}
@@ -74,7 +76,7 @@ public class FragmentCourseList extends Fragment {
 
 				// Discontinuing is an edit, and the gentlest-looking one: it changes what
 				// every later register offers without changing anything already recorded.
-				if (!viewModel.mayKeepCourseOfType(course.courseType)) {
+				if (!viewModel.mayEditCourse(course)) {
 					showReadOnly(course);
 					return;
 				}
@@ -87,7 +89,8 @@ public class FragmentCourseList extends Fragment {
 
 		FloatingActionButton fab = view.findViewById(R.id.fabAddCourse);
 
-		if (viewModel.may(Permissions.Capability.COURSES)) {
+		// A professor adds courses to their own department (V55).
+		if (viewModel.mayAddCourse()) {
 			// The FAB lives inside a ViewPager2 page, so navigation must go through the parent
 			// fragment's NavController rather than this view's.
 			fab.setOnClickListener(v -> Navigation.findNavController(
@@ -107,7 +110,12 @@ public class FragmentCourseList extends Fragment {
 	 */
 	private void showReadOnly(@NonNull EntityCourse course) {
 
+		// An OE, AEC, IKS or VEC course takes any department's batches (V52), so whoever
+		// keeps a department's batches may link theirs to it.
+		boolean anyDepartment = course.courseType.takesAnyDepartmentsBatches();
 		Runnable assign = viewModel.mayKeepBatchesOf(course.offeringDepartment)
+				|| (anyDepartment && viewModel.may(Permissions.Capability.BATCHES)
+						&& !viewModel.batchDepartments().isEmpty())
 				? () -> assignBatches(course) : null;
 
 		viewModel.checkMayAppointFor(course.courseID, may -> {
@@ -122,12 +130,28 @@ public class FragmentCourseList extends Fragment {
 	}
 
 	private void assignBatches(@NonNull EntityCourse course) {
-		viewModel.loadCourseBatchOptions(course.courseID, course.offeringDepartment,
-				(options, linked) ->
-				Ui.onMain(this, () -> BatchPicker.show(requireContext(), options,
-						new java.util.LinkedHashSet<>(linked), picked ->
+		boolean anyDepartment = course.courseType.takesAnyDepartmentsBatches();
+
+		viewModel.loadCourseBatchOptions(course.courseID,
+				anyDepartment ? null : course.offeringDepartment,
+				(all, linked) -> {
+
+			// For a cross-department course, the batches this account keeps, which are the
+			// ones it may link, and whatever is linked already so it can be seen.
+			java.util.List<EntityBatchDesc> options = new java.util.ArrayList<>();
+			for (EntityBatchDesc batch : all) {
+				if (!anyDepartment || linked.contains(batch.batchID)
+						|| viewModel.mayKeepBatchesOf(batch.department)) {
+					options.add(batch);
+				}
+			}
+
+			Ui.onMain(this, () -> BatchPicker.show(requireContext(), options,
+						new java.util.LinkedHashSet<>(linked), course.offeringDepartment,
+						anyDepartment, true, viewModel.academicYearValue(), picked ->
 								viewModel.setCourseBatches(course.courseID,
-										new java.util.ArrayList<>(picked)))));
+										new java.util.ArrayList<>(picked))));
+		});
 	}
 
 	/**

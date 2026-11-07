@@ -305,8 +305,8 @@ public class FragmentSync extends Fragment {
 			return;
 		}
 
-		tvRefusalsTitle.setText(getResources().getQuantityString(
-				R.plurals.sync_refused_title, refusals.size(), refusals.size()));
+		// Not a count: each entry is one reason, and may name sixty rows.
+		tvRefusalsTitle.setText(R.string.sync_refused_title);
 
 		// Newest first, each on its own line. Not a list view: there are at most twenty and
 		// the sentences are what matter, not the chrome round them.

@@ -35,9 +35,9 @@ import jakarta.servlet.http.HttpServletRequest;
  * instructor's to see.
  *
  * <h3>Who may</h3>
- * Not asked here. {@code Delegates.capacityFor} asks the database which of the three capacities
- * the caller holds for this course — instructor, head of the offering department, administrator
- * — and the capacity is stamped on the grant. Hold none and the answer is a 403 that says who
+ * Not asked here. {@code Delegates.capacityFor} asks the database which of the four capacities
+ * the caller holds for this course — instructor, head of the offering department, professor of
+ * that department (V56), administrator — and the capacity is stamped on the grant. Hold none and the answer is a 403 that says who
  * may. The policies on {@code attendance_delegate} and the BEFORE trigger on it say the same
  * thing twice more.
  *
@@ -94,8 +94,8 @@ public final class RepresentativesController {
 			if (Delegates.capacityFor(connection, courseId, academicYear) == null) {
 				throw new ApiException(403, "not_your_course",
 						"That course's roll is for the people who could appoint a "
-								+ "representative on it: its instructor, the head of the "
-								+ "department that offers it, or an administrator.");
+								+ "representative on it: its instructor, a professor or the "
+								+ "head of the department that offers it, or an administrator.");
 			}
 
 			List<OnTheRoll> roll = new ArrayList<>();
@@ -153,8 +153,8 @@ public final class RepresentativesController {
 			if (capacity == null) {
 				throw new ApiException(403, "not_yours_to_grant",
 						"A class representative is appointed by the course's instructor, by "
-								+ "the head of the department that offers it, or by an "
-								+ "administrator.");
+								+ "a professor or the head of the department that offers it, "
+								+ "or by an administrator.");
 			}
 
 			if (!Delegates.onTheRoll(connection, studentId, courseId, academicYear)) {
@@ -187,8 +187,8 @@ public final class RepresentativesController {
 			if (Delegates.capacityFor(connection, courseId, academicYear) == null) {
 				throw new ApiException(403, "not_yours_to_grant",
 						"That course's representatives are the instructor's to appoint and to "
-								+ "end, along with the department's head and an "
-								+ "administrator.");
+								+ "end, along with the professors and the head of the "
+								+ "department that offers it, and an administrator.");
 			}
 
 			if (!Delegates.revoke(connection, studentId, courseId, academicYear,

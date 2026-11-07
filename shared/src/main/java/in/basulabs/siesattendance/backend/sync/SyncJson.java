@@ -71,9 +71,12 @@ public final class SyncJson {
 	 *                  field means false, which is the cautious reading: an older server that
 	 *                  does not send it gets the behaviour it was written for, where every
 	 *                  refusal is kept and retried
+	 * @param about     which row it is, in words, or null: absent from an older server, and
+	 *                  null where the server could name nothing better than the table
 	 */
 	public record Rejection(@NonNull String table, @NonNull List<Long> key,
-	                        @NonNull String reason, boolean permanent) {
+	                        @NonNull String reason, boolean permanent,
+	                        @Nullable String about) {
 	}
 
 	/**
@@ -85,6 +88,16 @@ public final class SyncJson {
 	 */
 	public record OnTheRoll(long studentId, @NonNull String name, @Nullable String rollNo,
 	                        boolean hasAccount, boolean represents) {
+	}
+
+	/**
+	 * One batch an OE, AEC, IKS or VEC course could be linked to, as {@code GET
+	 * /batches/linkable} sends it: named, never listed by member.
+	 *
+	 * @param department the constant name, or null for a batch nobody has placed yet
+	 */
+	public record Linkable(long batchId, @NonNull String batchName, @Nullable String department,
+	                       int academicYear, long members) {
 	}
 
 	private SyncJson() {
@@ -254,7 +267,9 @@ public final class SyncJson {
 			rejected.add(new Rejection(text(rejection.get("table"), "table"),
 					keyFrom(rejection.get("key")),
 					text(rejection.get("reason"), "reason"),
-					Boolean.TRUE.equals(rejection.get("permanent"))));
+					Boolean.TRUE.equals(rejection.get("permanent")),
+					rejection.get("about") instanceof String about && !about.isBlank()
+							? about : null));
 		}
 
 		Object accepted = root.get("accepted");
@@ -285,6 +300,33 @@ public final class SyncJson {
 					Boolean.TRUE.equals(student.get("represents"))));
 		}
 		return roll;
+	}
+
+	/** The batches a session offers for linking, in the order the server sent them. */
+	@NonNull
+	public static List<Linkable> parseLinkable(@NonNull String body) {
+
+		List<Linkable> batches = new ArrayList<>();
+
+		for (Object entry : asArray(new Reader(body).readValue(), "the batches")) {
+
+			Map<String, Object> batch = asObject(entry, "a batch");
+			Object department = batch.get("department");
+			Object year = batch.get("academicYear");
+			Object members = batch.get("members");
+
+			if (!(year instanceof Number session)) {
+				throw new IllegalArgumentException("academicYear is not a number");
+			}
+
+			batches.add(new Linkable(
+					Long.parseLong(text(batch.get("batchId"), "batchId").trim()),
+					text(batch.get("batchName"), "batchName"),
+					department instanceof String name && !name.isBlank() ? name : null,
+					session.intValue(),
+					members instanceof Number count ? count.longValue() : 0L));
+		}
+		return batches;
 	}
 
 	/** The machine-readable {@code code} of an error body, or null. */

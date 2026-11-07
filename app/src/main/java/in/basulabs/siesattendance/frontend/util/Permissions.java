@@ -378,6 +378,85 @@ public final class Permissions {
 	}
 
 	/**
+	 * Whether this account may take a register for that course, correct one or delete a
+	 * lecture.
+	 * <p>
+	 * A professor reads every course their department offers and its registers (V53), and
+	 * keeps the registers only of the ones they teach or head. {@code /me} lists the rest, and
+	 * those are refused here. Everything else is permitted, as it was: the server still decides
+	 * row by row, and a course made on this phone since the last {@code /me} is its maker's.
+	 *
+	 * @param readsOnly the course ids {@code /me} last said this account only reads, or null
+	 *                  when it never said
+	 */
+	public static boolean mayKeepRegistersOf(@Nullable Set<Long> readsOnly, long courseId) {
+		return readsOnly == null || !readsOnly.contains(courseId);
+	}
+
+	/**
+	 * The courses this account may take a register for, out of that list: every one but those
+	 * it only reads.
+	 */
+	@NonNull
+	public static List<EntityCourse> markableCourses(@Nullable Set<Long> readsOnly,
+	                                                 @NonNull List<EntityCourse> courses) {
+
+		List<EntityCourse> markable = new ArrayList<>();
+
+		for (EntityCourse course : courses) {
+			if (mayKeepRegistersOf(readsOnly, course.courseID)) {
+				markable.add(course);
+			}
+		}
+		return markable;
+	}
+
+	/**
+	 * Whether this account may edit that course: its details, its coordinator, who teaches it,
+	 * its batches, and discontinuing it.
+	 * <p>
+	 * Whoever keeps courses at all ({@link Capability#COURSES}: a head, the office, an
+	 * administrator), and every professor of the course's offering department (V54), who may
+	 * edit a department's course without coordinating it or heading the department. Never an
+	 * IKS or VEC course but by an administrator ({@link #mayKeepCourseOfType}).
+	 *
+	 * @param mayKeepCourses what {@link #may} says of {@link Capability#COURSES}
+	 * @param keeps          the departments {@code /me} last said this account keeps batches
+	 *                       for, which for a professor is their own department, or null when
+	 *                       it never said
+	 */
+	public static boolean mayEditCourse(@Nullable AccountKind who, boolean mayKeepCourses,
+	                                    @Nullable Set<String> roles, @Nullable Set<String> keeps,
+	                                    @NonNull EntityCourse course) {
+
+		if (!mayKeepCourseOfType(who, roles, course.courseType)) {
+			return false;
+		}
+
+		if (mayKeepCourses) {
+			return true;
+		}
+
+		return who == AccountKind.PROFESSOR && keeps != null
+				&& course.offeringDepartment != null
+				&& keeps.contains(course.offeringDepartment.name());
+	}
+
+	/**
+	 * Whether this account may add a course: whoever keeps courses at all ({@link
+	 * Capability#COURSES}), and every professor, for their own department (V55). Which
+	 * department is checked when the course is saved.
+	 *
+	 * @param keeps the departments {@code /me} last said this account keeps batches for, which
+	 *              for a professor is their own department, or null when it never said
+	 */
+	public static boolean mayAddCourse(@Nullable AccountKind who, boolean mayKeepCourses,
+	                                   @Nullable Set<String> keeps) {
+		return mayKeepCourses
+				|| (who == AccountKind.PROFESSOR && keeps != null && !keeps.isEmpty());
+	}
+
+	/**
 	 * The courses out of that list this account is shown.
 	 * <p>
 	 * Every course for anybody but a student. For a student, the ones they represent, in the

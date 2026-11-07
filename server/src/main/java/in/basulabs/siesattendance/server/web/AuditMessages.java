@@ -494,24 +494,24 @@ final class AuditMessages {
 	// ── What things are called ───────────────────────────────────────────
 
 	@NonNull
-	private String student(@Nullable Map<String, Object> row) {
+	String student(@Nullable Map<String, Object> row) {
 		Long id = AuditNames.id(row, "student_id");
 		return id == null ? "a student" : orElse(names.students.get(id), "a student");
 	}
 
 	@NonNull
-	private String professor(@Nullable Long id) {
+	String professor(@Nullable Long id) {
 		return id == null ? "a professor" : orElse(names.professors.get(id), "a professor");
 	}
 
 	@NonNull
-	private String course(@Nullable Long id) {
+	String course(@Nullable Long id) {
 		AuditNames.Course course = id == null ? null : names.courses.get(id);
 		return course == null ? "a course" : course.code();
 	}
 
 	@NonNull
-	private String batch(@Nullable Long id) {
+	String batch(@Nullable Long id) {
 		return id == null ? "a batch" : orElse(names.batches.get(id), "a batch");
 	}
 
@@ -522,7 +522,7 @@ final class AuditMessages {
 
 	/** "SIUCSMJ211 on Tue 20 Oct 2026, 10:00", or as much of it as is known. */
 	@NonNull
-	private String lecture(@Nullable Long id) {
+	String lecture(@Nullable Long id) {
 
 		AuditNames.Lecture lecture = id == null ? null : names.lectures.get(id);
 
