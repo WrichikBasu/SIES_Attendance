@@ -58,8 +58,9 @@ public class FragmentCourseList extends Fragment {
 
 				// Read rather than refused: a class representative needs to see who teaches
 				// the course they mark and which batches sit it. An IKS or VEC course is
-				// shown the same way to everybody but an administrator (V46).
-				if (!viewModel.mayKeepCourseOfType(course.courseType)) {
+				// shown the same way to everybody but an administrator (V46), and so is
+				// another department's course to a professor (V54).
+				if (!viewModel.mayEditCourse(course)) {
 					showReadOnly(course);
 					return;
 				}
@@ -75,7 +76,7 @@ public class FragmentCourseList extends Fragment {
 
 				// Discontinuing is an edit, and the gentlest-looking one: it changes what
 				// every later register offers without changing anything already recorded.
-				if (!viewModel.mayKeepCourseOfType(course.courseType)) {
+				if (!viewModel.mayEditCourse(course)) {
 					showReadOnly(course);
 					return;
 				}
@@ -88,7 +89,8 @@ public class FragmentCourseList extends Fragment {
 
 		FloatingActionButton fab = view.findViewById(R.id.fabAddCourse);
 
-		if (viewModel.may(Permissions.Capability.COURSES)) {
+		// A professor adds courses to their own department (V55).
+		if (viewModel.mayAddCourse()) {
 			// The FAB lives inside a ViewPager2 page, so navigation must go through the parent
 			// fragment's NavController rather than this view's.
 			fab.setOnClickListener(v -> Navigation.findNavController(

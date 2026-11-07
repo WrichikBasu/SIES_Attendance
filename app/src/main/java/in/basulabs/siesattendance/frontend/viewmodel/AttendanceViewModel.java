@@ -559,6 +559,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				DeviceIdentity.recordBatchDepartments(getApplication(), null);
 				DeviceIdentity.recordAppoints(getApplication(), null);
 				DeviceIdentity.recordCoordinatedBatches(getApplication(), null);
+				DeviceIdentity.recordReadsOnly(getApplication(), null);
 
 				// What the server will let this account change, and which courses a class
 				// representative may mark. Asked here rather than guessed from the account
@@ -768,6 +769,39 @@ public class AttendanceViewModel extends AndroidViewModel {
 				&& Permissions.mayEditBatch(DeviceIdentity.accountKind(getApplication()),
 				DeviceIdentity.batchDepartments(getApplication()),
 				DeviceIdentity.coordinatedBatches(getApplication()), batch);
+	}
+
+	/**
+	 * Whether this account may edit that course; see {@link Permissions#mayEditCourse}.
+	 */
+	public boolean mayEditCourse(@NonNull EntityCourse course) {
+		return Permissions.mayEditCourse(DeviceIdentity.accountKind(getApplication()),
+				may(Permissions.Capability.COURSES), DeviceIdentity.roles(getApplication()),
+				DeviceIdentity.batchDepartments(getApplication()), course);
+	}
+
+	/** Whether to offer adding a course; see {@link Permissions#mayAddCourse}. */
+	public boolean mayAddCourse() {
+		return Permissions.mayAddCourse(DeviceIdentity.accountKind(getApplication()),
+				may(Permissions.Capability.COURSES),
+				DeviceIdentity.batchDepartments(getApplication()));
+	}
+
+	/**
+	 * Whether a course of that type may be kept by this account at all, whoever's it is:
+	 * IKS and VEC by an administrator alone (V46). What the editor's type list offers.
+	 */
+	public boolean mayHoldCourseType(@Nullable CourseType type) {
+		return Permissions.mayKeepCourseOfType(DeviceIdentity.accountKind(getApplication()),
+				DeviceIdentity.roles(getApplication()), type);
+	}
+
+	/**
+	 * Whether this account may take that course's registers or correct them; see
+	 * {@link Permissions#mayKeepRegistersOf}.
+	 */
+	public boolean mayKeepRegistersOf(long courseId) {
+		return Permissions.mayKeepRegistersOf(DeviceIdentity.readsOnly(getApplication()), courseId);
 	}
 
 	/**
@@ -1647,11 +1681,20 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * This is what makes {@link #discontinueCourse} mean anything: without it a retired course
 	 * stays in the take-attendance dropdown and can go on collecting lectures, which is the
 	 * whole thing marking it discontinued is supposed to stop.
+	 * <p>
+	 * Without the courses this account only reads (V53), for the same reason: a register taken
+	 * for one would be refused at the next sync.
 	 */
 	public void loadActiveCoursesSync(
 			@NonNull java.util.function.Consumer<List<EntityCourse>> cb) {
 		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(visible(repository.activeCoursesSync())));
+				cb.accept(markable(visible(repository.activeCoursesSync()))));
+	}
+
+	/** That list without the courses this account only reads; see {@link #loadActiveCoursesSync}. */
+	@NonNull
+	private List<EntityCourse> markable(@NonNull List<EntityCourse> courses) {
+		return Permissions.markableCourses(DeviceIdentity.readsOnly(getApplication()), courses);
 	}
 
 	/**
@@ -1671,7 +1714,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 
 			List<EntityCourse> courses = new ArrayList<>(
-					visible(repository.activeCoursesSync()));
+					markable(visible(repository.activeCoursesSync())));
 
 			boolean present = false;
 			for (EntityCourse course : courses) {

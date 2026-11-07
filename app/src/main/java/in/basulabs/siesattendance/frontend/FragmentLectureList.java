@@ -7,6 +7,7 @@ import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -147,6 +148,14 @@ public class FragmentLectureList extends Fragment {
 
 			@Override
 			public void onLectureLongPressed(LectureDetails lecture) {
+
+				// A department's course this professor reads and does not teach (V53).
+				if (!viewModel.mayKeepRegistersOf(lecture.courseID)) {
+					Toast.makeText(requireContext(), R.string.message_course_read_only,
+							Toast.LENGTH_LONG).show();
+					return;
+				}
+
 				confirmDelete(lecture);
 			}
 		});

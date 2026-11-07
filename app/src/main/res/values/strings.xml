@@ -222,6 +222,12 @@
     <string name="filter_show_left">Show students who have left</string>
     <string name="label_apaar">APAAR ID</string>
     <string name="label_not_recorded">Not recorded</string>
+    <!-- A course of the professor's department that they read and do not teach (V53). -->
+    <string name="message_course_read_only">You can view this course\'s registers, but only
+        its instructors and the head of department can change them.</string>
+    <string name="error_course_stays_in_department">You can add and edit courses of your own
+        department only</string>
+    <string name="label_register_read_only">View only: you don\'t teach this course.</string>
     <string name="label_major">Major</string>
     <string name="label_minor">Minor</string>
     <string name="label_oe">OE</string>

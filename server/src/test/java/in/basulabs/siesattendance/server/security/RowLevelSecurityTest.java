@@ -351,13 +351,21 @@ class RowLevelSecurityTest {
 		try (Connection as = postgres.actingAs(accountHeadCs, PROF_HEAD_CS, null)) {
 
 			// Both Computer Science lectures: the 2025-26 one through the HOD grant, and the
-			// 2026-27 one not at all, because the headship names a session too.
+			// 2026-27 one only to read, as any professor of the department reads it (V53).
+			// The headship names a session too, so it does not reach 2026-27.
 			assertEquals(1, count(as,
 					"SELECT count(*) FROM lectures WHERE course_id = " + COURSE_CS
 							+ " AND lecture_id = " + LECTURE_CS));
-			assertEquals(0, count(as,
+			assertEquals(1, count(as,
 					"SELECT count(*) FROM lectures WHERE lecture_id = " + LECTURE_CS_NEXT),
+					"a professor of the department reads every session's lectures");
+			assertEquals(0, update(as,
+					"UPDATE lectures SET notes = 'x' WHERE lecture_id = " + LECTURE_CS_NEXT),
 					"a headship for 2025-26 does not extend into 2026-27");
+			assertEquals(0, update(as,
+					"UPDATE attendance SET present = NOT present WHERE lecture_id = "
+							+ LECTURE_CS_NEXT),
+					"nor to its register");
 
 			assertEquals(0, count(as,
 					"SELECT count(*) FROM attendance WHERE lecture_id = " + LECTURE_CHEM),

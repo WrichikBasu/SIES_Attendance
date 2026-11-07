@@ -517,12 +517,14 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 | sign in on the phone | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | sign in on the web console | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | take and edit a register | courses they represent | their courses | the department's | — | — | ✓ |
-| read students | their courses' rolls | their courses' rolls, and every student with their department as major, minor or OE | the department's | all | all | all |
+| read students | their courses' rolls | the rolls of their department's courses, and every student with their department as major, minor or OE | the department's | all | all | all |
 | add or correct students and enrolments | — | their own department | the department's | ✓ | — | ✓ |
 | remove students | — | — | the department's | ✓ | — | ✓ |
 | add or correct a professor | — | — | — | ✓ | — | ✓ |
 | read professors | those teaching their courses | their own department's, and those teaching courses they read | the same, and the departments they head | all | all | all |
-| add or withdraw a course | — | — | the department's | ✓ | — | ✓ |
+| add a course | — | for their own department | the department's | ✓ | — | ✓ |
+| remove a course | — | — | the department's | ✓ | — | ✓ |
+| edit or discontinue a course, change who teaches it | — | every course their department offers | the department's | ✓ | — | ✓ |
 | add, change or withdraw an IKS or VEC course | — | — | — | — | — | ✓ |
 | open a new academic session | — | — | — | — | — | ✓ |
 | correct or remove a session | — | — | — | ✓ | — | ✓ |
@@ -535,8 +537,15 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
 | create accounts, grant or revoke roles | — | — | — | — | — | ✓ |
 | import or export a backup (.siesbak) | — | — | — | — | — | ✓ |
 | read the audit trail | their own actions | their department's teaching | their department's | their own actions | all | all |
-| export a register | courses they represent | their courses | the department's | all | all | all |
+| read courses, their lectures and registers | courses they represent | every course their department offers | the department's | all | all | all |
+| export a register | courses they represent | every course their department offers | the department's | all | all | all |
 
+- **A professor reads their whole department's teaching** (V53): every course it offers, who
+  teaches it, its batches, its lectures and their registers, in every session. They may also
+  edit those courses (V54): the details, the coordinator, who teaches them, discontinuing them,
+  and the batches of an OE, AEC, IKS or VEC. They may add courses to their department too,
+  with any coordinator (V55), but not remove one or move one to another department. The registers stay with the course's instructors and the head, and the
+  phone shows them read-only to everybody else.
 - **A student account can do nothing until someone appoints it CR** of a course
   (`attendance_delegate`). Appointments are per course and per session.
 - **A HOD grant names a department and, optionally, a session.** With no session it lasts until

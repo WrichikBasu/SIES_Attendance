@@ -38,6 +38,16 @@ public class AdapterAttendance extends RecyclerView.Adapter<AdapterAttendance.Ho
 
 	private final List<AttendanceRow> rows = new ArrayList<>();
 
+	/** A register this account only reads: shown as marked, and the toggles do not move. */
+	private boolean readOnly;
+
+	public void setReadOnly(boolean readOnly) {
+		if (this.readOnly != readOnly) {
+			this.readOnly = readOnly;
+			notifyItemRangeChanged(0, rows.size());
+		}
+	}
+
 	public AdapterAttendance(OnToggle listener) {
 		this.listener = listener;
 	}
@@ -155,7 +165,7 @@ public class AdapterAttendance extends RecyclerView.Adapter<AdapterAttendance.Ho
 			}
 
 			AttendanceRow row = rows.get(position);
-			if (isPresent == row.present) {
+			if (readOnly || isPresent == row.present) {
 				return;
 			}
 
@@ -181,6 +191,8 @@ public class AdapterAttendance extends RecyclerView.Adapter<AdapterAttendance.Ho
 		void bindPresence(@NonNull AttendanceRow row) {
 			present.setChecked(row.present);
 			absent.setChecked(!row.present);
+			present.setClickable(!readOnly);
+			absent.setClickable(!readOnly);
 		}
 	}
 }

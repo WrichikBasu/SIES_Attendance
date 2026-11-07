@@ -143,7 +143,12 @@ public class FragmentAddCourse extends Fragment {
 
 		viewModel = new ViewModelProvider(requireActivity()).get(AttendanceViewModel.class);
 
-		if (!viewModel.may(Permissions.Capability.COURSES)) {
+		editingCourseID = getArguments() == null ? -1L : getArguments().getLong("courseID", -1L);
+
+		// A new course is for whoever keeps courses, and for a professor in their own
+		// department (V55). An existing one may also be edited by a professor of its
+		// department (V54), which is asked once it is read; see prefillFromExisting.
+		if (editingCourseID <= 0 && !viewModel.mayAddCourse()) {
 			// On the screen itself, as well as at the controls that lead here. The controls
 			// are the courtesy; this is the one check that cannot be forgotten when somebody
 			// adds a fourth way in -- which is exactly what happened to the sign-in gate.
@@ -151,8 +156,6 @@ public class FragmentAddCourse extends Fragment {
 			Navigation.findNavController(view).popBackStack();
 			return;
 		}
-
-		editingCourseID = getArguments() == null ? -1L : getArguments().getLong("courseID", -1L);
 
 		etCode = view.findViewById(R.id.etCourseCode);
 		etTopic = view.findViewById(R.id.etCourseTopic);
@@ -177,6 +180,12 @@ public class FragmentAddCourse extends Fragment {
 			loadBatches();
 		} else {
 			view.findViewById(R.id.tilCourseBatches).setVisibility(View.GONE);
+		}
+
+		// A professor's new course goes in their own department, so it starts there.
+		if (editingCourseID <= 0 && !viewModel.may(Permissions.Capability.COURSES)
+				&& !viewModel.batchDepartments().isEmpty()) {
+			chosenDept = viewModel.batchDepartments().get(0);
 		}
 
 		bindDropdowns();
@@ -228,9 +237,10 @@ public class FragmentAddCourse extends Fragment {
 				return;
 			}
 			Ui.onMain(this, () -> {
-				// The list offers an IKS or VEC course to an administrator alone; this is
-				// the check for any other way in (V46).
-				if (!viewModel.mayKeepCourseOfType(course.courseType)) {
+				// The list offers an IKS or VEC course to an administrator alone (V46), and
+				// another department's course to nobody who does not keep courses (V54);
+				// this is the check for any other way in.
+				if (!viewModel.mayEditCourse(course)) {
 					viewModel.sayNotPermitted();
 					Navigation.findNavController(requireView()).popBackStack();
 					return;
@@ -517,7 +527,7 @@ public class FragmentAddCourse extends Fragment {
 		// make or change one.
 		List<CourseType> types = new ArrayList<>();
 		for (CourseType type : CourseType.values()) {
-			if (viewModel.mayKeepCourseOfType(type)) {
+			if (viewModel.mayHoldCourseType(type)) {
 				types.add(type);
 			}
 		}
@@ -629,6 +639,13 @@ public class FragmentAddCourse extends Fragment {
 		}
 		if (dept == null) {
 			refuse(R.id.tilDepartment);
+			return;
+		}
+
+		// A professor adds and edits their department's courses without keeping courses at
+		// large (V54, V55), and the server keeps the course in that department.
+		if (!viewModel.may(Permissions.Capability.COURSES) && !viewModel.mayKeepBatchesOf(dept)) {
+			refuse(R.id.tilDepartment, R.string.error_course_stays_in_department);
 			return;
 		}
 		if (year == null) {
@@ -743,10 +760,15 @@ public class FragmentAddCourse extends Fragment {
 	 * looked as if it did nothing.
 	 */
 	private void refuse(int fieldId) {
+		refuse(fieldId, R.string.error_required);
+	}
+
+	/** The same, saying why. */
+	private void refuse(int fieldId, int message) {
 
 		View root = requireView();
 		TextInputLayout field = root.findViewById(fieldId);
-		field.setError(getString(R.string.error_required));
+		field.setError(getString(message));
 
 		if (root instanceof NestedScrollView scroll) {
 			scroll.post(() -> {

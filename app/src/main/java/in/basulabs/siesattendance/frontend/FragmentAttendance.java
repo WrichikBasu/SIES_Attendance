@@ -66,6 +66,14 @@ public class FragmentAttendance extends Fragment {
 
 	private long lectureID;
 
+	/**
+	 * Whether this lecture's course is one this account reads and does not teach (V53). The
+	 * register is shown and nothing on it can be changed. Decided once the lecture is read.
+	 */
+	private boolean readOnly;
+
+	private View markAllRow, save;
+
 	/** Exporting this lecture's marks; a field so its save dialogs are registered in time. */
 	private final MarkExportFlow exportFlow = new MarkExportFlow(this);
 
@@ -98,12 +106,13 @@ public class FragmentAttendance extends Fragment {
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
 		recyclerView.setAdapter(adapter);
 
-		view.findViewById(R.id.btnMarkAllPresent)
-				.setOnClickListener(v -> viewModel.setAllPresence(true));
+		View markAllPresent = view.findViewById(R.id.btnMarkAllPresent);
+		markAllPresent.setOnClickListener(v -> viewModel.setAllPresence(true));
 		view.findViewById(R.id.btnMarkAllAbsent)
 				.setOnClickListener(v -> viewModel.setAllPresence(false));
+		markAllRow = (View) markAllPresent.getParent();
 
-		MaterialButton save = view.findViewById(R.id.btnSaveAttendance);
+		save = view.findViewById(R.id.btnSaveAttendance);
 		save.setOnClickListener(v -> viewModel.saveAttendance(
 				() -> Ui.onMain(this, () ->
 						Navigation.findNavController(v).navigateUp())));
@@ -127,6 +136,14 @@ public class FragmentAttendance extends Fragment {
 			@Override
 			public void onCreateMenu(@NonNull Menu menu, @NonNull MenuInflater inflater) {
 				inflater.inflate(R.menu.menu_attendance_record, menu);
+			}
+
+			/** A register this account only reads can still be exported, and nothing else. */
+			@Override
+			public void onPrepareMenu(@NonNull Menu menu) {
+				menu.findItem(R.id.action_edit_lecture).setVisible(!readOnly);
+				menu.findItem(R.id.action_duplicate_attendance).setVisible(!readOnly);
+				menu.findItem(R.id.action_delete_attendance).setVisible(!readOnly);
 			}
 
 			@Override
@@ -302,6 +319,7 @@ public class FragmentAttendance extends Fragment {
 		}
 
 		courseName.setText(details.courseCode + " · " + details.courseTopic);
+		bindReadOnly(!viewModel.mayKeepRegistersOf(details.courseID));
 
 		DateTimeFormatter dayFormat = DateTimeFormatter.ofPattern("d MMM yyyy");
 		DateTimeFormatter timeFormat = DateTimeFormatter.ofPattern("HH:mm");
@@ -313,7 +331,25 @@ public class FragmentAttendance extends Fragment {
 		lectureDetails.setText(batchLabel + " · "
 				+ details.startDateTime.format(dayFormat) + " · "
 				+ details.startDateTime.format(timeFormat) + " – "
-				+ details.endDateTime.format(timeFormat));
+				+ details.endDateTime.format(timeFormat)
+				+ (readOnly ? "\n" + getString(R.string.label_register_read_only) : ""));
+	}
+
+	/**
+	 * Shows the register as it stands, with nothing to change: no Save, no marking everyone,
+	 * and toggles that do not move. The server would refuse any of it (V53).
+	 */
+	private void bindReadOnly(boolean only) {
+
+		if (only == readOnly) {
+			return;
+		}
+
+		readOnly = only;
+		adapter.setReadOnly(only);
+		markAllRow.setVisibility(only ? View.GONE : View.VISIBLE);
+		save.setVisibility(only ? View.GONE : View.VISIBLE);
+		requireActivity().invalidateMenu();
 	}
 
 	// ── Duplicating ──────────────────────────────────────────────────────
