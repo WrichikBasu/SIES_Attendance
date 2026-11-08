@@ -250,9 +250,15 @@ public final class AttendanceRecordImporter {
 	 * Reads the file and works out what it would create, without writing anything.
 	 * <p>
 	 * Blocks on file and database reads; call off the main thread.
+	 *
+	 * @param readsOnly the courses this account may read but not keep the registers of, as
+	 *                  {@code /me} last said ({@code DeviceIdentity.readsOnly}), or null when it
+	 *                  never said. Their columns are left out with a reason rather than sent
+	 *                  for the server to refuse.
 	 */
 	@NonNull
-	public static Plan plan(@NonNull Context context, @NonNull Uri uri) {
+	public static Plan plan(@NonNull Context context, @NonNull Uri uri,
+	                        @Nullable Set<Long> readsOnly) {
 
 		Plan plan = new Plan();
 
@@ -281,7 +287,7 @@ public final class AttendanceRecordImporter {
 		Map<String, Integer> claimed = new HashMap<>();
 
 		for (int index = 0; index < sheet.columns.size(); index++) {
-			plan.lectures.add(resolve(sheet, index, lookups, claimed));
+			plan.lectures.add(resolve(sheet, index, lookups, claimed, readsOnly));
 		}
 
 		reportUnknownRollNumbers(plan, lookups);
@@ -298,7 +304,8 @@ public final class AttendanceRecordImporter {
 	@NonNull
 	private static LecturePlan resolve(@NonNull AttendanceCsvParser.Sheet sheet, int index,
 	                                   @NonNull Lookups lookups,
-	                                   @NonNull Map<String, Integer> claimed) {
+	                                   @NonNull Map<String, Integer> claimed,
+	                                   @Nullable Set<Long> readsOnly) {
 
 		AttendanceCsvParser.Column column = sheet.columns.get(index);
 
@@ -320,6 +327,13 @@ public final class AttendanceRecordImporter {
 		lecture.courseID = course.courseID;
 		lecture.courseCode = course.courseCode;
 		lecture.courseTopic = course.courseTopic;
+
+		String readOnly = readOnlyProblem(readsOnly, course);
+
+		if (readOnly != null) {
+			lecture.problems.add(readOnly);
+			return lecture;
+		}
 
 		ZoneId zone = ZoneId.systemDefault();
 		lecture.start = column.date.atTime(column.start).atZone(zone);
@@ -395,6 +409,26 @@ public final class AttendanceRecordImporter {
 				lecture.batchID, lecture.start, lecture.end) != null;
 
 		return lecture;
+	}
+
+	/**
+	 * Why a column of this course cannot be imported by this account, or null when it can.
+	 * <p>
+	 * A professor reads every course their department offers (V53) but keeps the registers only
+	 * of those they teach or head. The server refuses attendance for the rest row by row, so an
+	 * import that sent them would end in a failed sync the professor has to untangle; refusing
+	 * the column here shows it on the review screen instead, beside the columns that will go in.
+	 * The same rule as {@code Permissions.mayKeepRegistersOf}, which the backend does not reach.
+	 */
+	@Nullable
+	public static String readOnlyProblem(@Nullable Set<Long> readsOnly,
+	                                     @NonNull EntityCourse course) {
+
+		if (readsOnly == null || !readsOnly.contains(course.courseID)) {
+			return null;
+		}
+		return "You can view " + course.courseCode + "'s registers but not change them: only "
+				+ "its instructors and the head of department can.";
 	}
 
 	/**

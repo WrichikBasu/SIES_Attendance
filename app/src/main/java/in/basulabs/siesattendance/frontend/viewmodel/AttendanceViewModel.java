@@ -1514,7 +1514,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 		FILE_TASK_EXECUTOR.execute(() -> {
 			try {
 				attendancePlan.postValue(
-						AttendanceRecordImporter.plan(getApplication(), uri));
+						AttendanceRecordImporter.plan(getApplication(), uri,
+								DeviceIdentity.readsOnly(getApplication())));
 			} catch (Exception e) {
 				toastMessage.postValue("Could not read the file: " + e.getMessage());
 			} finally {
