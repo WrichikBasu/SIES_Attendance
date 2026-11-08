@@ -59,6 +59,11 @@ android {
         // which would otherwise refuse every connection.
         //
         debug {
+            // A package of its own, so a debug build -- and the instrumented tests, which
+            // install it and uninstall it again after every run -- sits beside a release
+            // install instead of having to replace it, along with the attendance it holds.
+            applicationIdSuffix = ".debug"
+
             // http, not https: the development server has no certificate, which is why the
             // debug network config permits cleartext. 10.0.2.2 is how the emulator reaches
             // the machine it runs on, and the default. For a real phone on the same wifi,
@@ -121,6 +126,8 @@ dependencies {
     testImplementation(libs.junit)
     // The named query cases the SQLite and PostgreSQL dumps are both generated from.
     testImplementation(testFixtures(project(":shared")))
+    // The same named query cases, run by the instrumented tests on the phone's own SQLite.
+    androidTestImplementation(testFixtures(project(":shared")))
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)
 }

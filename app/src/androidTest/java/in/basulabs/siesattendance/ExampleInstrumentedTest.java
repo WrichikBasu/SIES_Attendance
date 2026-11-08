@@ -21,6 +21,6 @@ public class ExampleInstrumentedTest {
 	public void useAppContext() {
 		// Context of the app under test.
 		Context appContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
-		assertEquals("in.basulabs.siesattendance", appContext.getPackageName());
+		assertEquals("in.basulabs.siesattendance.debug", appContext.getPackageName());
 	}
 }

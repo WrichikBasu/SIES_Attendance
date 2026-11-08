@@ -99,6 +99,16 @@ tasks.named<Test>("test") {
     testLogging {
         events("failed")
     }
+
+    // Room's own idea of the phone schema, for RoomSchemaParityTest: the MainDatabase_Impl
+    // its annotation processor writes when :app compiles. Declared as an input so a change to
+    // an entity re-runs the server's tests. Needs the Android SDK, as building :app does.
+    val roomImpl = rootProject.layout.projectDirectory.file(
+        "app/build/generated/ap_generated_sources/debug/out/" +
+            "in/basulabs/siesattendance/backend/MainDatabase_Impl.java")
+    dependsOn(":app:compileDebugJavaWithJavac")
+    inputs.file(roomImpl).withPathSensitivity(PathSensitivity.NONE)
+    systemProperty("sies.roomImpl", roomImpl.asFile.absolutePath)
 }
 
 /*

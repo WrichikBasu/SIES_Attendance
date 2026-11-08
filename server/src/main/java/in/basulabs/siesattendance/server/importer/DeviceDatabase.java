@@ -100,8 +100,8 @@ public final class DeviceDatabase {
 	 * Taken from the version 10 DDL that Room generates, with the four things that happened
 	 * after version 6 undone: the five main tables are still
 	 * {@code INTEGER PRIMARY KEY AUTOINCREMENT}, {@code student_year} has no {@code division},
-	 * and {@code course_instructor} does not exist. The indices are the ones migrations 1 to 5
-	 * had created by then.
+	 * and {@code course_instructor} does not exist. The indices are the ones Room created at
+	 * version 1 plus the ones migrations 1 to 5 had added by then.
 	 */
 	static final String[] VERSION_6_DDL = {
 
@@ -126,6 +126,14 @@ public final class DeviceDatabase {
 					+ "`semester` INTEGER, PRIMARY KEY(`studentID`, `academicYear`), "
 					+ "FOREIGN KEY(`studentID`) REFERENCES `students`(`studentID`) "
 					+ "ON UPDATE CASCADE ON DELETE RESTRICT)",
+			// EntityStudentYear has declared these since the first release, so Room created
+			// them on every phone at version 1 and no migration ever had to. Without them a
+			// file built here fails Room's schema validation when a phone opens it.
+			"CREATE UNIQUE INDEX `index_student_year_rollNo_academicYear` "
+					+ "ON `student_year` (`rollNo`, `academicYear`)",
+			"CREATE INDEX `index_student_year_academicYear_year_stream_majorDept` "
+					+ "ON `student_year` (`academicYear`, `year`, `stream`, `majorDept`)",
+			"CREATE INDEX `index_student_year_studentID` ON `student_year` (`studentID`)",
 
 			"CREATE TABLE `courses` (`courseID` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
 					+ "`profID` INTEGER NOT NULL, `courseCode` TEXT NOT NULL, "
