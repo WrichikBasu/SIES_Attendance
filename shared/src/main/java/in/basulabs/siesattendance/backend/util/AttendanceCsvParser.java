@@ -8,6 +8,7 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -207,13 +208,19 @@ public final class AttendanceCsvParser {
 	 * Case-insensitive so that "9:00 am" reads the same as "9:00 AM", and fixed to
 	 * {@link Locale#ENGLISH} because the pattern letters are matched against the file's own
 	 * text rather than against anything the device chose.
+	 * <p>
+	 * STRICT, as ISO_LOCAL_DATE already is. The default is SMART, which reads 31/06/2025 as
+	 * 30 June rather than refusing it, and the marks would then be imported against a real
+	 * lecture date that was never in the sheet. STRICT needs the year as {@code uuuu};
+	 * {@code yyyy} is year-of-era and would refuse every date.
 	 */
 	@NonNull
 	private static DateTimeFormatter ofPattern(@NonNull String pattern) {
 		return new DateTimeFormatterBuilder()
 				.parseCaseInsensitive()
 				.appendPattern(pattern)
-				.toFormatter(Locale.ENGLISH);
+				.toFormatter(Locale.ENGLISH)
+				.withResolverStyle(ResolverStyle.STRICT);
 	}
 
 	private AttendanceCsvParser() {

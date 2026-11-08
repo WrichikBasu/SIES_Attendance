@@ -118,6 +118,55 @@ public class ParserEdgeProbeTest {
 		assertTrue(!sheet.errors.isEmpty() || !sheet.columns.get(0).isUsable());
 	}
 
+	/** Every date spelling the format help offers still reads, now under STRICT. */
+	@Test
+	public void everyAcceptedDateSpellingStillReads() {
+		for (String spelling : List.of("2025-07-01", "1/7/2025", "01/07/2025", "1-7-2025",
+				"1.7.2025", "1 Jul 2025", "1 july 2025", "01-JUL-2025")) {
+			Sheet sheet = sheetDated(spelling);
+			assertTrue(spelling + ": " + sheet.errors + " " + sheet.columns.get(0).problems,
+					sheet.errors.isEmpty() && sheet.columns.get(0).isUsable());
+			assertEquals(spelling, LocalDate.of(2025, 7, 1), sheet.columns.get(0).date);
+		}
+	}
+
+	private static Sheet sheetTimed(String start, String end) {
+		return AttendanceCsvParser.parse(Arrays.asList(
+				"Course code,PHYS101",
+				"Date,2025-07-01",
+				"Start time," + start,
+				"End time," + end,
+				"2024PH001,P"));
+	}
+
+	/** And every time spelling, in both halves of the day. */
+	@Test
+	public void everyAcceptedTimeSpellingStillReads() {
+		String[][] pairs = {
+				{"9:00", "10:00"}, {"09:00:00", "10:30:00"}, {"9:00 am", "10:00 AM"},
+				{"9:00am", "10:00PM"}, {"9 am", "10 am"}, {"12 pm", "1 pm"},
+				{"11:00 pm", "11:59 pm"}};
+
+		for (String[] pair : pairs) {
+			Sheet sheet = sheetTimed(pair[0], pair[1]);
+			assertTrue(pair[0] + "–" + pair[1] + ": " + sheet.errors + " "
+							+ sheet.columns.get(0).problems,
+					sheet.errors.isEmpty() && sheet.columns.get(0).isUsable());
+		}
+
+		assertEquals(java.time.LocalTime.of(12, 0),
+				sheetTimed("12 pm", "1 pm").columns.get(0).start);
+		assertEquals(java.time.LocalTime.of(13, 0),
+				sheetTimed("12 pm", "1 pm").columns.get(0).end);
+	}
+
+	/** 24:00 is not a time of day. SMART used to read it as midnight. */
+	@Test
+	public void twentyFourHundredIsRefused() {
+		Sheet sheet = sheetTimed("23:00", "24:00");
+		assertTrue(!sheet.errors.isEmpty() || !sheet.columns.get(0).isUsable());
+	}
+
 	// ── Attendance-sheet structure ───────────────────────────────────────
 
 	/** A class that ends before it starts is not a class. */

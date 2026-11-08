@@ -9,6 +9,7 @@ import java.io.Reader;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -262,10 +263,16 @@ public final class RosterCsv {
 				+ "write it as 2026-06-15 or 15/06/2026");
 	}
 
+	/**
+	 * STRICT, as ISO_LOCAL_DATE already is. The default for a pattern is SMART, which reads
+	 * 31/02/2026 as 28 February rather than refusing it, so a typo in a join or leave date
+	 * would move a student's attendance window without a word. STRICT needs the year as
+	 * {@code uuuu}; {@code yyyy} is year-of-era and would refuse every date.
+	 */
 	private static final List<DateTimeFormatter> DATE_FORMATS = List.of(
 			DateTimeFormatter.ISO_LOCAL_DATE,
-			DateTimeFormatter.ofPattern("d/M/uuuu"),
-			DateTimeFormatter.ofPattern("d-M-uuuu"));
+			DateTimeFormatter.ofPattern("d/M/uuuu").withResolverStyle(ResolverStyle.STRICT),
+			DateTimeFormatter.ofPattern("d-M-uuuu").withResolverStyle(ResolverStyle.STRICT));
 
 	/**
 	 * Maps normalised column names to their position. Names are lowercased with underscores,
