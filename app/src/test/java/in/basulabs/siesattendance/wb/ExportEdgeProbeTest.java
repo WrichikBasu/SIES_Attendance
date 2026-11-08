@@ -78,6 +78,52 @@ public class ExportEdgeProbeTest {
 		assertWellFormed(contentXml(ods));
 	}
 
+	/** The soft line break reads as the space it stood for, not as the two words run together. */
+	@Test
+	public void aVerticalTabBecomesASpace() throws Exception {
+		OdsWriter ods = new OdsWriter("S");
+		ods.addRow(List.of(OdsWriter.Cell.text("Priya\u000BRao", null)));
+
+		assertTrue(new String(contentXml(ods), java.nio.charset.StandardCharsets.UTF_8)
+				.contains("<text:p>Priya Rao</text:p>"));
+	}
+
+	/**
+	 * Sheet names are de-duplicated before they are escaped, so a control character has to be
+	 * gone by then, or "CS 101" and "CS\u000B101" would pass as different and land as two
+	 * sheets of the same name: as unopenable as the control character itself.
+	 */
+	@Test
+	public void aControlCharacterCannotSmuggleInADuplicateSheetName() throws Exception {
+		OdsWriter ods = new OdsWriter("CS 101");
+		ods.startSheet("CS\u000B101");
+
+		String xml = new String(contentXml(ods), java.nio.charset.StandardCharsets.UTF_8);
+		assertTrue(xml, xml.contains("table:name=\"CS 101\""));
+		assertTrue(xml, xml.contains("table:name=\"CS 101 (2)\""));
+	}
+
+	/** A lone surrogate is not a character, and is replaced like the controls. */
+	@Test
+	public void aLoneSurrogateDoesNotCorruptTheRegister() throws Exception {
+		OdsWriter ods = new OdsWriter("S");
+		ods.addRow(List.of(OdsWriter.Cell.text("a\uD83Db", null)));
+
+		assertWellFormed(contentXml(ods));
+	}
+
+	/** Infinity used to be shown as Long.MAX_VALUE; it is blank now, and keeps its style. */
+	@Test
+	public void aNonFiniteNumberIsABlankCellThatKeepsItsStyle() throws Exception {
+		OdsWriter ods = new OdsWriter("S");
+		ods.defineStyle("ceDefaulter", "#FFC7CE", "#9C0006", false);
+		ods.addRow(List.of(OdsWriter.Cell.number(Double.POSITIVE_INFINITY, "ceDefaulter")));
+
+		String xml = new String(contentXml(ods), java.nio.charset.StandardCharsets.UTF_8);
+		assertTrue(xml, xml.contains("<table:table-cell table:style-name=\"ceDefaulter\"/>"));
+		assertTrue(xml, !xml.contains("9223372036854775807"));
+	}
+
 	/** The controls XML does allow must still pass: tab, LF and CR. */
 	@Test
 	public void tabsAndLineBreaksStayWellFormed() throws Exception {

@@ -60,6 +60,13 @@ public final class OdsWriter {
 
 		@NonNull
 		public static Cell number(double value, @Nullable String style) {
+			// NaN and the infinities are not values an office:value may hold, and an infinity
+			// would otherwise be shown as 9223372036854775807 by the cast below. No figure is
+			// the honest reading of either, so the cell is left blank, keeping its style.
+			if (!Double.isFinite(value)) {
+				return new Cell("", null, style);
+			}
+
 			// Whole numbers are shown without a trailing .0; the stored value stays numeric
 			// either way, so a reader can still total the column.
 			String shown = value == Math.rint(value)
@@ -117,7 +124,7 @@ public final class OdsWriter {
 	@NonNull
 	private String sanitiseSheetName(@NonNull String raw) {
 
-		String cleaned = raw.replaceAll("[\\\\/:*?\\[\\]']", " ").trim();
+		String cleaned = xmlLegal(raw).replaceAll("[\\\\/:*?\\[\\]']", " ").trim();
 
 		if (cleaned.isEmpty()) {
 			cleaned = "Sheet " + (sheets.size() + 1);
@@ -354,10 +361,53 @@ public final class OdsWriter {
 	 */
 	@NonNull
 	private static String escape(@NonNull String raw) {
-		return raw.replace("&", "&amp;")
+		return xmlLegal(raw).replace("&", "&amp;")
 				.replace("<", "&lt;")
 				.replace(">", "&gt;")
 				.replace("\"", "&quot;")
 				.replace("'", "&apos;");
+	}
+
+	/**
+	 * The text with every character XML 1.0 forbids replaced by a space.
+	 * <p>
+	 * Escaping cannot help with these: there is no entity for U+000B, and {@code &#11;} is just
+	 * as illegal as the character itself. One in a name or course code makes content.xml
+	 * malformed and the whole register a file no spreadsheet will open. The usual source is a
+	 * vertical tab, which is what Word leaves for a soft line break and what survives pasting
+	 * into a roster, so a space rather than nothing: "Priya Rao", not "PriyaRao".
+	 * <p>
+	 * Allowed are tab, LF, CR, U+0020 to U+D7FF, U+E000 to U+FFFD and the supplementary
+	 * planes. A lone surrogate is not a character at all and goes the same way.
+	 */
+	@NonNull
+	static String xmlLegal(@NonNull String raw) {
+
+		StringBuilder legal = null;
+
+		for (int at = 0; at < raw.length(); ) {
+
+			int point = raw.codePointAt(at);
+			int width = Character.charCount(point);
+
+			boolean allowed = point == 0x9 || point == 0xA || point == 0xD
+					|| (point >= 0x20 && point <= 0xD7FF)
+					|| (point >= 0xE000 && point <= 0xFFFD)
+					|| (point >= 0x10000 && point <= 0x10FFFF);
+
+			if (!allowed && legal == null) {
+				legal = new StringBuilder(raw.length()).append(raw, 0, at);
+			}
+
+			if (legal != null) {
+				if (allowed) {
+					legal.appendCodePoint(point);
+				} else {
+					legal.append(' ');
+				}
+			}
+			at += width;
+		}
+		return legal == null ? raw : legal.toString();
 	}
 }
