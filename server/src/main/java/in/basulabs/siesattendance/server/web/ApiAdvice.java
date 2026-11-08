@@ -5,8 +5,10 @@ import androidx.annotation.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -132,6 +134,41 @@ public final class ApiAdvice {
 
 		return ResponseEntity.badRequest()
 				.body(body("bad_request", "That request could not be read."));
+	}
+
+	/**
+	 * Whatever nothing above caught, so that it still leaves in the one shape.
+	 * <p>
+	 * Without this an unexpected exception reached the client as Spring's own error page:
+	 * {@code timestamp}, {@code status}, {@code error}, {@code path}, and no {@code code} for the
+	 * phone to branch on. The cause goes to the log in full, and the response says only that it
+	 * was the server's fault.
+	 * <p>
+	 * {@code RuntimeException} and not {@code Exception}: Spring's checked exceptions for an
+	 * unknown address, a wrong method or a wrong media type already carry their status, and a
+	 * handler for {@code Exception} would turn every one of them into a 500. The unchecked ones
+	 * that carry a status, such as {@code ResponseStatusException}, keep it.
+	 */
+	@ExceptionHandler(RuntimeException.class)
+	@NonNull
+	public ResponseEntity<Map<String, Object>> onUnexpected(@NonNull RuntimeException e) {
+
+		if (e instanceof ErrorResponse described) {
+
+			HttpStatusCode status = described.getStatusCode();
+
+			if (!status.is5xxServerError()) {
+				LOG.debug("a request was refused by the framework", e);
+
+				return ResponseEntity.status(status)
+						.body(body("request_refused", "The server would not take that request."));
+			}
+		}
+
+		LOG.error("an unexpected exception reached the edge", e);
+
+		return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+				.body(body("server_error", "Something went wrong at the server."));
 	}
 
 	@NonNull

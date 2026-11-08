@@ -74,19 +74,19 @@ public final class DeviceValue {
 
 			case INTEGER -> {
 				return List.of(new Field(name,
-						raw == null ? null : ((Number) raw).longValue(), ""));
+						raw == null ? null : number(column, raw), ""));
 			}
 
 			case BOOLEAN -> {
 				// SQLite has no boolean; Room wrote 0 or 1 into an INTEGER column.
 				return List.of(new Field(name,
-						raw == null ? null : ((Number) raw).longValue() != 0L, ""));
+						raw == null ? null : number(column, raw) != 0L, ""));
 			}
 
 			case EPOCH_DAY -> {
 				return List.of(new Field(name,
 						raw == null ? null
-								: StoredTimes.parseDate(((Number) raw).longValue()), ""));
+								: StoredTimes.parseDate(number(column, raw)), ""));
 			}
 
 			case ENUM -> {
@@ -190,6 +190,24 @@ public final class DeviceValue {
 	 * rows exist that use it, so a value that does not resolve means the data and the code have
 	 * diverged and somebody has to decide what the row should say.
 	 */
+	/**
+	 * A number column's value, or {@link Unconvertible} when it is not a number at all.
+	 * <p>
+	 * A cast would throw ClassCastException instead, which none of the callers turn into a
+	 * rejected row: sync answered 500 and rolled back the whole push, and the phone resent the
+	 * same batch for ever, while the importer aborted. SQLite stores text in an INTEGER column
+	 * happily, so an old backup can hold one, and a push is whatever the client sent.
+	 */
+	private static long number(@NonNull DeviceTables.Column column, @NonNull Object raw) {
+
+		if (!(raw instanceof Number number)) {
+			throw new Unconvertible(column.room() + " holds '" + raw + "', which is not a "
+					+ "number. The row cannot be written until somebody decides what it should "
+					+ "say.");
+		}
+		return number.longValue();
+	}
+
 	private static void requireKnownConstant(@NonNull DeviceTables.Table table,
 	                                  @NonNull DeviceTables.Column column,
 	                                  @NonNull String stored) {
