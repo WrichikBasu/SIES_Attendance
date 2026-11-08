@@ -181,7 +181,7 @@ public final class AccountDirectory {
 			// the same time as a known one. Without this, the difference between "no such
 			// account" and "wrong password" is measurable from outside, and the login box
 			// becomes a way to ask whether somebody works here.
-			Passwords.encoder().matches(CharBuffer.wrap(password), DUMMY_HASH);
+			spendAHash(password);
 
 			// Logged with no account and no address. The fact that somebody tried an address
 			// nobody has is worth a line; the address itself is not, because a complete log of
@@ -203,6 +203,7 @@ public final class AccountDirectory {
 				.fromDevice(null, appVersion));
 
 		if (stored.disabledAt != null) {
+			spendAHash(password);
 			AuditLog.record(connection, AuditAction.LOGIN_FAILED,
 					AuditLog.detail("refused", "the account is disabled"));
 			return new Attempt(null, Refusal.DISABLED, false);
@@ -213,6 +214,7 @@ public final class AccountDirectory {
 			// Deliberately not checked against the password: an account that is locked is
 			// locked, and verifying first would let an attacker learn whether their guess was
 			// right by whether the refusal changed.
+			spendAHash(password);
 			AuditLog.record(connection, AuditAction.LOGIN_FAILED,
 					AuditLog.detail("refused", "the account is locked",
 							"until", stored.lockedUntil.toInstant().toString()));
@@ -524,6 +526,21 @@ public final class AccountDirectory {
 	 */
 	private static final String DUMMY_HASH = Passwords.encoder()
 			.encode(java.util.UUID.randomUUID().toString());
+
+	/**
+	 * Spends one Argon2id verification on nothing, so that every refusal costs what a wrong
+	 * password costs.
+	 * <p>
+	 * Called on each branch that refuses without checking the real hash: an unknown address,
+	 * a disabled account and a locked one. Without it those answer in milliseconds where a wrong
+	 * password takes tens of them, and since five wrong guesses lock any real account while an
+	 * unknown address never locks, the difference tells an outsider which addresses have
+	 * accounts. Against {@link #DUMMY_HASH} and never the account's own hash, so a locked
+	 * account still cannot be used to learn whether a guess was right.
+	 */
+	private static void spendAHash(@NonNull char[] password) {
+		Passwords.encoder().matches(CharBuffer.wrap(password), DUMMY_HASH);
+	}
 
 	private record Stored(long accountId, @NonNull AccountKind kind, @Nullable Long profId,
 	                      @Nullable Long studentId, @NonNull String displayName,
