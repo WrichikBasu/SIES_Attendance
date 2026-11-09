@@ -258,7 +258,9 @@ public final class AttendanceCsvParser {
 
 			String line = lineNo == 1 ? stripByteOrderMark(raw) : raw;
 
-			if (!line.trim().isEmpty()) {
+			// A spreadsheet saves an empty row as a run of commas, which is as empty as a
+			// blank line and must not be taken for one of the four heading lines.
+			if (!RosterCsv.isBlankRow(line)) {
 				heading.add(line);
 				headingLines.add(lineNo);
 			}
@@ -418,7 +420,7 @@ public final class AttendanceCsvParser {
 		for (String raw : lines) {
 			lineNo++;
 
-			if (lineNo <= lastHeadingLine || raw.trim().isEmpty()) {
+			if (lineNo <= lastHeadingLine || RosterCsv.isBlankRow(raw)) {
 				continue;
 			}
 

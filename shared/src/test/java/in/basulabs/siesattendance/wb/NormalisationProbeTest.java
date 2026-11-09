@@ -43,7 +43,7 @@ import in.basulabs.siesattendance.backend.util.RosterCsv;
  * both lines land on one student, the later one silently winning. The parser's own help text
  * promises slashes do not matter.
  * <p>
- * The tests marked BUG fail as of this commit.
+ * The tests marked BUG fail as of this commit; those marked "Was a bug" have since been fixed.
  */
 public class NormalisationProbeTest {
 
@@ -96,10 +96,11 @@ public class NormalisationProbeTest {
 	// ── A spreadsheet's empty rows ───────────────────────────────────────
 
 	/**
-	 * BUG: a spreadsheet saves an empty row as a run of commas. That is not blank to
-	 * {@code line.trim().isEmpty()}, so a sheet with an empty row above its heading takes the
-	 * empty row as the course-code line, the real End time line becomes the first "student",
-	 * and every column is refused for an unrecognised mark "10:00".
+	 * Was a bug: a spreadsheet saves an empty row as a run of commas. That was not blank to
+	 * {@code line.trim().isEmpty()}, so a sheet with an empty row above its heading took the
+	 * empty row as the course-code line, the real End time line became the first "student",
+	 * and every column was refused for an unrecognised mark "10:00". Fixed by
+	 * {@code RosterCsv.isBlankRow}.
 	 */
 	@Test
 	public void anEmptySpreadsheetRowAboveTheHeadingIsSkipped() {
@@ -116,10 +117,10 @@ public class NormalisationProbeTest {
 		assertTrue("problems: " + parsed.columns.get(0).problems,
 				parsed.columns.get(0).isUsable());
 		assertEquals(1, parsed.rows.size());
-		assertEquals("CS-FY-001", parsed.rows.get(0).rollNo);
+		assertEquals("CSFY001", parsed.rows.get(0).rollNo);
 	}
 
-	/** BUG: the same, for an empty row between two heading lines. */
+	/** Was a bug: the same, for an empty row between two heading lines. */
 	@Test
 	public void anEmptySpreadsheetRowInsideTheHeadingIsSkipped() {
 		Sheet parsed = AttendanceCsvParser.parse(sheet(
@@ -152,8 +153,8 @@ public class NormalisationProbeTest {
 	}
 
 	/**
-	 * BUG: a roster saved from a spreadsheet with an empty row in it reports that row as
-	 * "Line 3: roll number is blank". Nothing is lost, but the office is sent looking for a
+	 * Was a bug: a roster saved from a spreadsheet with an empty row in it reported that row as
+	 * "Line 3: roll number is blank". Nothing was lost, but the office was sent looking for a
 	 * mistake that is not in their data.
 	 */
 	@Test
@@ -166,6 +167,38 @@ public class NormalisationProbeTest {
 
 		assertEquals(2, reading.rows().size());
 		assertTrue("errors: " + reading.errors(), reading.errors().isEmpty());
+	}
+
+	/** Empty cells a spreadsheet chose to quote, or left with a space in, are empty too. */
+	@Test
+	public void quotedOrSpacedEmptyCellsAreAnEmptyRow() {
+		Sheet parsed = AttendanceCsvParser.parse(sheet(
+				"\"\", ,\" \"",
+				"Course code,CS-101",
+				"Date,21/07/2025",
+				"Start time,09:00",
+				"End time,10:00",
+				"CS-FY-001,P"));
+
+		assertTrue("errors: " + parsed.errors, parsed.isUsable());
+		assertTrue(RosterCsv.isBlankRow(""));
+		assertTrue(RosterCsv.isBlankRow(" , ,"));
+		assertFalse("a quoted comma is a cell's content", RosterCsv.isBlankRow("\",\""));
+		assertFalse(RosterCsv.isBlankRow(",,x"));
+	}
+
+	/** And above a roster's header, where the line numbers must still be the file's own. */
+	@Test
+	public void anEmptySpreadsheetRowAboveARostersHeaderIsSkipped() throws IOException {
+		RosterCsv.Reading reading = RosterCsv.read(new StringReader(
+				"\uFEFF,,,,\n"
+						+ "rollNo,name,year,stream,majorDept\n"
+						+ "CS-FY-001,R Rao,FY,BSc_unaided,COMPUTER_SCIENCE\n"
+						+ "CS-FY-002,S Shah,XX,BSc_unaided,COMPUTER_SCIENCE\n"));
+
+		assertEquals(1, reading.rows().size());
+		assertEquals(1, reading.errors().size());
+		assertTrue(reading.errors().get(0), reading.errors().get(0).startsWith("Line 4: "));
 	}
 
 	// ── Enum lookup ──────────────────────────────────────────────────────

@@ -107,7 +107,15 @@ public final class RosterCsv {
 		List<Row> rows = new ArrayList<>();
 		List<String> errors = new ArrayList<>();
 
+		// A spreadsheet saves an empty row as a run of commas; any above the header are skipped
+		// like the empty rows below it.
 		String headerLine = reader.readLine();
+		int lineNo = 1;
+
+		while (headerLine != null && isBlankRow(stripByteOrderMark(headerLine))) {
+			headerLine = reader.readLine();
+			lineNo++;
+		}
 
 		if (headerLine == null) {
 			errors.add("The file is empty.");
@@ -124,12 +132,11 @@ public final class RosterCsv {
 		}
 
 		String line;
-		int lineNo = 1;
 
 		while ((line = reader.readLine()) != null) {
 			lineNo++;
 
-			if (line.trim().isEmpty()) {
+			if (isBlankRow(line)) {
 				continue;
 			}
 
@@ -305,6 +312,20 @@ public final class RosterCsv {
 			map.put(key, i);
 		}
 		return map;
+	}
+
+	/**
+	 * Whether a line holds nothing: empty, spaces only, or (as a spreadsheet saves an empty row)
+	 * only commas and empty or blank cells, quoted or not.
+	 */
+	public static boolean isBlankRow(@NonNull String line) {
+
+		for (String cell : splitCsvLine(line)) {
+			if (!cell.trim().isEmpty()) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**
