@@ -2,6 +2,8 @@ package in.basulabs.siesattendance.server.importer;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -17,9 +19,11 @@ import java.util.List;
 import in.basulabs.siesattendance.backend.Department;
 import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.PostgresEnumTypes;
+import in.basulabs.siesattendance.backend.SessionYears;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.util.RosterCsv;
+import in.basulabs.siesattendance.server.sql.DatabaseRefusal;
 
 /**
  * Loads a roster CSV into {@code students} and {@code student_year}.
@@ -49,6 +53,8 @@ import in.basulabs.siesattendance.backend.util.RosterCsv;
  * their attendance history depends on their continuing to exist.
  */
 public final class RosterImporter {
+
+	private static final Logger LOG = LoggerFactory.getLogger(RosterImporter.class);
 
 	/**
 	 * What a run did.
@@ -126,7 +132,9 @@ public final class RosterImporter {
 			} catch (SQLException e) {
 				connection.rollback(savepoint);
 				failed++;
-				errors.add("Line " + row.line() + ": " + firstLine(e));
+				LOG.warn("roster line {} refused ({}): {}", row.line(), e.getSQLState(),
+						e.getMessage());
+				errors.add("Line " + row.line() + ": " + explain(e, row, academicYear));
 
 			} catch (RowRefused e) {
 				connection.rollback(savepoint);
@@ -371,23 +379,46 @@ public final class RosterImporter {
 	}
 
 	/**
-	 * The first line of a database error, which is the part a person can act on.
+	 * A row the database refused, said for the person who wrote the file.
 	 * <p>
-	 * PostgreSQL's messages carry a DETAIL and sometimes a HINT across several lines, and the
-	 * whole thing in a per-row error list makes four hundred rows unreadable. The server's own
-	 * log keeps the exception entire.
+	 * The unique indexes are the refusals a roster meets in practice, and mostly for a student
+	 * the caller cannot see: a professor's lookup by roll number, APAAR ID or email misses a
+	 * student who is wholly another department's, the row becomes a new student, and the
+	 * index finds the one already there. The sentence names the value from the row, and says
+	 * who can sort it out, without saying whose it is: that is the student the caller was not
+	 * shown.
 	 */
 	@NonNull
-	private static String firstLine(@NonNull SQLException e) {
+	static String explain(@NonNull SQLException e, @NonNull RosterCsv.Row row,
+	                      int academicYear) {
 
-		String message = e.getMessage();
+		String constraint = DatabaseRefusal.constraintOf(e);
 
-		if (message == null) {
-			return e.getClass().getSimpleName();
+		if (DatabaseRefusal.UNIQUE_VIOLATION.equals(e.getSQLState()) && constraint != null) {
+
+			String taken = switch (constraint) {
+				case "student_year_roll_no_academic_year_uq" -> "the roll number "
+						+ row.rollNo() + " is already another student's in "
+						+ SessionYears.labelFor(academicYear);
+				case "students_email_uq" -> "the email address " + row.email()
+						+ " is already another student's";
+				case "students_apaar_id_key" -> "the APAAR ID " + row.apaarId()
+						+ " is already another student's";
+				default -> null;
+			};
+
+			if (taken != null) {
+				return taken + ". Check the file; if it is right, that student's record is "
+						+ "one you cannot change, and the office or an administrator can.";
+			}
 		}
 
-		int newline = message.indexOf('\n');
-		return newline < 0 ? message : message.substring(0, newline);
+		if (DatabaseRefusal.INSUFFICIENT_PRIVILEGE.equals(e.getSQLState())) {
+			return "this student's record is not yours to change, so the row was not "
+					+ "imported. The office or an administrator can make this change.";
+		}
+
+		return DatabaseRefusal.inWords(e) + ", so the row was not imported.";
 	}
 
 	/**
@@ -395,6 +426,8 @@ public final class RosterImporter {
 	 * savepoint like a row the database refused.
 	 */
 	private static final class RowRefused extends Exception {
+
+		private static final long serialVersionUID = 1L;
 
 		RowRefused(@NonNull String message) {
 			super(message);

@@ -2,6 +2,8 @@ package in.basulabs.siesattendance.server.sync;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -19,6 +21,7 @@ import java.util.Set;
 import in.basulabs.siesattendance.backend.StructuredId;
 import in.basulabs.siesattendance.backend.sync.DeviceTables;
 import in.basulabs.siesattendance.backend.sync.OutboxOp;
+import in.basulabs.siesattendance.server.sql.DatabaseRefusal;
 
 /**
  * Applies what a device's outbox drained: one row per intent, by primary key.
@@ -102,6 +105,8 @@ public final class SyncWriter {
 
 	/** PostgreSQL's {@code insufficient_privilege}: a policy refused the statement. */
 	private static final String INSUFFICIENT_PRIVILEGE = "42501";
+
+	private static final Logger LOG = LoggerFactory.getLogger(SyncWriter.class);
 
 	/** {@code foreign_key_violation}: the row points at one that is not here. */
 	private static final String FOREIGN_KEY_VIOLATION = "23503";
@@ -996,8 +1001,9 @@ public final class SyncWriter {
 	 * sentence of their own, because that refusal is the one a professor will actually meet —
 	 * they imported a class list on their own phone, which is what the app has always let them
 	 * do, and "not yours to change" would leave them with nothing to do about it. Everything
-	 * else keeps the server's own message, because the alternative is a device displaying
-	 * "something went wrong" about a row it cannot send.
+	 * else is said by {@link DatabaseRefusal}: what a named constraint means, or the schema's
+	 * own words for a trigger's refusal. Not "something went wrong", which a device cannot act
+	 * on, and not PostgreSQL's wording, which names an index rather than a reason.
 	 */
 	@NonNull
 	private static String explain(@NonNull SQLException e, @NonNull String table) {
@@ -1019,13 +1025,9 @@ public final class SyncWriter {
 			return "the server refused this row: it is not yours to change";
 		}
 
-		String message = e.getMessage();
-
-		if (message == null) {
-			return "the server could not write this row";
-		}
-
-		int newline = message.indexOf('\n');
-		return newline < 0 ? message : message.substring(0, newline);
+		// The words go to the device; the constraint and the key, which are how the next one is
+		// diagnosed, stay here.
+		LOG.warn("a push to {} was refused ({}): {}", table, e.getSQLState(), e.getMessage());
+		return DatabaseRefusal.inWords(e);
 	}
 }

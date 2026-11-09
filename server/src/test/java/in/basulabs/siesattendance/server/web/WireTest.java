@@ -1002,21 +1002,28 @@ class WireTest {
 				"the refused row must have changed nothing at all");
 	}
 
+	/**
+	 * Refused once, before any row. It used to fail every row on its own, each with the
+	 * student_year foreign key's wording; the savepoint that rolled each one back is still
+	 * tested, by the rows the unique indexes refuse.
+	 */
 	@Test
-	void aRosterForASessionThatDoesNotExistFailsEveryRowAndWritesNothing() throws Exception {
+	void aRosterForASessionThatDoesNotExistIsRefusedWholeAndWritesNothing() throws Exception {
 
 		Reply reply = postCsv("/roster?year=2099", """
 				rollNo,name,year,stream,majorDept
 				CS-FY-010,Good Row,FY,BSc_unaided,COMPUTER_SCIENCE
+				CS-FY-011,Other Row,FY,BSc_unaided,COMPUTER_SCIENCE
 				""", tokenFor("office@sies.edu.in", "STAFF"));
 
-		assertEquals(200, reply.status(), reply::toString);
-		assertEquals(0, reply.body().get("created").intValue());
-		assertEquals(1, reply.body().get("failed").intValue());
-
-		// The students row is inserted before the student_year row that fails, so this is the
-		// savepoint being rolled back rather than the row never having been attempted.
-		assertEquals(0, count("SELECT count(*) FROM students WHERE name = 'Good Row'"));
+		assertEquals(400, reply.status(), reply::toString);
+		assertEquals("no_such_session", reply.body().get("code").stringValue());
+		assertEquals("The session 2099-00 is not set up on the server. An administrator sets "
+				+ "a session up before its roster can be loaded.",
+				reply.body().get("message").stringValue());
+		assertEquals(0, count("SELECT count(*) FROM students WHERE name LIKE '% Row'"));
+		assertEquals(0, count("SELECT count(*) FROM audit_log WHERE action = 'CSV_IMPORT'"),
+				"nothing was imported, so nothing says it was");
 	}
 
 	@Test

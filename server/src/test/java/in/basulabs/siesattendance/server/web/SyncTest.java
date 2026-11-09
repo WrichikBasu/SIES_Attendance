@@ -547,6 +547,36 @@ class SyncTest {
 		assertEquals(1, count(coordinator));
 	}
 
+	/**
+	 * A refusal by a unique index reaches the phone as what it means. It used to be
+	 * PostgreSQL's first line, index name and all.
+	 */
+	@Test
+	void aCourseCodeAlreadyInUseIsRefusedInWords() throws Exception {
+
+		Phone phone = signInWithAPhone("c.head@sies.edu.in");
+		long courseID = phone.key(642);
+
+		Map<String, Object> course = new LinkedHashMap<>();
+		course.put("courseID", courseID);
+		course.put("profID", PROF_CS);
+		course.put("courseCode", "cs 101");
+		course.put("courseTopic", "Programming, again");
+		course.put("stream", "BSc");
+		course.put("offeringDepartment", "COMPUTER_SCIENCE");
+		course.put("year", "SY");
+		course.put("semester", 3);
+		course.put("courseType", "OE");
+
+		Reply pushed = push(phone, List.of(
+				intent("courses", List.of(courseID), "UPSERT", course)));
+
+		assertEquals(0, pushed.body().get("accepted").intValue(), pushed::toString);
+
+		String reason = pushed.body().get("rejected").get(0).get("reason").stringValue();
+		assertEquals("that course code is already another course's", reason);
+	}
+
 	@Test
 	void aCoordinatorsInstructorRowCannotBeDeletedWhileTheyCoordinate() throws Exception {
 

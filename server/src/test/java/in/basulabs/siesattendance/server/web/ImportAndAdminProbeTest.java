@@ -261,6 +261,68 @@ class ImportAndAdminProbeTest {
 				"a policy name is not a reason a professor can act on: " + error);
 	}
 
+	// ── Roster: refusals in words ────────────────────────────────────────
+	//
+	// S Shah is a CS major with no Chemistry in her session, so the Chemistry professor cannot
+	// see her. The lookups miss her, and the row runs into a unique index instead.
+
+	@Test
+	void aRollNumberAnotherStudentHoldsIsSaidInWords() throws Exception {
+
+		String error = oneRosterError("b.chem@sies.edu.in", SESSION,
+				"CS-FY-002,New Chemist,they/them,FY,BSc,CHEMISTRY,1,,");
+
+		assertTrue(error.startsWith("Line 2: the roll number CSFY002 is already another "
+				+ "student's in 2025"), error);
+		assertPlainWords(error);
+		assertEquals(0, count("SELECT count(*) FROM students WHERE name = 'New Chemist'"),
+				"the student created for the row is rolled back with it");
+	}
+
+	@Test
+	void anEmailAnotherStudentHoldsIsSaidInWords() throws Exception {
+
+		String error = oneRosterError("b.chem@sies.edu.in", SESSION,
+				"CH-FY-009,New Chemist,they/them,FY,BSc,CHEMISTRY,1,s.shah@sies.edu.in,");
+
+		assertTrue(error.startsWith("Line 2: the email address s.shah@sies.edu.in is already "
+				+ "another student's"), error);
+		assertPlainWords(error);
+	}
+
+	/** Visible this time: the roll number finds S Shah, and the APAAR ID is R Rao's. */
+	@Test
+	void anApaarIdAnotherStudentHoldsIsSaidInWords() throws Exception {
+
+		String error = oneRosterError("a.cs@sies.edu.in", SESSION,
+				"CS-FY-002,S Shah,they/them,FY,BSc_unaided,COMPUTER_SCIENCE,1,,999000111222");
+
+		assertTrue(error.startsWith("Line 2: the APAAR ID 999000111222 is already another "
+				+ "student's"), error);
+		assertPlainWords(error);
+	}
+
+	private String oneRosterError(String email, int session, String row) throws Exception {
+
+		Reply reply = postCsv("/roster?year=" + session,
+				"rollNo,name,pronouns,year,stream,majorDept,semester,email,apaarId\n" + row + "\n",
+				tokenFor(email));
+
+		assertEquals(200, reply.status(), reply::toString);
+		assertEquals(1, reply.body().get("failed").intValue(), reply::toString);
+		assertEquals(1, reply.body().get("errors").size(), reply::toString);
+		return reply.body().get("errors").get(0).stringValue();
+	}
+
+	/** No PostgreSQL wording: no constraint, index, relation or policy name reaches a person. */
+	private static void assertPlainWords(String message) {
+
+		for (String jargon : List.of("ERROR:", "violates", "constraint", "relation",
+				"row-level security", "_uq", "_key", "_fkey", "Detail:")) {
+			assertFalse(message.contains(jargon), () -> "'" + jargon + "' in: " + message);
+		}
+	}
+
 	// ── Attendance import: one student under two spellings ───────────────
 
 	/**
