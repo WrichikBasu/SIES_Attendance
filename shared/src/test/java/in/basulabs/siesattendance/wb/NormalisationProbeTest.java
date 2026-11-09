@@ -289,13 +289,21 @@ public class NormalisationProbeTest {
 	}
 
 	/**
-	 * BUG (minor): {@code compose} checks the counter's top but not its bottom. A negative
-	 * counter composes into a negative key, which {@code isStructured} then calls legacy and
-	 * {@code nodeOf} disowns, where an out-of-range node is refused outright. {@code IdGenerator}
-	 * clamps before calling, so this is about the method's own contract.
+	 * Was a bug (minor): {@code compose} checked the counter's top but not its bottom. A counter
+	 * below {@code MIN_COUNTER} composed into a negative or legacy-range key, which
+	 * {@code isStructured} then called legacy and {@code nodeOf} disowned, where an out-of-range
+	 * node was refused outright. {@code IdGenerator} and {@code ServerIds} clamp before calling,
+	 * so this was about the method's own contract.
 	 */
 	@Test
 	public void aCounterBelowTheFloorIsRefused() {
 		assertThrows(IllegalArgumentException.class, () -> StructuredId.compose(-1, 7));
+		assertThrows(IllegalArgumentException.class,
+				() -> StructuredId.compose(StructuredId.MIN_COUNTER - 1, 7));
+		assertThrows(IllegalArgumentException.class, () -> StructuredId.compose(0, 0));
+
+		long first = StructuredId.compose(StructuredId.MIN_COUNTER, 0);
+		assertEquals(StructuredId.FIRST_STRUCTURED_ID, first);
+		assertTrue(StructuredId.isStructured(first));
 	}
 }

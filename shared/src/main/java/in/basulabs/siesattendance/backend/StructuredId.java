@@ -137,12 +137,28 @@ public final class StructuredId {
 		return isStructured(id) ? ((id >>> NODE_BITS) >>> SEQUENCE_BITS) + EPOCH_MILLIS : -1L;
 	}
 
-	/** Assembles a key from a time-and-sequence counter and a node. */
+	/**
+	 * Assembles a key from a time-and-sequence counter and a node.
+	 * <p>
+	 * The counter must be at least {@link #MIN_COUNTER}, which the generators clamp it to: below
+	 * it the key would be negative or fall among the legacy keys, and {@link #isStructured} and
+	 * {@link #nodeOf} would disown the key this method had just built.
+	 *
+	 * @throws IllegalArgumentException if the node is out of range, or the counter below the
+	 *                                  floor
+	 * @throws IllegalStateException    if the counter is past {@link #MAX_COUNTER}, which only
+	 *                                  the passing of the layout's time span can bring about
+	 */
 	public static long compose(long counter, int node) {
 
 		if (node < 0 || node > MAX_NODE_ID) {
 			throw new IllegalArgumentException("Node out of range 0.." + MAX_NODE_ID
 					+ ": " + node);
+		}
+
+		if (counter < MIN_COUNTER) {
+			throw new IllegalArgumentException("Counter below the structured floor "
+					+ MIN_COUNTER + ": " + counter);
 		}
 
 		if (counter > MAX_COUNTER) {
