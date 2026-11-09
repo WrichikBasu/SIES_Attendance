@@ -280,6 +280,45 @@ class SyncTest {
 	// ── What a device may not do ─────────────────────────────────────────
 
 	@Test
+	void aPushCannotMarkAStudentThePhoneMayNotSee() throws Exception {
+
+		// V59, over the wire. Before it, this push was the whole attack: the lecture is the
+		// professor's own, so every attendance policy admitted the mark, and the student it
+		// named -- another department's, picked out of a key space whose values are minted in
+		// sequence -- became readable through students_marked (V21). Name, email, APAAR ID,
+		// one row at a time, from a phone.
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+		long lectureID = phone.key(700);
+
+		Reply pushed = push(phone, List.of(lectureIntent(lectureID, COURSE_CS, 14),
+				attendanceIntent(lectureID, STUDENT_CHEM, true)));
+
+		assertEquals(200, pushed.status(), pushed::toString);
+		assertEquals(1, pushed.body().get("accepted").intValue(),
+				"the lecture is the professor's own and is accepted; only the mark is not");
+		assertEquals(1, pushed.body().get("rejected").size(), pushed::toString);
+		assertEquals("attendance",
+				pushed.body().get("rejected").get(0).get("table").stringValue());
+		assertTrue(pushed.body().get("rejected").get(0).get("reason").stringValue()
+						.contains("not on this course's roll"),
+				pushed.body().get("rejected").toString());
+		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
+				"a student who is not on the roll will not be on it tomorrow either, and a "
+						+ "phone retrying this for ever is a queue that never empties");
+
+		assertEquals(0, count("SELECT count(*) FROM attendance WHERE student_id = "
+						+ STUDENT_CHEM + " AND lecture_id = " + lectureID),
+				"nothing may be written for a student the pusher cannot see");
+
+		// And the point of all of it: the student stays out of reach.
+		Reply pulled = get(phone, "/sync/pull");
+
+		assertEquals(200, pulled.status(), pulled::toString);
+		assertFalse(pulled.toString().contains("S SHAH"),
+				"the Chemistry student must not reach this phone: " + pulled);
+	}
+
+	@Test
 	void aKeyIssuedByAnotherDeviceIsRefused() throws Exception {
 
 		Phone phone = signInWithAPhone("a.cs@sies.edu.in");

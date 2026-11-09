@@ -548,6 +548,11 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
   phone shows them read-only to everybody else.
 - **A student account can do nothing until someone appoints it CR** of a course
   (`attendance_delegate`). Appointments are per course and per session.
+- **A mark may only name a student the account can already see** (V59). Whoever reads a mark
+  reads the student it names (V21), so without this rule writing a mark was a way of granting
+  yourself a read: a class representative could mark a student picked out of the key space and
+  be handed their name, email and APAAR ID. The check asks `students` under the account's own
+  policies, so it is the same list of rules and not a second copy of it.
 - **A HOD grant names a department and, optionally, a session.** With no session it lasts until
   revoked.
 - **Nothing is deleted to make room.** Every foreign key is `RESTRICT`. Roles and appointments
