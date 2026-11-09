@@ -2,6 +2,8 @@ package in.basulabs.siesattendance.server.web;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -32,6 +34,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import in.basulabs.siesattendance.backend.AccountKind;
 import in.basulabs.siesattendance.server.SiesAttendanceServer;
@@ -347,47 +354,60 @@ class ImportAndAdminProbeTest {
 	}
 
 	/**
-	 * BUG: V43's trigger checks with a plain {@code NOT EXISTS} after the row is written, under
-	 * READ COMMITTED, and takes no lock. Two transactions disabling the two administrators each
-	 * see the other's administrator still live, both pass, both commit, and there are none.
+	 * Was a bug: V43's trigger checked with a plain {@code NOT EXISTS}, under READ COMMITTED,
+	 * and took no lock, so two transactions disabling the two administrators each saw the
+	 * other's still live, both passed, and both committed. V58 takes an advisory lock first, so
+	 * the second waits for the first and then sees what it did.
 	 */
 	@Test
 	void twoAdministratorsCannotBeDisabledAtOnce() throws Exception {
 
-		try (Connection first = postgres.connection();
-		     Connection second = postgres.connection()) {
+		ExecutorService second = Executors.newSingleThreadExecutor();
+
+		try (Connection first = postgres.connection()) {
 
 			first.setAutoCommit(false);
-			second.setAutoCommit(false);
 
-			try (Statement one = first.createStatement();
-			     Statement two = second.createStatement()) {
-
-				one.executeUpdate("UPDATE app_account SET disabled_at = now() "
+			try (Statement statement = first.createStatement()) {
+				statement.executeUpdate("UPDATE app_account SET disabled_at = now() "
 						+ "WHERE account_id = " + accountAdmin);
-				two.executeUpdate("UPDATE app_account SET disabled_at = now() "
-						+ "WHERE account_id = " + accountSecondAdmin);
-			} catch (SQLException refusedEarly) {
-				// A trigger that serialises the two may refuse the second here; that is a
-				// pass, and the commits below then decide nothing.
-				first.rollback();
-				second.rollback();
-				return;
 			}
+
+			Future<SQLException> other = second.submit(() -> {
+				try (Connection connection = postgres.connection();
+				     Statement statement = connection.createStatement()) {
+
+					connection.setAutoCommit(false);
+					statement.executeUpdate("UPDATE app_account SET disabled_at = now() "
+							+ "WHERE account_id = " + accountSecondAdmin);
+					connection.commit();
+					return null;
+
+				} catch (SQLException refused) {
+					return refused;
+				}
+			});
+
+			// The second removal waits on the first rather than deciding beside it.
+			assertThrows(TimeoutException.class, () -> other.get(1, TimeUnit.SECONDS),
+					"the second removal must wait for the first, not run alongside it");
 
 			first.commit();
 
-			try {
-				second.commit();
-			} catch (SQLException refusedAtCommit) {
-				// Equally a pass.
-			}
+			SQLException refused = other.get(30, TimeUnit.SECONDS);
+
+			assertNotNull(refused, "the second removal went through after the first");
+			assertTrue(refused.getMessage().contains("no administrator"),
+					refused::getMessage);
+
+		} finally {
+			second.shutdownNow();
 		}
 
-		assertTrue(count("SELECT count(*) FROM user_role r JOIN app_account a USING "
+		assertEquals(1, count("SELECT count(*) FROM user_role r JOIN app_account a USING "
 						+ "(account_id) WHERE r.role = 'ADMIN' AND r.revoked_at IS NULL "
-						+ "AND a.disabled_at IS NULL") >= 1,
-				"two concurrent disables left no live administrator");
+						+ "AND a.disabled_at IS NULL"),
+				"one administrator is left: the one the second removal was refused for");
 	}
 
 	// ── Fixture helpers ──────────────────────────────────────────────────
