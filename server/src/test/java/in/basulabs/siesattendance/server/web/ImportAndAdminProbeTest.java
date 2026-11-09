@@ -192,16 +192,14 @@ class ImportAndAdminProbeTest {
 	// ── Roster: what "updated" means ─────────────────────────────────────
 
 	/**
-	 * BUG: the Chemistry professor can see R Rao (a CS major with a Chemistry minor, V30), so
-	 * the APAAR ID finds her. {@code UPDATE students} is then filtered to nothing by
-	 * {@code students_professor_update}, without an error, and the reply still counts the row
-	 * as updated, though her name did not change.
-	 * <p>
-	 * The enrolment half does go through: she is now on Chemistry's 2026 roll as a major,
-	 * filed by a professor of a department she does not major in.
+	 * Was a bug: the Chemistry professor can see R Rao (a CS major with a Chemistry minor, V30),
+	 * so the APAAR ID found her. {@code UPDATE students} was then filtered to nothing by
+	 * {@code students_professor_update}, without an error, and the reply still counted the row
+	 * as updated; meanwhile the enrolment went through, filing her as a Chemistry major for
+	 * 2026. A row whose student the caller cannot change is now refused whole.
 	 */
 	@Test
-	void aRowCountedAsUpdatedHasChangedTheStudent() throws Exception {
+	void aStudentTheCallerCannotChangeIsRefusedNotCountedAsUpdated() throws Exception {
 
 		Reply reply = postCsv("/roster?year=" + (SESSION + 1), """
 				rollNo,name,pronouns,year,stream,majorDept,semester,apaarId
@@ -209,15 +207,34 @@ class ImportAndAdminProbeTest {
 				""", tokenFor("b.chem@sies.edu.in"));
 
 		assertEquals(200, reply.status(), reply::toString);
+		assertEquals(0, reply.body().get("updated").intValue(), reply::toString);
+		assertEquals(0, reply.body().get("created").intValue(), reply::toString);
+		assertEquals(1, reply.body().get("failed").intValue(), reply::toString);
 
-		int updated = reply.body().get("updated").intValue();
-		String name = text("SELECT name FROM students WHERE student_id = 2001");
+		String error = reply.body().get("errors").get(0).stringValue();
+		assertTrue(error.startsWith("Line 2: its APAAR ID belongs to a student"), error);
 
-		assertTrue(updated == 0 || name.equals("Renamed By Chemistry"),
-				"the reply counted " + updated + " update(s), but the name is still '" + name
-						+ "'; enrolments now: " + list("SELECT academic_year || ' '"
-						+ " || major_dept FROM student_year WHERE student_id = 2001"
-						+ " ORDER BY academic_year"));
+		assertEquals("R RAO", text("SELECT name FROM students WHERE student_id = 2001"));
+		assertEquals(List.of("2025 COMPUTER_SCIENCE"), list("SELECT academic_year || ' ' "
+				+ "|| major_dept FROM student_year WHERE student_id = 2001"),
+				"no enrolment filed for the new session");
+	}
+
+	/** The control: her own department may change her, by the same path. */
+	@Test
+	void aStudentsOwnDepartmentStillUpdatesThem() throws Exception {
+
+		Reply reply = postCsv("/roster?year=" + (SESSION + 1), """
+				rollNo,name,pronouns,year,stream,majorDept,semester,apaarId
+				CS-SY-050,R Rao Renamed,she/her,SY,BSc_unaided,COMPUTER_SCIENCE,3,999000111222
+				""", tokenFor("a.cs@sies.edu.in"));
+
+		assertEquals(200, reply.status(), reply::toString);
+		assertEquals(1, reply.body().get("updated").intValue(), reply::toString);
+		assertEquals("R Rao Renamed", text("SELECT name FROM students WHERE student_id = 2001"));
+		assertEquals(List.of("2025 COMPUTER_SCIENCE", "2026 COMPUTER_SCIENCE"),
+				list("SELECT academic_year || ' ' || major_dept FROM student_year "
+						+ "WHERE student_id = 2001 ORDER BY academic_year"));
 	}
 
 	/**

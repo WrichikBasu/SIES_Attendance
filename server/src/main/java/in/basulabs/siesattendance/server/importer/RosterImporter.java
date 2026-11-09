@@ -127,6 +127,11 @@ public final class RosterImporter {
 				connection.rollback(savepoint);
 				failed++;
 				errors.add("Line " + row.line() + ": " + firstLine(e));
+
+			} catch (RowRefused e) {
+				connection.rollback(savepoint);
+				failed++;
+				errors.add("Line " + row.line() + ": " + e.getMessage());
 			}
 		}
 
@@ -140,18 +145,21 @@ public final class RosterImporter {
 	 */
 	private static boolean write(@NonNull Connection connection, @NonNull ServerIds ids,
 	                             @NonNull RosterCsv.Row row, int academicYear)
-			throws SQLException {
+			throws SQLException, RowRefused {
 
 		Long existing = findByRollNo(connection, row.rollNo(), academicYear);
+		String matchedBy = "roll number";
 
 		// The APAAR ID next: it is the person's for life, so it finds them in a new session
 		// under a new roll number. The device's DaoStudent asks in the same order.
 		if (existing == null && row.apaarId() != null) {
 			existing = findByApaarId(connection, row.apaarId());
+			matchedBy = "APAAR ID";
 		}
 
 		if (existing == null && row.email() != null) {
 			existing = findByEmail(connection, row.email());
+			matchedBy = "email";
 		}
 
 		boolean updated = existing != null;
@@ -159,7 +167,20 @@ public final class RosterImporter {
 
 		if (updated) {
 			studentId = existing;
-			updateStudent(connection, studentId, row);
+
+			// The policies let a professor or head see a student they may not change: one
+			// who takes their department as a minor or OE, or is enrolled in another
+			// department in any session (V20, V27, V30). The UPDATE then matches no row,
+			// without an error, and carrying on would report a change that did not happen
+			// and could enrol the student here for a new session over that department's
+			// head. A student on another department's roll is that department's too, so
+			// the row is refused.
+			if (updateStudent(connection, studentId, row) == 0) {
+				throw new RowRefused("its " + matchedBy + " belongs to a student who is "
+						+ "also enrolled in a department you cannot change, so the row "
+						+ "was not imported. The office or an administrator can make "
+						+ "this change.");
+			}
 		} else {
 			studentId = ids.next();
 			insertStudent(connection, studentId, row);
@@ -261,8 +282,12 @@ public final class RosterImporter {
 		}
 	}
 
-	private static void updateStudent(@NonNull Connection connection, long studentId,
-	                                  @NonNull RosterCsv.Row row) throws SQLException {
+	/**
+	 * @return the number of rows changed: 0 when the policies keep this student from the
+	 * caller
+	 */
+	private static int updateStudent(@NonNull Connection connection, long studentId,
+	                                 @NonNull RosterCsv.Row row) throws SQLException {
 
 		try (PreparedStatement statement = connection.prepareStatement(
 				"UPDATE students SET name = ?, pronouns = ?, email = ?, "
@@ -274,7 +299,7 @@ public final class RosterImporter {
 			statement.setString(3, row.email());
 			setNullableLong(statement, 4, row.apaarId());
 			statement.setLong(5, studentId);
-			statement.executeUpdate();
+			return statement.executeUpdate();
 		}
 	}
 
@@ -363,5 +388,16 @@ public final class RosterImporter {
 
 		int newline = message.indexOf('\n');
 		return newline < 0 ? message : message.substring(0, newline);
+	}
+
+	/**
+	 * A row this importer refuses for a reason it can say in a sentence, rolled back to its
+	 * savepoint like a row the database refused.
+	 */
+	private static final class RowRefused extends Exception {
+
+		RowRefused(@NonNull String message) {
+			super(message);
+		}
 	}
 }
