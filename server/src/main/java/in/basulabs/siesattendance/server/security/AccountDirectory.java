@@ -280,35 +280,83 @@ public final class AccountDirectory {
 		setPassword(accountId, password, actedBy, null);
 	}
 
+	/** What re-checking the current password on a signed-in session found. */
+	public enum Recheck {
+		/** It is the current password. */
+		MATCHES,
+		/** It is not, and the failure has been counted. */
+		WRONG,
+		/** The account is locked, so the password was not looked at. */
+		LOCKED
+	}
+
 	/**
-	 * Whether this is the account's current password.
+	 * Whether this is the account's current password, counted and recorded exactly as a login
+	 * attempt is: a wrong one adds to {@code failed_logins} and locks the account after
+	 * {@value #FAILURES_BEFORE_LOCK}, a locked account is refused without the password being
+	 * compared, and each refusal is a {@code LOGIN_FAILED} entry.
 	 * <p>
-	 * Writes nothing: no audit entry, no failure counted, no lock. That is right for the one
-	 * caller — somebody changing their own password on a session that has already been
-	 * authenticated — because the token in their hand can do everything the account can do
-	 * anyway, so there is nothing here for guessing to win. What requiring the old password does
-	 * buy is that a token lifted from an unlocked phone cannot be used to take the account over
-	 * by changing the password out from under its owner.
+	 * Requiring the current password before changing it is what stops a token lifted from an
+	 * unlocked phone being used to take the account over. That protection is only as good as
+	 * the number of guesses it allows; uncounted, the session is an unlimited and unlogged way
+	 * to find the password, and the lock on the login box does nothing about it.
 	 * <p>
-	 * Not a login, and must not be used as one: {@link #authenticate} is the method that counts
-	 * failures and records what happened.
+	 * On the caller's transaction, whose actor is the session, so the entries carry the session,
+	 * the device and the address. The caller has to <em>commit</em> it before refusing: a
+	 * refusal thrown inside it would roll the count back with everything else.
+	 * <p>
+	 * The password array is wiped before this returns.
 	 */
-	public boolean matchesPassword(long accountId, @NonNull char[] password) throws SQLException {
+	@NonNull
+	public static Recheck recheckPassword(@NonNull Connection connection, long accountId,
+	                                      @NonNull char[] password) throws SQLException {
 
-		try (Connection connection = dataSource.getConnection();
-		     PreparedStatement statement = connection.prepareStatement(
-				     "SELECT password_hash FROM app_account WHERE account_id = ?")) {
+		try {
+			String hash;
+			java.sql.Timestamp lockedUntil;
 
-			statement.setLong(1, accountId);
+			try (PreparedStatement statement = connection.prepareStatement(
+					"SELECT password_hash, locked_until FROM app_account WHERE account_id = ?")) {
 
-			try (ResultSet results = statement.executeQuery()) {
+				statement.setLong(1, accountId);
 
-				if (!results.next()) {
-					return false;
+				try (ResultSet results = statement.executeQuery()) {
+					if (!results.next()) {
+						spendAHash(password);
+						return Recheck.WRONG;
+					}
+					hash = results.getString(1);
+					lockedUntil = results.getTimestamp(2);
 				}
-				return Passwords.encoder().matches(CharBuffer.wrap(password),
-						results.getString(1));
 			}
+
+			if (lockedUntil != null && lockedUntil.toInstant().isAfter(java.time.Instant.now())) {
+				// Not compared, for the reason authenticate() gives: a refusal that changed
+				// with the guess would say whether the guess was right.
+				spendAHash(password);
+				AuditLog.record(connection, AuditAction.LOGIN_FAILED,
+						AuditLog.detail("refused", "the account is locked",
+								"while", "changing the password",
+								"until", lockedUntil.toInstant().toString()));
+				return Recheck.LOCKED;
+			}
+
+			if (Passwords.encoder().matches(CharBuffer.wrap(password), hash)) {
+				return Recheck.MATCHES;
+			}
+
+			boolean nowLocked = recordFailure(connection, accountId);
+
+			AuditLog.record(connection, AuditAction.LOGIN_FAILED,
+					AuditLog.detail("refused", "the current password did not match",
+							"while", "changing the password"));
+
+			if (nowLocked) {
+				AuditLog.record(connection, AuditAction.ACCOUNT_LOCKED,
+						AuditLog.detail("after", FAILURES_BEFORE_LOCK + " consecutive "
+								+ "failures or more"));
+			}
+			return Recheck.WRONG;
 
 		} finally {
 			Arrays.fill(password, '\0');

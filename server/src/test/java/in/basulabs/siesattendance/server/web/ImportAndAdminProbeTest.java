@@ -267,32 +267,61 @@ class ImportAndAdminProbeTest {
 	// ── The password re-check ────────────────────────────────────────────
 
 	/**
-	 * BUG: {@code /auth/login} has a per-address limiter, a lockout after five failures, and a
-	 * LOGIN_FAILED entry. {@code /auth/password} checks the current password with none of the
-	 * three, so a session token is an unlimited, unlogged oracle for the account's password,
-	 * and stays one while the account is locked.
+	 * Was a bug: {@code /auth/login} counted failures, locked the account and logged each
+	 * refusal, while {@code /auth/password} checked the current password with none of that, so
+	 * a session token was an unlimited, unlogged way to find the account's password. The
+	 * re-check is now counted and recorded as a login attempt is.
 	 */
 	@Test
-	void guessingTheCurrentPasswordIsLimitedOrRecorded() throws Exception {
+	void guessingTheCurrentPasswordLocksTheAccount() throws Exception {
 
 		String token = tokenFor("a.cs@sies.edu.in");
 		List<Integer> statuses = new ArrayList<>();
 
-		for (int attempt = 0; attempt < 8; attempt++) {
-			statuses.add(post("/auth/password", json(
-					"currentPassword", "guess number " + attempt,
-					"newPassword", "a brand new passphrase " + attempt), token).status());
+		for (int attempt = 0; attempt < 6; attempt++) {
+			statuses.add(changePassword(token, "guess number " + attempt).status());
 		}
 
-		boolean limited = statuses.contains(429);
-		boolean locked = count("SELECT count(*) FROM app_account WHERE login_email = "
-				+ "'a.cs@sies.edu.in' AND (locked_until IS NOT NULL OR failed_logins > 0)") > 0;
-		boolean recorded = count("SELECT count(*) FROM audit_log WHERE action IN "
-				+ "('LOGIN_FAILED', 'ACCOUNT_LOCKED')") > 0;
+		assertEquals(List.of(403, 403, 403, 403, 403, 429), statuses,
+				"five wrong guesses are refused as wrong, and the sixth finds the account locked");
+		assertEquals(1, count("SELECT count(*) FROM app_account WHERE login_email = "
+				+ "'a.cs@sies.edu.in' AND locked_until > now()"));
+		assertEquals(6, count("SELECT count(*) FROM audit_log WHERE action = 'LOGIN_FAILED' "
+				+ "AND detail ->> 'while' = 'changing the password' "
+				+ "AND session_id IS NOT NULL"), "each refusal is logged, against the session");
+		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'ACCOUNT_LOCKED'"));
 
-		assertTrue(limited || locked || recorded,
-				"eight wrong current passwords went unlimited, uncounted and unlogged: "
-						+ statuses);
+		// While locked, the right password is refused like any other, so the refusal cannot be
+		// used to tell a right guess from a wrong one.
+		Reply right = changePassword(token, PASSWORD);
+
+		assertEquals(429, right.status(), right::toString);
+		assertEquals("account_locked", right.body().get("code").stringValue());
+
+		// And the login box is locked by the same count.
+		assertEquals(401, post("/auth/login", json("email", "a.cs@sies.edu.in", "door",
+				"STAFF", "password", PASSWORD), null).status());
+	}
+
+	/** A slip or two, then the right password: the change goes through and the count is gone. */
+	@Test
+	void aChangeAfterAFewSlipsClearsTheCount() throws Exception {
+
+		String token = tokenFor("a.cs@sies.edu.in");
+
+		assertEquals(403, changePassword(token, "not it").status());
+		assertEquals(403, changePassword(token, "not it either").status());
+
+		Reply changed = changePassword(token, PASSWORD);
+
+		assertEquals(200, changed.status(), changed::toString);
+		assertEquals(0, count("SELECT failed_logins FROM app_account "
+				+ "WHERE login_email = 'a.cs@sies.edu.in'"));
+	}
+
+	private Reply changePassword(String token, String current) throws Exception {
+		return post("/auth/password", json("currentPassword", current,
+				"newPassword", "a brand new passphrase entirely"), token);
 	}
 
 	// ── V43: there is always an administrator ────────────────────────────

@@ -205,9 +205,20 @@ public final class AuthController {
 					"The new password is the same as the current one.");
 		}
 
-		if (!directory.matchesPassword(actor.accountId(),
-				body.currentPassword().toCharArray())) {
+		// Counted and recorded like a login attempt, in a transaction of its own that commits
+		// before any refusal is thrown: thrown inside it, the refusal would roll the count back
+		// and the check would again be an unlimited way to guess the password.
+		AccountDirectory.Recheck recheck = database.inTransaction(actor, connection ->
+				AccountDirectory.recheckPassword(connection, actor.accountId(),
+						body.currentPassword().toCharArray()));
 
+		if (recheck == AccountDirectory.Recheck.LOCKED) {
+			throw new ApiException(429, "account_locked",
+					"Too many wrong passwords for this account. Wait a few minutes, then try "
+							+ "again.");
+		}
+
+		if (recheck == AccountDirectory.Recheck.WRONG) {
 			// Not 401: the session is perfectly good and signing in again would not help.
 			throw new ApiException(403, "current_password_wrong",
 					"That is not the current password for this account.");
