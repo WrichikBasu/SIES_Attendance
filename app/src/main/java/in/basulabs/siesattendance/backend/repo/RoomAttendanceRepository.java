@@ -39,6 +39,7 @@ import in.basulabs.siesattendance.backend.pojo.StudentAttendanceStat;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 import in.basulabs.siesattendance.backend.pojo.StudentLectureMark;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 
 /**
  * The repository as it is today: Room, and nothing else.
@@ -190,7 +191,23 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 	@Override
 	public long insertCourse(@NonNull EntityCourse course) {
+		course.courseCode = canonicalCourseCode(course.courseCode);
 		return db.daoCourse().insert(course);
+	}
+
+	/**
+	 * A course code in its stored spelling (see {@link CanonicalCode}), refused when nothing of
+	 * it is left. Both course writes pass through here, so the phone stores what the server's
+	 * V57 trigger would.
+	 */
+	@NonNull
+	private static String canonicalCourseCode(@Nullable String code) {
+		String canonical = CanonicalCode.of(code);
+		if (canonical.isEmpty()) {
+			throw new IllegalArgumentException("A course code needs a letter or a digit: \""
+					+ code + "\"");
+		}
+		return canonical;
 	}
 
 	@Override
@@ -217,6 +234,7 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 	@Override
 	public void updateCourse(@NonNull EntityCourse course) {
+		course.courseCode = canonicalCourseCode(course.courseCode);
 		db.daoCourse().update(course);
 	}
 

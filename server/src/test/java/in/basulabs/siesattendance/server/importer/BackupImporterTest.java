@@ -256,7 +256,7 @@ class BackupImporterTest {
 		assertTrue(second.succeeded(), () -> "second run failed: " + second.failure());
 
 		assertRowCount("students", 2);
-		assertEquals("CORRECTED-1", queryString("SELECT roll_no FROM student_year "
+		assertEquals("CORRECTED1", queryString("SELECT roll_no FROM student_year "
 						+ "WHERE student_id = " + serverId),
 				"the correction should have landed on the same student");
 		assertRowCount("student_year", 2);

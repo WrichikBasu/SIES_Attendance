@@ -1,5 +1,7 @@
 package in.basulabs.siesattendance.backend;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.lifecycle.LiveData;
 import androidx.room.Dao;
 import androidx.room.Insert;
@@ -16,6 +18,7 @@ import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 import in.basulabs.siesattendance.backend.pojo.StudentLectureMark;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.backend.stats.SqlBits;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 
 /**
  * Students, and the per-session enrolments that sit alongside them.
@@ -114,6 +117,22 @@ public abstract class DaoStudent {
 		}
 	}
 
+	/**
+	 * A roll number in its stored spelling (see {@link CanonicalCode}), refused when nothing of
+	 * it is left. Every write of an enrolment passes through here, so the form, the roster
+	 * import and anything added later store the same spelling the server does (V57), and an
+	 * exact match finds it.
+	 */
+	@NonNull
+	static String canonicalRollNo(@Nullable String rollNo) {
+		String canonical = CanonicalCode.of(rollNo);
+		if (canonical.isEmpty()) {
+			throw new IllegalArgumentException("A roll number needs a letter or a digit: \""
+					+ rollNo + "\"");
+		}
+		return canonical;
+	}
+
 	@Query("SELECT studentID FROM student_year WHERE rollNo = :rollNo AND academicYear = " +
 			":academicYear LIMIT 1")
 	public abstract Long findStudentIdByRollNo(String rollNo, int academicYear);
@@ -137,6 +156,8 @@ public abstract class DaoStudent {
 	                                  Integer semester, Division division,
 	                                  java.time.LocalDate joinDate,
 	                                  java.time.LocalDate leaveDate) {
+
+		rollNo = canonicalRollNo(rollNo);
 
 		// The same person, by what identifies them: this session's roll number, then their
 		// APAAR ID -- the one thing that is theirs for life, and so what recognises them in a
@@ -332,6 +353,7 @@ public abstract class DaoStudent {
 	                                  Integer semester, Division division,
 	                                  java.time.LocalDate joinDate,
 	                                  java.time.LocalDate leaveDate) {
+		rollNo = canonicalRollNo(rollNo);
 		checkApaarIdIsFree(student.apaarId, student.studentID);
 		updateStudent(student);
 		updateStudentYear(student.studentID, academicYear, rollNo, year, stream, majorDept,

@@ -140,6 +140,7 @@
 
     <!-- Warnings and errors -->
     <string name="error_required">Required</string>
+    <string name="error_letters_and_digits">Needs at least one letter or digit</string>
     <string name="error_end_before_start">Must be after the start time</string>
     <string name="import_more_errors">…and %1$d more</string>
 

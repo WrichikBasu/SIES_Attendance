@@ -122,7 +122,10 @@ public final class AttendanceCsvParser {
 		}
 	}
 
-	/** One student's line: the roll number, and one mark per column. */
+	/**
+	 * One student's line: the roll number, in {@link CanonicalCode} form, and one mark per
+	 * column.
+	 */
 	public static final class Row {
 
 		/** Line number in the file, so a problem can be pointed at. */
@@ -365,7 +368,8 @@ public final class AttendanceCsvParser {
 
 		for (int column = 1; column <= lastUsed; column++) {
 
-			String code = at(cells, roles[ROLE_COURSE], column);
+			String rawCode = at(cells, roles[ROLE_COURSE], column);
+			String code = CanonicalCode.of(rawCode);
 			String dateText = at(cells, roles[ROLE_DATE], column);
 			String startText = at(cells, roles[ROLE_START], column);
 			String endText = at(cells, roles[ROLE_END], column);
@@ -377,7 +381,9 @@ public final class AttendanceCsvParser {
 			Column parsed = new Column(column, code.isEmpty() ? null : code, date, start, end);
 
 			if (code.isEmpty()) {
-				problem(parsed, headingLines.get(roles[ROLE_COURSE]), "no course code");
+				problem(parsed, headingLines.get(roles[ROLE_COURSE]), rawCode.isEmpty()
+						? "no course code"
+						: "the course code \"" + rawCode + "\" has no letters or digits");
 			}
 			if (date == null) {
 				problem(parsed, headingLines.get(roles[ROLE_DATE]),
@@ -417,13 +423,24 @@ public final class AttendanceCsvParser {
 			}
 
 			List<String> cells = RosterCsv.splitCsvLine(raw);
-			String rollNo = cells.isEmpty() ? "" : cells.get(0).trim();
+			String rawRollNo = cells.isEmpty() ? "" : cells.get(0).trim();
 
-			if (rollNo.isEmpty()) {
+			if (rawRollNo.isEmpty()) {
 				continue;
 			}
 
-			Integer earlier = seen.put(normalise(rollNo), lineNo);
+			// The stored spelling, so the duplicate check below and the importers' lookup are
+			// one comparison: two lines that name one student are caught here, whatever
+			// separators or capitals either was typed with.
+			String rollNo = CanonicalCode.of(rawRollNo);
+
+			if (rollNo.isEmpty()) {
+				sheet.errors.add("Line " + lineNo + ": the roll number \"" + rawRollNo
+						+ "\" has no letters or digits.");
+				continue;
+			}
+
+			Integer earlier = seen.put(rollNo, lineNo);
 
 			if (earlier != null) {
 				// Two lines for one student make every column ambiguous, so this stops the
@@ -553,8 +570,8 @@ public final class AttendanceCsvParser {
 	}
 
 	/**
-	 * Lower cased with separators stripped, for comparing a label or a roll number against
-	 * another spelling of the same thing. Fixed to {@link Locale#ROOT} for the same reason the
+	 * Lower cased with separators stripped, for comparing a heading label against another
+	 * spelling of the same label. Roll numbers and course codes use {@link CanonicalCode}. Fixed to {@link Locale#ROOT} for the same reason the
 	 * roster import fixes it: the default locale would map "I" to a dotless letter on a Turkish
 	 * device and the comparison would silently stop matching.
 	 */
@@ -580,7 +597,8 @@ public final class AttendanceCsvParser {
 				+ "class.\n\n"
 				+ "THE FIRST FOUR ROWS name each class, one fact per row, with a label in the "
 				+ "first cell:\n"
-				+ "• Course code: the course's code, such as PHYS101\n"
+				+ "• Course code: the course's code, such as PHYS101. Only its letters and "
+				+ "digits count.\n"
 				+ "• Date: 2025-07-01, 01/07/2025, 1-7-2025, 1.7.2025, 1 Jul 2025 or "
 				+ "1-Jul-2025\n"
 				+ "• Start time and End time: 09:00, 9:00 AM or 9 AM\n"
@@ -588,7 +606,8 @@ public final class AttendanceCsvParser {
 				+ "Start, End); without labels the rows are read in that order.\n\n"
 				+ "EVERY ROW AFTER THAT is one student:\n"
 				+ "• the first cell is the roll number in the session the date falls in. "
-				+ "Capitals, spaces, hyphens and slashes don't matter.\n"
+				+ "Only its letters and digits count, so capitals, spaces, hyphens and "
+				+ "slashes don't matter.\n"
 				+ "• each class's cell is P (or Present) for present, AB (or A, Absent) for "
 				+ "absent, and blank or a dash when the student was not in that class at "
 				+ "all.\n\n"

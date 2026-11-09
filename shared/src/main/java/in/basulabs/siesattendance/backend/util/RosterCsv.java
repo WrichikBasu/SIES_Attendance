@@ -153,7 +153,12 @@ public final class RosterCsv {
 	public static Row parseRow(int line, @NonNull List<String> cells,
 	                           @NonNull Map<String, Integer> columns) {
 
-		String rollNo = required(cells, columns, "rollno", "roll number");
+		String rawRollNo = required(cells, columns, "rollno", "roll number");
+		String rollNo = CanonicalCode.of(rawRollNo);
+		if (rollNo.isEmpty()) {
+			throw new IllegalArgumentException("the roll number \"" + rawRollNo
+					+ "\" has no letters or digits");
+		}
 		String name = required(cells, columns, "name", "name");
 
 		String pronouns = optional(cells, columns, "pronouns");
@@ -390,7 +395,8 @@ public final class RosterCsv {
 				+ "Columns can be in any order, and capitals, spaces and underscores in their "
 				+ "names don't matter.\n\n"
 				+ "REQUIRED COLUMNS\n"
-				+ "• rollNo: the roll number in this session, such as 2024CS032\n"
+				+ "• rollNo: the roll number in this session, such as 2024CS032. Only letters "
+				+ "and digits are kept, in capitals: 2024-cs-032 is read as 2024CS032.\n"
 				+ "• name\n"
 				+ "• year: " + years + "\n"
 				+ "• stream: " + streams + ". BSc and MSc are read as the unaided course "

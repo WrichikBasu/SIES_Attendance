@@ -287,7 +287,10 @@ public class AttendanceImportTest {
 				"End time,10:00",
 				"2024PH001,P");
 
-		assertEquals("PHYS101, part 2", sheet.columns.get(0).courseCode);
+		// One column, not two: had the comma split the cell, column 1 would read PHYS101 and a
+		// second column would hold "part 2". The code is then stored canonically (V57).
+		assertEquals(1, sheet.columns.size());
+		assertEquals("PHYS101PART2", sheet.columns.get(0).courseCode);
 	}
 
 	@Test

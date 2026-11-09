@@ -35,6 +35,7 @@ import in.basulabs.siesattendance.backend.EntityCourse;
 import in.basulabs.siesattendance.backend.EntityProfessor;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 import in.basulabs.siesattendance.frontend.util.BatchPicker;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
@@ -621,6 +622,14 @@ public class FragmentAddCourse extends Fragment {
 			refuse(R.id.tilCourseCode);
 			return;
 		}
+
+		// Stored as letters and digits in capitals (V57), which is what the field then shows.
+		code = CanonicalCode.of(code);
+		if (code.isEmpty()) {
+			refuse(R.id.tilCourseCode, R.string.error_letters_and_digits);
+			return;
+		}
+		etCode.setText(code);
 		if (topic.isEmpty()) {
 			refuse(R.id.tilCourseTopic);
 			return;

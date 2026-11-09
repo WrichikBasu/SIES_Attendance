@@ -21,6 +21,7 @@ import in.basulabs.siesattendance.backend.PostgresEnumTypes;
 import in.basulabs.siesattendance.backend.StoredTimes;
 import in.basulabs.siesattendance.backend.StructuredId;
 import in.basulabs.siesattendance.backend.sync.DeviceTables;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 import in.basulabs.siesattendance.server.sync.DeviceValue;
 import in.basulabs.siesattendance.server.sync.DeviceValue.Field;
 
@@ -240,7 +241,10 @@ final class ImportSession {
 
 			try (ResultSet results = statement.executeQuery()) {
 				while (results.next()) {
-					rolls.add(new Object[]{results.getString(1), results.getLong(2)});
+					// Canonical, as the server stores it (V57): a backup from before then
+					// holds the roll number as it was typed.
+					rolls.add(new Object[]{CanonicalCode.of(results.getString(1)),
+							results.getLong(2)});
 				}
 			}
 		}
@@ -699,9 +703,27 @@ final class ImportSession {
 				continue;
 			}
 
-			fields.put(column.room(), convert(table, column, row.get(column.room())));
+			fields.put(column.room(), convert(table, column,
+					canonicalIfCode(table, column, row.get(column.room()))));
 		}
 		return fields;
+	}
+
+	/**
+	 * A roll number or a course code in the spelling the server stores (V57), so that the
+	 * natural-key lookup below finds the row a backup from before then spelled differently,
+	 * rather than inserting a second one that the unique index refuses. Every other value is
+	 * passed through.
+	 */
+	@Nullable
+	private static Object canonicalIfCode(@NonNull DeviceTables.Table table,
+	                                      @NonNull DeviceTables.Column column,
+	                                      @Nullable Object raw) {
+
+		boolean code = (table.name().equals("student_year") && column.room().equals("rollNo"))
+				|| (table.name().equals("courses") && column.room().equals("courseCode"));
+
+		return code && raw instanceof String text ? CanonicalCode.of(text) : raw;
 	}
 
 	/**

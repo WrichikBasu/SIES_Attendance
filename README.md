@@ -114,6 +114,9 @@ apaarId,joinDate,leaveDate
 ```
 
 - Columns can be in any order.
+- Roll numbers and course codes are stored as letters and digits only, in capitals, everywhere in
+  the app and on the server: `2024-cs-032` is read as `2024CS032`. A value with no letters or digits
+  is refused.
 - `pronouns`, `email`, `minorDept`, `oeDept`, `semester`, `division`, `apaarId`, `joinDate` and
   `leaveDate` may be blank or left out.
 - Dates can be written as `2026-06-15`, `15/06/2026` or `15-06-2026`.

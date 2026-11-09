@@ -19,7 +19,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -660,13 +659,13 @@ public final class AttendanceRecordImporter {
 				return null;
 			}
 
-			String key = code.trim().toLowerCase(Locale.ROOT);
+			String key = CanonicalCode.of(code);
 
 			if (courses.containsKey(key)) {
 				return courses.get(key);
 			}
 
-			EntityCourse course = db.daoCourse().findByCodeSync(code.trim());
+			EntityCourse course = db.daoCourse().findByCodeSync(key);
 			courses.put(key, course);
 			return course;
 		}
@@ -773,8 +772,7 @@ public final class AttendanceRecordImporter {
 
 		@NonNull
 		private static String normalise(@NonNull String rollNo) {
-			return rollNo.trim().toLowerCase(Locale.ROOT)
-					.replace(" ", "").replace("-", "").replace("/", "");
+			return CanonicalCode.of(rollNo);
 		}
 	}
 }

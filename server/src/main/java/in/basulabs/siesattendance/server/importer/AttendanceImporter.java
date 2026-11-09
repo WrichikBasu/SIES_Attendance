@@ -22,6 +22,7 @@ import java.util.Set;
 
 import in.basulabs.siesattendance.backend.util.AttendanceCsvParser;
 import in.basulabs.siesattendance.backend.util.BatchMatcher;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 
 /**
  * An attendance sheet, turned into lectures and marks on the server.
@@ -386,7 +387,7 @@ public final class AttendanceImporter {
 				return null;
 			}
 
-			String key = code.trim().toLowerCase(Locale.ROOT);
+			String key = CanonicalCode.of(code);
 
 			if (courses.containsKey(key)) {
 				return courses.get(key);
@@ -394,12 +395,13 @@ public final class AttendanceImporter {
 
 			Course found = null;
 
-			// Case-insensitive, as the device's COLLATE NOCASE is.
+			// An exact match on the stored spelling: V57 keeps every course code canonical, so
+			// the sheet's spelling is brought to it rather than the column loosened.
 			try (PreparedStatement statement = connection.prepareStatement(
 					"SELECT course_id, course_code, course_topic, offering_department::text "
-							+ "FROM courses WHERE lower(course_code) = lower(?) LIMIT 1")) {
+							+ "FROM courses WHERE course_code = ? LIMIT 1")) {
 
-				statement.setString(1, code.trim());
+				statement.setString(1, key);
 
 				try (ResultSet results = statement.executeQuery()) {
 					if (results.next()) {
@@ -567,8 +569,7 @@ public final class AttendanceImporter {
 
 		@NonNull
 		private static String normalise(@NonNull String rollNo) {
-			return rollNo.trim().toLowerCase(Locale.ROOT)
-					.replace(" ", "").replace("-", "").replace("/", "");
+			return CanonicalCode.of(rollNo);
 		}
 	}
 

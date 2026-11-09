@@ -162,11 +162,10 @@ class ImportAndAdminProbeTest {
 	// ── Roster: roll numbers ─────────────────────────────────────────────
 
 	/**
-	 * BUG: the roster matches a roll number exactly, and {@code student_year_roll_no_
-	 * academic_year_uq} is case-sensitive, so the same roll number typed in lower case is a
-	 * second student in the same session. The attendance importers then match roll numbers with
-	 * case ignored and index the session by the loosened spelling, so one of the two silently
-	 * shadows the other.
+	 * Was a bug: the roster matched a roll number exactly, and {@code student_year_roll_no_
+	 * academic_year_uq} is case-sensitive, so the same roll number typed in lower case was a
+	 * second student in the same session. Fixed by storing every roll number canonically
+	 * ({@code CanonicalCode}, V57): {@code cs-fy-002} is {@code CSFY002}, the student on file.
 	 */
 	@Test
 	void aRollNumberInAnotherCaseIsTheSameStudent() throws Exception {
@@ -177,8 +176,9 @@ class ImportAndAdminProbeTest {
 				""", tokenFor("office@sies.edu.in"));
 
 		assertEquals(200, reply.status(), reply::toString);
+		assertEquals(1, reply.body().get("updated").intValue(), reply::toString);
 		assertEquals(1, count("SELECT count(*) FROM student_year WHERE academic_year = "
-						+ SESSION + " AND lower(roll_no) = 'cs-fy-002'"),
+						+ SESSION + " AND roll_no = 'CSFY002'"),
 				"one student per roll number per session, whatever its case: " + reply);
 	}
 
@@ -240,10 +240,10 @@ class ImportAndAdminProbeTest {
 	// ── Attendance import: one student under two spellings ───────────────
 
 	/**
-	 * BUG: CS-FY-002 and CS/FY/002 pass the parser's duplicate check (it keeps slashes) and are
-	 * one student to the importer (it strips them). The later line's mark replaces the earlier
-	 * one in the plan, but both are counted, so the preview offers two marks for a class where
-	 * one will be written, and which one is decided by line order.
+	 * Was a bug: CS-FY-002 and CS/FY/002 passed the parser's duplicate check (it kept slashes)
+	 * and were one student to the importer (it stripped them), so the preview offered three
+	 * marks for two students and the later line silently won. Both now compare
+	 * {@code CanonicalCode} spellings, so the sheet is refused for naming one student twice.
 	 */
 	@Test
 	void oneStudentUnderTwoSpellingsIsNotImportedQuietly() throws Exception {
@@ -259,13 +259,9 @@ class ImportAndAdminProbeTest {
 				""", tokenFor("a.cs@sies.edu.in"));
 
 		assertEquals(200, preview.status(), preview::toString);
-
-		JsonNode lecture = preview.body().get("lectures").get(0);
-		int counted = lecture.get("present").intValue() + lecture.get("absent").intValue();
-
-		assertTrue(!preview.body().get("canImport").booleanValue() || counted == 2,
-				"the preview offers " + counted + " marks for 2 students and can import: "
-						+ preview);
+		assertFalse(preview.body().get("canImport").booleanValue(), preview::toString);
+		assertTrue(preview.raw().contains("CSFY002 appears on lines 6 and 7"),
+				preview::toString);
 	}
 
 	// ── The password re-check ────────────────────────────────────────────

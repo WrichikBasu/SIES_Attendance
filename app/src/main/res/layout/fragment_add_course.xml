@@ -24,8 +24,7 @@
                 android:id="@+id/etCourseCode"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:inputType="text"
-                android:textAllCaps="true" />
+                android:inputType="textCapCharacters|textNoSuggestions" />
 
         </com.google.android.material.textfield.TextInputLayout>
 

@@ -153,7 +153,7 @@ SELECT assert_equal((SELECT count(*)::int FROM lectures), 4, 'four lectures acce
 -- student_year is a table of its own, and it has to keep working.
 INSERT INTO student_year (student_id, academic_year, roll_no, year, stream, major_dept)
     VALUES (2004, 2024, 'PHY-FY-001', 'FY', 'BSc', 'PHYSICS');
-SELECT assert_equal((SELECT count(*)::int FROM student_year WHERE roll_no = 'PHY-FY-001'),
+SELECT assert_equal((SELECT count(*)::int FROM student_year WHERE roll_no = 'PHYFY001'),
                     2, 'one roll number reused in a later session');
 
 

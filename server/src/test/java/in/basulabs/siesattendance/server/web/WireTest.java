@@ -729,7 +729,7 @@ class WireTest {
 				tokenFor("office@sies.edu.in", "STAFF"), null).status());
 
 		assertEquals(0, count("SELECT count(*) FROM audit_log WHERE action = 'EXPORT' "
-				+ "AND detail::text LIKE '%CS-FY-001%'"),
+				+ "AND detail::text LIKE '%CSFY001%'"),
 				"an audit log holding a copy of every export would be the most valuable thing "
 						+ "in the database to steal");
 	}
@@ -887,7 +887,7 @@ class WireTest {
 
 		assertEquals(200, refused.status(), refused::toString);
 		assertFalse(refused.body().get("canImport").booleanValue());
-		assertTrue(refused.raw().contains("No course you can see has the code CS-101"),
+		assertTrue(refused.raw().contains("No course you can see has the code CS101"),
 				refused.raw());
 
 		assertEquals(400, postCsv("/attendance/import?dryRun=false", sheet,
@@ -910,7 +910,7 @@ class WireTest {
 		assertEquals(0, reply.body().get("failed").intValue(), reply::toString);
 
 		assertEquals(1, count("SELECT count(*) FROM student_year "
-				+ "WHERE roll_no = 'CS-FY-010' AND academic_year = " + SESSION));
+				+ "WHERE roll_no = 'CSFY010' AND academic_year = " + SESSION));
 		assertEquals(1, count("SELECT count(*) FROM students WHERE name = 'R RAO RENAMED'"));
 
 		// A new student gets a key under the server's node, so a student the office typed in
@@ -918,7 +918,7 @@ class WireTest {
 		assertEquals(StructuredId.SERVER_NODE, count("SELECT s.student_id & "
 				+ StructuredId.MAX_NODE_ID + " FROM students s "
 				+ "JOIN student_year y ON y.student_id = s.student_id "
-				+ "WHERE y.roll_no = 'CS-FY-010'"));
+				+ "WHERE y.roll_no = 'CSFY010'"));
 
 		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'CSV_IMPORT' "
 				+ "AND (detail ->> 'created')::int = 1 AND (detail ->> 'updated')::int = 1 "
@@ -940,7 +940,7 @@ class WireTest {
 		assertEquals(1, refused.body().get("failed").intValue());
 
 		assertEquals(0, count("SELECT count(*) FROM student_year "
-				+ "WHERE roll_no = 'CS-FY-010'"), "and nothing was written");
+				+ "WHERE roll_no = 'CSFY010'"), "and nothing was written");
 
 		// A student account never may, CR or not.
 		Reply student = postCsv("/roster?year=" + SESSION, """
@@ -975,7 +975,7 @@ class WireTest {
 				reply.body().get("errors").toString());
 
 		assertEquals(1, count("SELECT count(*) FROM student_year "
-				+ "WHERE roll_no = 'CS-FY-010' AND academic_year = " + SESSION),
+				+ "WHERE roll_no = 'CSFY010' AND academic_year = " + SESSION),
 				"the good row still landed");
 	}
 
@@ -996,7 +996,7 @@ class WireTest {
 		assertEquals(1, reply.body().get("failed").intValue(), reply::toString);
 
 		assertEquals(1, count("SELECT count(*) FROM student_year "
-				+ "WHERE roll_no = 'CS-FY-010' AND academic_year = " + SESSION));
+				+ "WHERE roll_no = 'CSFY010' AND academic_year = " + SESSION));
 		assertEquals(1, count("SELECT count(*) FROM students "
 				+ "WHERE email = 'r.rao@sies.edu.in' AND name = 'R RAO'"),
 				"the refused row must have changed nothing at all");
@@ -1712,7 +1712,7 @@ class WireTest {
 
 		assertEquals(200, students.status(), students::toString);
 		assertEquals(2, students.body().size(), students::toString);
-		assertTrue(students.raw().contains("CS-FY-001"),
+		assertTrue(students.raw().contains("CSFY001"),
 				"the roll number is how a person is told from another of the same name");
 
 		assertEquals(400, get("/accounts/people?kind=STAFF", token, null).status(),
@@ -2020,7 +2020,7 @@ class WireTest {
 
 		assertEquals(200, reply.status(), reply::toString);
 		assertEquals("STUDENT", reply.body().get("kind").stringValue());
-		assertEquals("CS-101",
+		assertEquals("CS101",
 				reply.body().get("represents").get(0).get("courseCode").stringValue());
 		assertFalse(reply.body().get("mayManageAccounts").booleanValue());
 	}
@@ -2081,7 +2081,7 @@ class WireTest {
 			String summary = entry.get("summary").stringValue();
 			assertFalse(summary.isBlank(), "an entry with no sentence: " + entry);
 
-			sawTheMark |= summary.startsWith("Marked R RAO ") && summary.contains(" in CS-101 on ");
+			sawTheMark |= summary.startsWith("Marked R RAO ") && summary.contains(" in CS101 on ");
 		}
 
 		assertTrue(sawTheMark, "the fixture's mark, by name: " + mine.raw());
@@ -2099,7 +2099,7 @@ class WireTest {
 		// C HEAD teaches nothing in the fixture, so everything they can read here they can
 		// read as the head of Computer Science: the CS lecture and its marks.
 		assertTrue(theirs.body().get("entries").size() > 0, theirs::toString);
-		assertFalse(theirs.raw().contains("\"CH-101\""),
+		assertFalse(theirs.raw().contains("\"CH101\""),
 				"the head of Computer Science does not read Chemistry's");
 	}
 
@@ -2264,7 +2264,7 @@ class WireTest {
 				"reason", "class representative"), admin, null);
 
 		assertEquals(200, appointed.status(), appointed::toString);
-		assertEquals("CH-101", appointed.body().get("courseCode").stringValue());
+		assertEquals("CH101", appointed.body().get("courseCode").stringValue());
 		assertEquals("ADMIN", appointed.body().get("grantedAs").stringValue(),
 				"stamped with the capacity it was made in, not recomputed later");
 
@@ -2338,7 +2338,7 @@ class WireTest {
 
 		assertEquals(200, roll.status(), roll::toString);
 		assertEquals(1, roll.body().size(), "the one Computer Science student");
-		assertEquals("CS-FY-001", roll.body().get(0).get("rollNo").stringValue());
+		assertEquals("CSFY001", roll.body().get(0).get("rollNo").stringValue());
 		assertTrue(roll.body().get(0).get("hasAccount").booleanValue(),
 				"and the form says whether an appointment would be usable");
 		assertTrue(roll.body().get(0).get("represents").booleanValue(),
@@ -2387,7 +2387,7 @@ class WireTest {
 		List<SyncJson.OnTheRoll> roll = SyncJson.parseRoll(get("/courses/" + COURSE_CS
 				+ "/roll?academicYear=" + SESSION, instructor, null).raw());
 
-		assertEquals(List.of(new SyncJson.OnTheRoll(STUDENT_CR, "R RAO", "CS-FY-001", true,
+		assertEquals(List.of(new SyncJson.OnTheRoll(STUDENT_CR, "R RAO", "CSFY001", true,
 				true)), roll);
 	}
 
@@ -2555,20 +2555,20 @@ class WireTest {
 
 		assertEquals(200, all.status(), all::toString);
 		assertEquals(2, all.body().size(), "both courses, for an administrator");
-		assertTrue(all.raw().contains("CS-101"), all.raw());
+		assertTrue(all.raw().contains("CS101"), all.raw());
 		assertTrue(all.raw().contains("\"value\":\"" + COURSE_CS + "\""), all.raw());
 
 		// A professor sees the one they teach, because this reads under their own actor.
 		Reply mine = get("/accounts/courses", tokenFor("b.chem@sies.edu.in", "STAFF"), null);
 
 		assertEquals(1, mine.body().size(), mine::toString);
-		assertTrue(mine.raw().contains("CH-101"), mine.raw());
+		assertTrue(mine.raw().contains("CH101"), mine.raw());
 
 		// The head, their department's.
 		Reply heads = get("/accounts/courses", tokenFor("c.head@sies.edu.in", "STAFF"), null);
 
 		assertEquals(1, heads.body().size(), heads::toString);
-		assertTrue(heads.raw().contains("CS-101"), heads.raw());
+		assertTrue(heads.raw().contains("CS101"), heads.raw());
 
 		// And the office none: it reads every course and appoints for none, and a course
 		// offered here is a roll that refuses it.

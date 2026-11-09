@@ -296,7 +296,7 @@ class SyncTest {
 				pushed.body().get("rejected").toString());
 		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
 				"a key from the wrong node will be the wrong node tomorrow too");
-		assertEquals("the CS-101 lecture on Mon 14 Jul 2025, 09:00",
+		assertEquals("the CS101 lecture on Mon 14 Jul 2025, 09:00",
 				pushed.body().get("rejected").get(0).get("about").stringValue(),
 				"and it says which lecture, from the row the phone sent: the server has "
 						+ "never had it");

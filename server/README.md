@@ -703,7 +703,8 @@ Drop `--import.dry-run` to keep the result. `--import.history=true` lists past r
 
 Each import runs in one transaction and its report is stored in `import_run`. Rows are matched by
 key, then by natural key (roll number, course code and so on), and inserted only if neither
-matches. Importing the same unchanged backup again changes nothing. A row that breaks a constraint
+matches. Roll numbers and course codes are compared and stored as letters and digits in capitals
+(V57), so a backup's `cs-fy-001` finds the server's `CSFY001`. Importing the same unchanged backup again changes nothing. A row that breaks a constraint
 stops the import: fix the data, not the constraint.
 
 **Exporting** (`POST /backup/export`, or the console) writes what a phone signed in as the admin

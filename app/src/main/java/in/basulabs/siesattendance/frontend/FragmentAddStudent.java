@@ -34,6 +34,7 @@ import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EntityStudent;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.util.Permissions;
@@ -370,6 +371,14 @@ public class FragmentAddStudent extends Fragment {
 			tilRollNo.setError(getString(R.string.error_required));
 			return;
 		}
+
+		// Stored as letters and digits in capitals (V57), which is what the field then shows.
+		rollNo = CanonicalCode.of(rollNo);
+		if (rollNo.isEmpty()) {
+			tilRollNo.setError(getString(R.string.error_letters_and_digits));
+			return;
+		}
+		etRollNo.setText(rollNo);
 
 		Year year = chosenYear;
 		Stream stream = chosenStream;

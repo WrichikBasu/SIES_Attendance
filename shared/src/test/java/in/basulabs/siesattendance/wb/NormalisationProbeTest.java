@@ -31,7 +31,8 @@ import in.basulabs.siesattendance.backend.util.RosterCsv;
  * White-box probes, second round: how the shared code decides that two spellings are the same
  * thing.
  * <p>
- * Three places compare roll numbers loosely, and they do not agree:
+ * Three places compared roll numbers loosely, and did not agree (since fixed: all three now
+ * use {@code CanonicalCode}):
  * <ul>
  *     <li>{@code AttendanceCsvParser.normalise}, for "this student is listed twice", strips
  *     spaces, hyphens, underscores and full stops;</li>
@@ -67,10 +68,10 @@ public class NormalisationProbeTest {
 	}
 
 	/**
-	 * BUG: the help text says slashes do not matter, and both importers strip them when they
-	 * look the student up, but the parser's duplicate check keeps them. The two lines reach the
-	 * importer as two students, resolve to one, and the second line's mark overwrites the first
-	 * while the preview counts both.
+	 * Was a bug: the help text said slashes do not matter, and both importers stripped them when
+	 * they looked the student up, but the parser's duplicate check kept them. The two lines
+	 * reached the importer as two students and resolved to one. Fixed by every one of them
+	 * comparing {@code CanonicalCode} spellings.
 	 */
 	@Test
 	public void aRollNumberWithAndWithoutSlashesIsListedTwice() {
