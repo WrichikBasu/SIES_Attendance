@@ -128,6 +128,8 @@ dependencies {
     testImplementation(testFixtures(project(":shared")))
     // The same named query cases, run by the instrumented tests on the phone's own SQLite.
     androidTestImplementation(testFixtures(project(":shared")))
+    // SyncScheduler and SyncWorker under a WorkManager whose constraints the test decides.
+    androidTestImplementation(libs.work.testing)
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)
 }

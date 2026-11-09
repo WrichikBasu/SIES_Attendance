@@ -586,7 +586,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				} else {
 					toastMessage.postValue("Signed in as " + session.displayName()
 							+ ", device " + session.node());
-					SyncScheduler.requestSync(getApplication());
+					SyncScheduler.syncNow(getApplication());
 				}
 				onDone.accept(session.displayName());
 
@@ -721,7 +721,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			return false;
 		}
 
-		SyncScheduler.requestSync(getApplication());
+		SyncScheduler.syncNow(getApplication());
 		toastMessage.setValue("Looking for changes, both ways");
 		return true;
 	}
@@ -982,7 +982,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 							+ notYet.getMessage());
 				}
 				DeviceIdentity.recordSyncError(getApplication(), null);
-				SyncScheduler.requestSync(getApplication());
+				SyncScheduler.syncNow(getApplication());
 
 				toastMessage.postValue(revoked == 0
 						? "Password changed"

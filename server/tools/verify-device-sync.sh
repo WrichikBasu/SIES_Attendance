@@ -17,8 +17,10 @@
 #     three students appointed representatives of PH-101 by its professor -- one still
 #     serving, one whose appointment was revoked through the API, one whose expired
 #   - each account's test class run on the phone in turn, then the server checked to show
-#     its refusals kept rows off it; last, DeviceSyncTest as the administrator. A separate
-#     install for each, so each account registers its own phone
+#     its refusals kept rows off it; then DeviceSyncTest as the administrator, and last
+#     ScheduledSyncTest, the administrator's changes synced by SyncScheduler and the real
+#     WorkManager rather than by the test. A separate install for each, so each account
+#     registers its own phone
 #
 # The fixture's keys are mirrored in app/src/androidTest/.../device/support/Fixture.java.
 #
@@ -507,6 +509,22 @@ expect "nothing written by the expired representative" 0 \
 
 run_on_phone DeviceSyncTest \
     "$ARG.siesEmail=$ADMIN_EMAIL" "$ARG.siesPassword=$PASSWORD" || STATUS=1
+
+# The one class that goes through SyncScheduler and the real WorkManager rather than calling
+# OutboxDrain itself: writes to the live database, synced when WorkManager runs them.
+run_on_phone ScheduledSyncTest \
+    "$ARG.siesEmail=$ADMIN_EMAIL" "$ARG.siesPassword=$PASSWORD" || STATUS=1
+
+echo "==> the server, after the scheduled syncs"
+expect "the change and the burst of ten, all arrived" 11 \
+    "SELECT count(*) FROM students WHERE name LIKE 'SCHEDULED %' OR name LIKE 'BURST %'" \
+    || STATUS=1
+expect "each written once, by the administrator's phone" 11 \
+    "SELECT count(*) FROM audit_log a JOIN app_account acc ON acc.account_id = a.actor_account
+     WHERE a.table_name = 'students' AND a.action IN ('INSERT', 'UPDATE')
+       AND acc.login_email = '$ADMIN_EMAIL' AND a.device_node IS NOT NULL
+       AND (a.after_image->>'name' LIKE 'SCHEDULED %' OR a.after_image->>'name' LIKE 'BURST %')" \
+    || STATUS=1
 
 echo
 echo "==> on the server afterwards"

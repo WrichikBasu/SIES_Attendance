@@ -1,6 +1,7 @@
 package in.basulabs.siesattendance.backend.sync;
 
 import android.content.Context;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -20,6 +21,10 @@ import androidx.work.WorkManager;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import in.basulabs.siesattendance.backend.EntityOutbox;
@@ -52,6 +57,8 @@ public final class SyncScheduler {
 
 	private static final String HOURLY = "sync-hourly";
 
+	private static final String TAG = "SyncScheduler";
+
 	private SyncScheduler() {
 	}
 
@@ -81,23 +88,148 @@ public final class SyncScheduler {
 	}
 
 	/**
-	 * Asks for a sync as soon as there is a connection.
+	 * Asks for a sync as soon as there is a connection, for the outbox watch and the worker.
 	 * <p>
-	 * {@code REPLACE} rather than appending: the worker drains whatever the queue holds when it
-	 * runs, so ten changes in a minute want one run and not ten. Replacing a run that has not
-	 * started loses nothing, and one that has started is not replaced.
+	 * What it does depends on the run already asked for, because the outbox watch fires on
+	 * every write to the outbox, and some of those writes are the worker's own: a failed push
+	 * counts the attempt against each intent, and a successful one deletes what it sent. This
+	 * used to be {@code REPLACE} whatever was there, and {@code REPLACE} cancels work in every
+	 * state. A run that could not reach the server wrote its failure, the watch replaced the run
+	 * that was waiting out its backoff with one that started at once, and that one failed and
+	 * wrote again: about five attempts a second for as long as the server was down, instead of
+	 * one after thirty seconds, then a minute, and so on. By the same route, a run that sent
+	 * something could be cancelled by its own deletes while a second one started beside it.
+	 * {@code SyncSchedulingDeviceTest} checks the first.
+	 * <ul>
+	 *     <li>Nothing asked for: a run is enqueued.</li>
+	 *     <li>A run waiting to start, whether for a connection or out its backoff: left alone.
+	 *     It drains whatever the queue holds when it does run, so a write made meanwhile is
+	 *     not lost, and a burst of writes still means one run.</li>
+	 *     <li>A run in progress: one more is queued behind it, unless one already is. That run
+	 *     may have read the queue before this write, and cancelling it would only start a
+	 *     second drain beside it.</li>
+	 * </ul>
+	 * A person asking is {@link #syncNow}, which does not wait out a backoff.
+	 *
+	 * @return done when the decision has been made and any work enqueued; callers need not
+	 * wait for it, and tests do
 	 */
-	public static void requestSync(@NonNull Context context) {
+	@NonNull
+	public static Future<?> requestSync(@NonNull Context context) {
+		return ask(context.getApplicationContext(), false);
+	}
 
-		WorkManager.getInstance(context).enqueueUniqueWork(ONE_OFF,
-				ExistingWorkPolicy.REPLACE,
-				new OneTimeWorkRequest.Builder(SyncWorker.class)
-						.setConstraints(connected())
-						// Exponential from thirty seconds: a campus network that has just come
-						// back is often busy, and hammering it is how a hundred phones make it
-						// worse.
-						.setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-						.build());
+	/**
+	 * Asks for a sync now, because somebody has: the sync button, signing in, a changed
+	 * password. As {@link #requestSync}, except that a run waiting out a backoff is replaced with
+	 * one that goes as soon as there is a connection. A person who has just asked would
+	 * otherwise wait up to the length of the backoff, which after a few hours with no server is
+	 * hours, for nothing to happen.
+	 */
+	@NonNull
+	public static Future<?> syncNow(@NonNull Context context) {
+		return ask(context.getApplicationContext(), true);
+	}
+
+	/**
+	 * One thread, so that looking at the run asked for and enqueueing the next one are not
+	 * interleaved with another caller doing the same; and not the caller's, because the outbox
+	 * watch and the screens are threads that should not wait on WorkManager's database.
+	 */
+	private static final ExecutorService DECIDING = Executors.newSingleThreadExecutor();
+
+	/** What {@link #ask} does about the run already asked for. */
+	enum Move {
+
+		/** Leave it: a run that has not started yet will drain whatever there is. */
+		NOTHING,
+
+		/** Enqueue one, replacing whatever is left. */
+		ENQUEUE,
+
+		/** Queue one behind the run in progress. */
+		AFTER_THE_RUNNING_ONE
+	}
+
+	@NonNull
+	private static Future<?> ask(@NonNull Context context, boolean byHand) {
+
+		return DECIDING.submit(() -> {
+
+			WorkManager manager = WorkManager.getInstance(context);
+
+			try {
+				switch (decide(manager.getWorkInfosForUniqueWork(ONE_OFF).get(), byHand)) {
+					case ENQUEUE -> manager.enqueueUniqueWork(ONE_OFF,
+							ExistingWorkPolicy.REPLACE, oneOff()).getResult().get();
+					// Behind the running run, or in its place if it has finished by now. If it
+					// fails for good -- signed out, refused -- this one fails with it, which is
+					// right: nothing it could do would go differently.
+					case AFTER_THE_RUNNING_ONE -> manager.enqueueUniqueWork(ONE_OFF,
+							ExistingWorkPolicy.APPEND_OR_REPLACE, oneOff()).getResult().get();
+					case NOTHING -> {
+					}
+				}
+
+			} catch (ExecutionException e) {
+				// WorkManager's own database failed. The hourly run is still scheduled, and the
+				// next write asks again.
+				Log.e(TAG, "could not ask for a sync", e);
+
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		});
+	}
+
+	/**
+	 * What to do, given the runs under the one-off name.
+	 *
+	 * @param byHand whether a person asked, which replaces a run waiting out its backoff
+	 */
+	@NonNull
+	static Move decide(@NonNull List<WorkInfo> infos, boolean byHand) {
+
+		boolean running = false;
+		boolean waiting = false;
+		boolean backingOff = false;
+
+		for (WorkInfo info : infos) {
+			switch (info.getState()) {
+				case RUNNING -> running = true;
+				// Blocked is the run already queued behind a running one, or behind one backing
+				// off: either way a run that has not started yet.
+				case BLOCKED -> waiting = true;
+				case ENQUEUED -> {
+					if (info.getRunAttemptCount() > 0) {
+						backingOff = true;
+					} else {
+						waiting = true;
+					}
+				}
+				default -> {
+				}
+			}
+		}
+
+		if (running) {
+			return waiting ? Move.NOTHING : Move.AFTER_THE_RUNNING_ONE;
+		}
+		if (backingOff) {
+			return byHand ? Move.ENQUEUE : Move.NOTHING;
+		}
+		return waiting ? Move.NOTHING : Move.ENQUEUE;
+	}
+
+	@NonNull
+	private static OneTimeWorkRequest oneOff() {
+
+		return new OneTimeWorkRequest.Builder(SyncWorker.class)
+				.setConstraints(connected())
+				// Exponential from thirty seconds: a campus network that has just come back is
+				// often busy, and hammering it is how a hundred phones make it worse.
+				.setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+				.build();
 	}
 
 	/**
