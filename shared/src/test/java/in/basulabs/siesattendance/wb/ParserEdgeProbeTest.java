@@ -261,13 +261,48 @@ public class ParserEdgeProbeTest {
 	}
 
 	/**
-	 * Two header cells that normalise to the same key: the later one silently wins.
-	 * Characterisation; the report suggests refusing the header instead.
+	 * Two header cells that normalise to the same name are refused.
+	 * <p>
+	 * The later one used to win, silently, so this header imported every student under
+	 * whatever the third column held -- and the file looks right to whoever wrote it.
 	 */
 	@Test
-	public void aDuplicatedHeaderIsResolvedToTheLastColumn() {
-		assertEquals(Integer.valueOf(2),
-				RosterCsv.parseHeader("roll_no,name,Roll No").get("rollno"));
+	public void aDuplicatedHeaderIsRefused() {
+
+		IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+				() -> RosterCsv.parseHeader("roll_no,name,Roll No"));
+
+		assertTrue(refused.getMessage(), refused.getMessage().contains("rollno"));
+		assertTrue("the message has to name both columns: " + refused.getMessage(),
+				refused.getMessage().contains("1 and 3"));
+	}
+
+	/** And it costs the whole file, not a row: nothing can be read against that header. */
+	@Test
+	public void aDuplicatedHeaderRejectsTheFile() throws IOException {
+
+		RosterCsv.Reading reading = RosterCsv.read(new StringReader(
+				"rollNo,name,year,stream,majorDept,name\n"
+						+ "X1,Rao,FY,BSc,PHYSICS,Shah\n"));
+
+		assertTrue(reading.rejected());
+		assertTrue(reading.rows().isEmpty());
+		assertEquals(1, reading.errors().size());
+	}
+
+	/**
+	 * A spreadsheet pads a header row with commas as readily as a data row, and an empty cell
+	 * is not a column name, so several of them are not a duplicate of each other.
+	 */
+	@Test
+	public void aHeaderPaddedWithCommasIsNotADuplicate() throws IOException {
+
+		RosterCsv.Reading reading = RosterCsv.read(new StringReader(
+				"rollNo,name,year,stream,majorDept,,\n"
+						+ "X1,Rao,FY,BSc,PHYSICS,,\n"));
+
+		assertFalse(reading.errors().toString(), reading.rejected());
+		assertEquals(1, reading.rows().size());
 	}
 
 	@Test
@@ -277,21 +312,103 @@ public class ParserEdgeProbeTest {
 
 	// ── APAAR IDs ────────────────────────────────────────────────────────
 
+	/**
+	 * Twelve digits, as issued. It used to be one to eighteen, so a mistyped {@code 12} was
+	 * accepted -- and this is the field whose whole job is to recognise the same person in a
+	 * later session under a new roll number.
+	 */
 	@Test
 	public void apaarIdBounds() {
 		assertNull(RosterCsv.parseApaarId("   "));
 		assertEquals(Long.valueOf(123456789012L), RosterCsv.parseApaarId(" 123456789012 "));
-		assertEquals(Long.valueOf(999_999_999_999_999_999L),
-				RosterCsv.parseApaarId("999999999999999999"));
+		assertEquals(Long.valueOf(999_999_999_999L), RosterCsv.parseApaarId("999999999999"));
 
+		assertThrows("the one that used to be accepted",
+				IllegalArgumentException.class, () -> RosterCsv.parseApaarId("12"));
+		assertThrows("eleven digits", IllegalArgumentException.class,
+				() -> RosterCsv.parseApaarId("12345678901"));
+		assertThrows("thirteen digits", IllegalArgumentException.class,
+				() -> RosterCsv.parseApaarId("1234567890123"));
 		assertThrows(IllegalArgumentException.class, () -> RosterCsv.parseApaarId("0"));
-		assertThrows(IllegalArgumentException.class, () -> RosterCsv.parseApaarId("000"));
-		assertThrows("nineteen digits overflows the 18-digit guard",
-				IllegalArgumentException.class,
-				() -> RosterCsv.parseApaarId("9999999999999999999"));
 		assertThrows(IllegalArgumentException.class, () -> RosterCsv.parseApaarId("-12"));
 		assertThrows(IllegalArgumentException.class, () -> RosterCsv.parseApaarId("1e5"));
 		assertThrows("fullwidth digits are not ASCII digits",
-				IllegalArgumentException.class, () -> RosterCsv.parseApaarId("１２３"));
+				IllegalArgumentException.class, () -> RosterCsv.parseApaarId("１２３４５６７８９０１２"));
+	}
+
+	/**
+	 * Twelve digits beginning with a zero is refused rather than stored as eleven.
+	 * <p>
+	 * The column is a number in both databases, so the zero cannot survive the write: the row
+	 * would be filed under eleven digits and the export would write eleven, which re-importing
+	 * would then refuse. A refusal somebody can read beats a number changing shape.
+	 */
+	@Test
+	public void anApaarIdCannotBeginWithAZero() {
+
+		IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+				() -> RosterCsv.parseApaarId("012345678901"));
+
+		assertTrue(refused.getMessage(), refused.getMessage().contains("begins with a zero"));
+	}
+
+	// ── Addresses and lengths ────────────────────────────────────────────
+
+	@Test
+	public void anAddressHasToLookLikeOne() {
+
+		assertNull(RosterCsv.parseEmail("   "));
+		assertEquals("aarav@sies.edu.in", RosterCsv.parseEmail(" aarav@sies.edu.in "));
+		assertEquals("r.rao+2026@sies.edu.in", RosterCsv.parseEmail("r.rao+2026@sies.edu.in"));
+
+		// What the column actually holds when somebody has filled it in wrongly.
+		assertThrows("a name", IllegalArgumentException.class,
+				() -> RosterCsv.parseEmail("Aarav Patil"));
+		assertThrows("a phone number", IllegalArgumentException.class,
+				() -> RosterCsv.parseEmail("9820012345"));
+		assertThrows("no domain", IllegalArgumentException.class,
+				() -> RosterCsv.parseEmail("aarav@"));
+		assertThrows("no dot in the domain", IllegalArgumentException.class,
+				() -> RosterCsv.parseEmail("aarav@sies"));
+		assertThrows("two of them in one cell", IllegalArgumentException.class,
+				() -> RosterCsv.parseEmail("a@sies.edu.in, b@sies.edu.in"));
+	}
+
+	/**
+	 * A cell of any size at all used to be stored, synced to every phone and shown in every
+	 * list. The refusal says how long it was and does not quote it back.
+	 */
+	@Test
+	public void aCellTooLongToStoreIsRefusedWithoutBeingQuoted() throws IOException {
+
+		String name = "A".repeat(RosterCsv.NAME_MAX + 1);
+
+		RosterCsv.Reading reading = RosterCsv.read(new StringReader(
+				"rollNo,name,year,stream,majorDept\n"
+						+ "X1," + name + ",FY,BSc,PHYSICS\n"
+						+ "X2,Shah,FY,BSc,PHYSICS\n"));
+
+		assertEquals("the other student still imports", 1, reading.rows().size());
+		assertEquals("X2", reading.rows().get(0).rollNo());
+		assertEquals(1, reading.errors().size());
+
+		String error = reading.errors().get(0);
+
+		assertTrue(error, error.contains("Line 2") && error.contains("name")
+				&& error.contains(String.valueOf(RosterCsv.NAME_MAX + 1)));
+		assertFalse("the cell itself must not be quoted back: " + error.length(),
+				error.contains(name));
+	}
+
+	/** The longest name the college actually has is 62 characters; this is not a tight rule. */
+	@Test
+	public void aLongRealNameIsNotRefused() throws IOException {
+
+		RosterCsv.Reading reading = RosterCsv.read(new StringReader(
+				"rollNo,name,year,stream,majorDept\n"
+						+ "X1,ACHARYA SRUJAN RAMESH SHOBHA,FY,BSc,PHYSICS\n"));
+
+		assertFalse(reading.errors().toString(), reading.hasErrors());
+		assertEquals("ACHARYA SRUJAN RAMESH SHOBHA", reading.rows().get(0).name());
 	}
 }

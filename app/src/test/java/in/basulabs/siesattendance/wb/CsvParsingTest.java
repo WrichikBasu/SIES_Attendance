@@ -2,10 +2,12 @@ package in.basulabs.siesattendance.wb;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
@@ -205,9 +207,15 @@ public class CsvParsingTest {
 	}
 
 	@Test
-	public void duplicateHeaderNamesKeepTheLastColumn() throws Exception {
-		// Not obviously right or wrong, but worth pinning: a HashMap put overwrites.
-		Map<String, Integer> columns = parseHeader("name,rollNo,name");
-		assertEquals(Integer.valueOf(2), columns.get("name"));
+	public void duplicateHeaderNamesAreRefused() throws Exception {
+		// The later one used to win, silently, which meant importing every student under
+		// whatever the third column held. Thrown from RosterCsv.parseHeader, so it arrives
+		// here wrapped by the reflection this test goes through.
+		InvocationTargetException refused = assertThrows(InvocationTargetException.class,
+				() -> parseHeader("name,rollNo,name"));
+
+		assertTrue(refused.getCause() instanceof IllegalArgumentException);
+		assertTrue(refused.getCause().getMessage(),
+				refused.getCause().getMessage().contains("name"));
 	}
 }

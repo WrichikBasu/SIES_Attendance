@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.Department;
@@ -63,6 +64,56 @@ public final class RosterCsv {
 	 */
 	public static final String[] REQUIRED_COLUMNS =
 			{"rollno", "name", "year", "stream", "majordept"};
+
+	/**
+	 * How long a cell stored as it was typed may be.
+	 * <p>
+	 * The columns are {@code text} in PostgreSQL and {@code TEXT} in SQLite, so until these
+	 * existed a cell of any size at all was stored, synced to every phone and shown in every
+	 * list: a three-megabyte name in one row of a roster is not a name, and nothing downstream
+	 * was ever going to be the thing that noticed. Generous rather than tight — the longest
+	 * name in the college's own roster is 62 characters — because the point is to refuse a
+	 * paste or a mangled file, not to have an opinion about anybody's name.
+	 * <p>
+	 * Checked here, in the parser both importers share, so a file is refused the same way on
+	 * the phone and at the server. A backup import or a hand-written row in the database is
+	 * not covered: these are not constraints, and the schema has none.
+	 */
+	public static final int NAME_MAX = 200;
+
+	/** As {@link #NAME_MAX}. */
+	public static final int PRONOUNS_MAX = 40;
+
+	/** As {@link #NAME_MAX}, at the longest address SMTP will carry (RFC 5321). */
+	public static final int EMAIL_MAX = 254;
+
+	/** As {@link #NAME_MAX}. A roll number is canonicalised first, so this is of the stored one. */
+	public static final int ROLL_NO_MAX = 32;
+
+	/**
+	 * The digits in an APAAR ID, which is a fixed-width number.
+	 * <p>
+	 * Twelve, as issued. It used to be "one to eighteen digits", which accepted {@code 12} —
+	 * and an APAAR ID's whole purpose here is to recognise the same person in a later session
+	 * under a new roll number, so one typed short is one that silently matches the wrong
+	 * student or nobody at all.
+	 */
+	public static final int APAAR_DIGITS = 12;
+
+	/** The smallest {@link #APAAR_DIGITS}-digit number. See {@link #parseApaarId}. */
+	private static final long APAAR_FLOOR = 100_000_000_000L;
+
+	/**
+	 * An address, by shape: something, an {@code @}, then a dotted domain.
+	 * <p>
+	 * Deliberately not RFC 5322, which would accept {@code a@b} and a quoted local part with a
+	 * space in it, and whose real grammar nobody should be writing out here. This refuses the
+	 * things a roster actually contains when the column is wrong — a name, a phone number, two
+	 * addresses pasted into one cell — and accepts every address the college has on file.
+	 * Nothing is ever sent to it; the address is how a promoted student is recognised.
+	 */
+	private static final Pattern EMAIL =
+			Pattern.compile("[^@\\s,;]+@[^@\\s,;.]+(\\.[^@\\s,;.]+)+");
 
 	/** What a row says, once every cell has been resolved and the combination checked. */
 	public record Row(int line, @NonNull String rollNo, @NonNull String name,
@@ -122,7 +173,16 @@ public final class RosterCsv {
 			return new Reading(List.of(), errors, true);
 		}
 
-		Map<String, Integer> columns = parseHeader(headerLine);
+		Map<String, Integer> columns;
+
+		try {
+			columns = parseHeader(headerLine);
+		} catch (IllegalArgumentException duplicated) {
+			// A header nobody can read the rows against, so no row is examined: the same
+			// treatment as a missing column, for the same reason.
+			errors.add(duplicated.getMessage());
+			return new Reading(List.of(), errors, true);
+		}
 
 		for (String required : REQUIRED_COLUMNS) {
 			if (!columns.containsKey(required)) {
@@ -166,17 +226,17 @@ public final class RosterCsv {
 			throw new IllegalArgumentException("the roll number \"" + rawRollNo
 					+ "\" has no letters or digits");
 		}
-		String name = required(cells, columns, "name", "name");
+		limited(rollNo, ROLL_NO_MAX, "roll number");
+
+		String name = limited(required(cells, columns, "name", "name"), NAME_MAX, "name");
 
 		String pronouns = optional(cells, columns, "pronouns");
 		if (pronouns == null || pronouns.isEmpty()) {
 			pronouns = "they/them";
 		}
+		limited(pronouns, PRONOUNS_MAX, "pronouns");
 
-		String email = optional(cells, columns, "email");
-		if (email != null && email.isEmpty()) {
-			email = null;
-		}
+		String email = parseEmail(optional(cells, columns, "email"));
 
 		Year year = parseEnum(Year.class, required(cells, columns, "year", "year"), "year");
 		Stream requested = parseEnum(Stream.class,
@@ -235,7 +295,17 @@ public final class RosterCsv {
 				oeDept, semester, division, apaarId, joinDate, leaveDate);
 	}
 
-	/** An APAAR ID: digits only, as a spreadsheet keeps it. Null for a blank cell. */
+	/**
+	 * An APAAR ID: {@link #APAAR_DIGITS} digits, as a spreadsheet keeps it. Null for a blank
+	 * cell.
+	 * <p>
+	 * One that begins with a zero is refused rather than stored. The column is a number in both
+	 * databases ({@code bigint}, V26), so the leading zero cannot survive being written: the
+	 * row would be filed under eleven digits, the export would write eleven, and re-importing
+	 * that export would then be refused by this very method. A refusal somebody can read is
+	 * better than a number quietly changing shape — and if such IDs are ever issued, it is the
+	 * column that has to change, not this.
+	 */
 	@Nullable
 	public static Long parseApaarId(@Nullable String raw) {
 
@@ -245,10 +315,41 @@ public final class RosterCsv {
 
 		String digits = raw.trim();
 
-		if (!digits.matches("[0-9]{1,18}") || Long.parseLong(digits) == 0) {
-			throw new IllegalArgumentException("APAAR ID \"" + raw.trim() + "\" is not a number");
+		if (!digits.matches("[0-9]{" + APAAR_DIGITS + "}")) {
+			throw new IllegalArgumentException("APAAR ID \"" + digits + "\" is not "
+					+ APAAR_DIGITS + " digits");
 		}
-		return Long.parseLong(digits);
+
+		long id = Long.parseLong(digits);
+
+		if (id < APAAR_FLOOR) {
+			throw new IllegalArgumentException("APAAR ID \"" + digits + "\" begins with a zero, "
+					+ "which the stored number cannot keep");
+		}
+		return id;
+	}
+
+	/**
+	 * An address, by shape, or null for a blank cell.
+	 *
+	 * @see #EMAIL for what is and is not checked
+	 */
+	@Nullable
+	public static String parseEmail(@Nullable String raw) {
+
+		if (raw == null || raw.isBlank()) {
+			return null;
+		}
+
+		String email = raw.trim();
+
+		limited(email, EMAIL_MAX, "email address");
+
+		if (!EMAIL.matcher(email).matches()) {
+			throw new IllegalArgumentException("the email address \"" + email
+					+ "\" is not an address");
+		}
+		return email;
 	}
 
 	/**
@@ -299,6 +400,16 @@ public final class RosterCsv {
 	 * Lowercasing is fixed to {@link Locale#ROOT}. These are internal keys compared against
 	 * ASCII literals, and the default locale would map "MINORDEPT" to "mınordept" on a Turkish
 	 * device, losing the column for that reason instead.
+	 * <p>
+	 * Two cells that normalise to the same name are refused, which is a whole-file problem:
+	 * the later one used to win, silently, so {@code rollNo,name,Roll No} imported every
+	 * student under whatever was in the third column. Which of two columns holds the value is
+	 * not something to guess at, and a file with two of anything was edited by somebody who
+	 * should see this. Blank cells are not names and are skipped, because a spreadsheet pads a
+	 * header row with commas as readily as it pads a data row.
+	 *
+	 * @throws IllegalArgumentException when one name appears twice; {@link #read} turns that
+	 *                                 into a rejected file
 	 */
 	@NonNull
 	public static Map<String, Integer> parseHeader(@NonNull String headerLine) {
@@ -309,7 +420,18 @@ public final class RosterCsv {
 		for (int i = 0; i < cells.size(); i++) {
 			String key = cells.get(i).trim().toLowerCase(Locale.ROOT)
 					.replace("_", "").replace(" ", "").replace("-", "");
-			map.put(key, i);
+
+			if (key.isEmpty()) {
+				continue;
+			}
+
+			Integer earlier = map.put(key, i);
+
+			if (earlier != null) {
+				throw new IllegalArgumentException("Two columns are both \"" + key
+						+ "\" (columns " + (earlier + 1) + " and " + (i + 1)
+						+ "). Leave one of them out.");
+			}
 		}
 		return map;
 	}
@@ -418,7 +540,7 @@ public final class RosterCsv {
 				+ "REQUIRED COLUMNS\n"
 				+ "• rollNo: the roll number in this session, such as 2024CS032. Only letters "
 				+ "and digits are kept, in capitals: 2024-cs-032 is read as 2024CS032.\n"
-				+ "• name\n"
+				+ "• name: up to " + NAME_MAX + " characters\n"
 				+ "• year: " + years + "\n"
 				+ "• stream: " + streams + ". BSc and MSc are read as the unaided course "
 				+ "when that is the only one the department runs.\n"
@@ -426,14 +548,14 @@ public final class RosterCsv {
 				+ "COMPUTER_SCIENCE\n\n"
 				+ "OPTIONAL COLUMNS (leave out, or leave the cell blank)\n"
 				+ "• pronouns: they/them when blank\n"
-				+ "• email\n"
+				+ "• email: an address, such as aarav@sies.edu.in\n"
 				+ "• minorDept: the minor department, which may be the major one\n"
 				+ "• oeDept: the open elective department, different from the major and the "
 				+ "minor\n"
 				+ "• semester: " + semesters + "\n"
 				+ "• division: A to D, only for the aided BSc and BA\n"
-				+ "• apaarId: digits only. It recognises the same student in a later session, "
-				+ "under a new roll number.\n"
+				+ "• apaarId: the " + APAAR_DIGITS + "-digit APAAR number. It recognises the "
+				+ "same student in a later session, under a new roll number.\n"
 				+ "• joinDate: if they joined after the session began. Attendance counts from "
 				+ "this day.\n"
 				+ "• leaveDate: if they have left. They come off the rolls and the exports.\n"
@@ -452,6 +574,25 @@ public final class RosterCsv {
 	}
 
 	// ── Cell helpers ─────────────────────────────────────────────────────
+
+	/**
+	 * A cell short enough to store, returned unchanged, or an error naming its length.
+	 * <p>
+	 * The value itself is not in the message. The whole point of this check is a cell with
+	 * three megabytes in it, and quoting that back would put it in a log, a dialog and a
+	 * progress report.
+	 *
+	 * @see #NAME_MAX
+	 */
+	@NonNull
+	private static String limited(@NonNull String value, int max, @NonNull String label) {
+
+		if (value.length() > max) {
+			throw new IllegalArgumentException("the " + label + " is " + value.length()
+					+ " characters long, and " + max + " is the most that is stored");
+		}
+		return value;
+	}
 
 	/** Removes the byte order mark a UTF-8 file may open with. */
 	@NonNull

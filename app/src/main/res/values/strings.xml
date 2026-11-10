@@ -212,7 +212,9 @@
     <string name="section_course_instructors">Taught by</string>
     <string name="label_no_linked_batches">No batch linked yet</string>
     <string name="hint_apaar_id">APAAR ID (optional)</string>
-    <string name="error_apaar_id">Digits only</string>
+    <string name="error_apaar_id">A %1$d-digit number</string>
+    <string name="error_email">Not an email address</string>
+    <string name="error_too_long">At most %1$d characters</string>
     <string name="section_enrolment">Enrolment</string>
     <string name="label_join_default">Joined at the start of the session</string>
     <string name="label_join_date">Joined %1$s</string>
