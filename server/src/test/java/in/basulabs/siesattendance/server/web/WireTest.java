@@ -24,6 +24,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -3072,6 +3073,102 @@ class WireTest {
 	// ── The shape of the thing ───────────────────────────────────────────
 
 	@Test
+	void aRefusalTheFrameworkMakesIsStillTheOneShape() throws Exception {
+
+		// A wrong method and a body in a type nothing reads are both refused before any
+		// handler is chosen, so ApiAdvice never sees them. They used to leave as Spring Boot's
+		// own error body -- timestamp, status, error, path -- which has no "code" in it, so a
+		// client that branches on the code found none exactly when something was wrong.
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply wrongMethod = raw("POST", Api.V1 + "/me", token);
+
+		assertEquals(405, wrongMethod.status(), wrongMethod::toString);
+		assertEquals("method_not_allowed", wrongMethod.body().get("code").stringValue(),
+				wrongMethod::toString);
+		assertFalse(wrongMethod.raw().contains("timestamp"),
+				"and nothing of the framework's shape left in it: " + wrongMethod);
+
+		// The header that says what it does answer is the framework's, set with the status and
+		// before the body is asked for. Replacing the body must not have cost it.
+		assertTrue(wrongMethod.header("Allow").contains("GET"),
+				"a 405 has to say what the address does take: " + wrongMethod.headers());
+
+		Reply wrongType = postCsv("/auth/login", "not json", null);
+
+		assertEquals(415, wrongType.status(), wrongType::toString);
+		assertEquals("unsupported_media_type", wrongType.body().get("code").stringValue(),
+				wrongType::toString);
+		assertFalse(wrongType.header("Accept").isEmpty(),
+				"and still says what it would have taken: " + wrongType.headers());
+	}
+
+	@Test
+	void anAddressWithNothingAtItAnswersAClientInJsonAndAPersonInAPage() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply asked = raw("GET", Api.V1 + "/nothing/here", token, "application/json");
+
+		assertEquals(404, asked.status(), asked::toString);
+		assertEquals("not_found", asked.body().get("code").stringValue(), asked::toString);
+		assertFalse(asked.raw().contains("/nothing/here"),
+				"the path came with the request; an error body that quotes it back is the "
+						+ "shape that ends up reflecting a URL into a page: " + asked);
+
+		// The page for a browser is error/404.html, and it is found by its name and the status
+		// rather than by the attributes above, which is why replacing those leaves it standing.
+		Reply browsed = raw("GET", "/nothing/here", null, "text/html");
+
+		assertEquals(404, browsed.status(), browsed::toString);
+		assertTrue(browsed.raw().contains("<!doctype html"),
+				"a person typing an address gets the page, not JSON: " + browsed);
+	}
+
+	@Test
+	void everyAnswerSaysWhatMayLoadAndNotToSniffIt() throws Exception {
+
+		// Set on the way in, by a filter ahead of every other, so that a refusal written by a
+		// filter and a page served from static/ carry them as much as a controller's answer.
+		for (Reply reply : List.of(get("/me", tokenFor("admin@sies.edu.in", "STAFF"), null),
+				get("/sync/pull", null, null),
+				raw("GET", "/console.html", null, "text/html"))) {
+
+			assertEquals("nosniff", reply.header("X-Content-Type-Options"), reply::toString);
+			assertEquals("no-referrer", reply.header("Referrer-Policy"), reply::toString);
+
+			String policy = reply.header("Content-Security-Policy");
+
+			assertTrue(policy.contains("default-src 'none'"), policy);
+			assertTrue(policy.contains("connect-src 'self'"),
+					"the console talks to this origin and nowhere else: " + policy);
+			assertTrue(policy.contains("frame-ancestors 'none'"), policy);
+		}
+	}
+
+	@Test
+	void anApiAnswerIsNotStoredAndTheConsoleIsOnlyRevalidated() throws Exception {
+
+		// Two different policies on purpose. Under /api/v1 every answer is somebody's
+		// attendance, roll or account, answered for one session's token, so no copy of it is
+		// kept anywhere. The console is a page that changes while somebody is using it, so the
+		// browser may keep it and has to ask whether it is still current -- which is what
+		// application.yml sets, and what this would catch no-store trampling.
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		assertEquals("no-store", get("/me", token, null).header("Cache-Control"));
+		assertEquals("no-store", get("/data/students", token, null).header("Cache-Control"));
+		assertEquals("no-store", get("/sync/pull", null, null).header("Cache-Control"),
+				"a refusal says as much about who asked as an answer does");
+
+		String page = raw("GET", "/console.html", null, "text/html").header("Cache-Control");
+
+		assertTrue(page.contains("no-cache"), page);
+		assertFalse(page.contains("no-store"),
+				"the page may be kept, it just has to be revalidated: " + page);
+	}
+
+	@Test
 	void theHealthProbeNeedsNoToken() throws Exception {
 
 		HttpResponse<String> response = HTTP.send(
@@ -3184,7 +3281,12 @@ class WireTest {
 	// ── HTTP ─────────────────────────────────────────────────────────────
 
 	/** A response, with its body already parsed, because every endpoint here answers in JSON. */
-	private record Reply(int status, JsonNode body, String raw) {
+	private record Reply(int status, JsonNode body, String raw, HttpHeaders headers) {
+
+		/** One header's value, or "" — so an assertion on a header nobody set reads as absent. */
+		String header(String name) {
+			return headers.firstValue(name).orElse("");
+		}
 
 		@Override
 		public String toString() {
@@ -3279,10 +3381,27 @@ class WireTest {
 	 * client sends the raw path, so {@code %61} arrives as {@code %61}.
 	 */
 	private Reply raw(String method, String rawPath, String token) throws Exception {
+		return raw(method, rawPath, token, null);
+	}
+
+	/**
+	 * The same, saying what the caller will accept.
+	 * <p>
+	 * Needed by the tests about an address with nothing at it, which is the one refusal that
+	 * answers two ways: a page for a browser, the API's own error body for anything else. With
+	 * no {@code Accept} at all a client is taken to accept anything, and which of the two it
+	 * then gets is Spring's business and not something to assert.
+	 */
+	private Reply raw(String method, String rawPath, String token, String accept)
+			throws Exception {
 
 		HttpRequest.Builder request = HttpRequest
 				.newBuilder(URI.create("http://localhost:" + port + rawPath))
 				.method(method, HttpRequest.BodyPublishers.noBody());
+
+		if (accept != null) {
+			request.header("Accept", accept);
+		}
 
 		return send(request, token, null);
 	}
@@ -3324,7 +3443,7 @@ class WireTest {
 			body = JSON.nullNode();
 		}
 
-		return new Reply(response.statusCode(), body, raw);
+		return new Reply(response.statusCode(), body, raw, response.headers());
 	}
 
 	private static String json(Object... pairs) {

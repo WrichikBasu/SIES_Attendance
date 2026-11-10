@@ -73,8 +73,9 @@ public class WebBeans {
 	 * <p>
 	 * A {@code FilterRegistrationBean} rather than letting Boot register the filter bean for
 	 * every path: the health probe has to answer before anybody has signed in, and a filter that
-	 * runs on it is a filter one careless edit away from refusing it. First in the chain,
-	 * because nothing that follows should run for a request whose token is not good.
+	 * runs on it is a filter one careless edit away from refusing it. First of the filters that
+	 * decide anything, because nothing that follows should run for a request whose token is not
+	 * good; the one ahead of it only writes headers onto the response.
 	 */
 	@Bean
 	@NonNull
@@ -85,7 +86,38 @@ public class WebBeans {
 				new FilterRegistrationBean<>(new BearerTokenFilter(sessions));
 
 		registration.addUrlPatterns("/api/*");
+		registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 1);
+		return registration;
+	}
+
+	/**
+	 * The headers on every response, registered for every path.
+	 * <p>
+	 * Ahead of the token filter so that its refusals carry them too, and on {@code /*} rather
+	 * than {@code /api/*} because the console is a page served from {@code static/} and the
+	 * content security policy is for a page.
+	 */
+	@Bean
+	@NonNull
+	public FilterRegistrationBean<ResponseHeadersFilter> responseHeadersFilter() {
+
+		FilterRegistrationBean<ResponseHeadersFilter> registration =
+				new FilterRegistrationBean<>(new ResponseHeadersFilter());
+
+		registration.addUrlPatterns("/*");
 		registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
 		return registration;
+	}
+
+	/**
+	 * What a refusal the framework made looks like.
+	 * <p>
+	 * Registering it replaces Spring Boot's own error attributes, which is the point: see
+	 * {@link ApiErrorAttributes}.
+	 */
+	@Bean
+	@NonNull
+	public ApiErrorAttributes apiErrorAttributes() {
+		return new ApiErrorAttributes();
 	}
 }
