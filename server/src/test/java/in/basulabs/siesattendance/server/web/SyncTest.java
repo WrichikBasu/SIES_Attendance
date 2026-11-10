@@ -482,26 +482,79 @@ class SyncTest {
 	}
 
 	@Test
-	void aProfessorMayNotPushTheRoll() throws Exception {
+	void aProfessorAddsAStudentToTheirDepartmentFromAPhone() throws Exception {
 
-		// V11 accepts students from a device. Who may write one is the policies' decision, and
-		// their answer is the office: a roll number is what every other session's records are
-		// matched by, so a professor rewriting their own class's roll would be rewriting
-		// history nobody asked them to.
+		// V27 lets a professor add their own department's students, and the sync path writes
+		// every row as INSERT ... ON CONFLICT DO UPDATE, which holds the new row to the SELECT
+		// policies as well. A student being added has no enrolment yet -- it is the next intent
+		// -- so until V60 the professor could not read the row they were writing, the student
+		// was refused, and the enrolment then failed its foreign key. A head never met it, and a
+		// plain INSERT in the policy test never showed it; this is the shape a phone sends.
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+		long student = phone.key(600);
+
+		Reply pushed = push(phone, List.of(
+				studentIntent(student, "NEW PERSON"),
+				intent("student_year", List.of(student, (long) SESSION), "UPSERT", Map.of(
+						"studentID", student, "academicYear", SESSION,
+						"rollNo", "CS-FY-600", "year", "FY", "stream", "BSc_unaided",
+						"majorDept", "COMPUTER_SCIENCE", "semester", 1))));
+
+		assertEquals(2, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertEquals(1, count("SELECT count(*) FROM student_year WHERE student_id = "
+				+ student + " AND major_dept = 'COMPUTER_SCIENCE'"));
+
+		// And the same push again, as a phone does when the response was lost: the conflict
+		// path, which needs the row readable through its enrolment.
+		Reply replayed = push(phone, List.of(studentIntent(student, "NEW PERSON")));
+
+		assertEquals(1, replayed.body().get("accepted").intValue(), replayed::toString);
+	}
+
+	@Test
+	void aProfessorMayNotCorrectAnotherDepartmentsStudent() throws Exception {
+
+		// Added by Chemistry from a phone, so the key is one a device may name; a fixture key
+		// predates the id scheme and would be refused for that before any policy is asked.
+		Phone chemistry = signInWithAPhone("b.chem@sies.edu.in");
+		long student = chemistry.key(610);
+
+		Reply added = push(chemistry, List.of(
+				studentIntent(student, "S SHAH"),
+				intent("student_year", List.of(student, (long) SESSION), "UPSERT", Map.of(
+						"studentID", student, "academicYear", SESSION,
+						"rollNo", "CH-FY-610", "year", "FY", "stream", "BSc",
+						"majorDept", "CHEMISTRY", "semester", 1))));
+
+		assertEquals(2, added.body().get("accepted").intValue(), added::toString);
+
+		// And on Computer Science's roll the next year, so the CS professor reads them -- a
+		// student they cannot read is refused earlier, as no row of theirs to amend. Read by
+		// both departments and corrected by neither (V27): this is the refusal that reaches the
+		// policies, and the one the sentence is for.
+		postgres.asSuperuser("INSERT INTO academic_years (academic_year, start_date, end_date) "
+				+ "VALUES (2026, '2026-06-01', '2027-05-31') ON CONFLICT DO NOTHING");
+		postgres.asSuperuser("INSERT INTO student_year (student_id, academic_year, roll_no, "
+				+ "year, stream, major_dept, semester) VALUES (" + student + ", 2026, "
+				+ "'CS-SY-610', 'SY', 'BSc_unaided', 'COMPUTER_SCIENCE', 3)");
+
 		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
 
-		Reply pushed = push(phone, List.of(studentIntent(phone.key(600), "NEW PERSON")));
+		Reply pushed = push(phone, List.of(studentIntent(student, "RENAMED BY CS")));
 
 		assertEquals(0, pushed.body().get("accepted").intValue(), pushed::toString);
-		assertTrue(pushed.body().get("rejected").get(0).get("reason").stringValue()
-						.contains("loaded by the office"),
-				"the sentence a professor meets has to say what to do about it: "
-						+ pushed.body().get("rejected"));
+
+		String reason = pushed.body().get("rejected").get(0).get("reason").stringValue();
+
+		assertTrue(reason.contains("their own department's professors"),
+				"the sentence a professor meets has to say whose student it is, not that the "
+						+ "roll is the office's, which since V27 it is not: " + reason);
 		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
 				"a policy refusal is settled: a device that kept retrying it would never "
 						+ "empty its queue, and the row behind it is real attendance");
 
-		assertEquals(2, count("SELECT count(*) FROM students"));
+		assertEquals(1, count("SELECT count(*) FROM students WHERE student_id = "
+				+ student + " AND name = 'S SHAH'"));
 	}
 
 	@Test

@@ -1341,6 +1341,53 @@ class RowLevelSecurityTest {
 	}
 
 	@Test
+	void aProfessorAddsAStudentTheWayAPhoneWritesIt() throws Exception {
+
+		// The test above adds a student with a plain INSERT, and no phone sends one. The sync
+		// path upserts, and INSERT ... ON CONFLICT DO UPDATE holds the new row to the SELECT
+		// policies too. A student being added has no enrolment yet, so before V60 a professor
+		// could not read the row they were inserting and the upsert was refused (42501).
+		String upsert = "INSERT INTO students (student_id, name, pronouns) VALUES (%d, '%s', "
+				+ "'they/them') ON CONFLICT (student_id) DO UPDATE SET name = EXCLUDED.name";
+		String enrol = "INSERT INTO student_year (student_id, academic_year, roll_no, year, "
+				+ "stream, major_dept, semester) VALUES ";
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			execute(as, upsert.formatted(2030, "UPSERTED CS"));
+			execute(as, enrol + "(2030, 2025, 'CS-FY-030', 'FY', 'BSc_unaided', "
+					+ "'COMPUTER_SCIENCE', 1)");
+			execute(as, upsert.formatted(2030, "UPSERTED CS AGAIN"));
+			as.commit();
+		}
+
+		try (Connection superuser = postgres.connection()) {
+			assertEquals(1, count(superuser,
+					"SELECT count(*) FROM students WHERE name = 'UPSERTED CS AGAIN'"),
+					"added, enrolled, and replayed over its own row");
+		}
+
+		// What V60 widens is a student with no enrolment at all, and only that. A student of
+		// Chemistry alone is still not a Computer Science professor's to read, though their
+		// enrolment is one that professor cannot see either -- the helper reads every
+		// department's, which is what keeps them from looking unenrolled.
+		postgres.asSuperuser("""
+				INSERT INTO students (student_id, name, pronouns) VALUES
+				    (2031, 'CHEM ONLY', 'they/them');
+				INSERT INTO student_year
+				    (student_id, academic_year, roll_no, year, stream, major_dept, semester)
+				    VALUES (2031, 2025, 'CH-FY-031', 'FY', 'BSc', 'CHEMISTRY', 1);
+				""");
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals(0, count(as, "SELECT count(*) FROM students WHERE student_id = 2031"),
+					"another department's student stays out of sight");
+			assertThrows(SQLException.class,
+					() -> execute(as, upsert.formatted(2031, "TAKEN OVER")),
+					"and an upsert onto them is refused, not quietly applied");
+		}
+	}
+
+	@Test
 	void aProfessorSeesTheirDepartmentsMinorsAndOpenElectivesOnNoCourse() throws Exception {
 
 		// Computer Science majors, one taking Chemistry as a minor, one as an open elective,

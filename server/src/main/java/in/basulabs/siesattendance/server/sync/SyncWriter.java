@@ -1010,6 +1010,16 @@ public final class SyncWriter {
 
 		if (INSUFFICIENT_PRIVILEGE.equals(e.getSQLState())) {
 
+			// Since V27 a professor adds and corrects their own department's students, so the
+			// refusal they meet is for somebody else's: a student of another department, or one
+			// on two departments' rolls, which neither corrects.
+			if (table.equals("students") || table.equals("student_year")) {
+				return "a student is added and corrected by their own department's professors "
+						+ "and head, or by the office; one also on another department's roll is "
+						+ "the office's to correct. This roster stays on this device. "
+						+ "Attendance still syncs.";
+			}
+
 			if (ROSTER_TABLES.contains(table)) {
 				return "the roll is loaded by the office, so this roster stays on this device. "
 						+ "Attendance still syncs.";

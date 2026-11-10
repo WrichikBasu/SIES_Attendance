@@ -553,6 +553,11 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
   yourself a read: a class representative could mark a student picked out of the key space and
   be handed their name, email and APAAR ID. The check asks `students` under the account's own
   policies, so it is the same list of rules and not a second copy of it.
+- **A professor reads a student who has no enrolment yet** (V60). Sync writes every row as
+  `INSERT … ON CONFLICT DO UPDATE`, and PostgreSQL holds that row to the `SELECT` policies too.
+  Without this, a student a professor added from a phone, with the enrolment still to come,
+  was refused, and the enrolment then failed its foreign key. The only students it adds to what
+  a professor already read are those with no enrolment at all.
 - **A HOD grant names a department and, optionally, a session.** With no session it lasts until
   revoked.
 - **Nothing is deleted to make room.** Every foreign key is `RESTRICT`. Roles and appointments
