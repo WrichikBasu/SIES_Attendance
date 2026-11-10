@@ -32,9 +32,11 @@ and synced when there is a connection.
   - batches: named groups of students, linked to the courses they sit. Each batch belongs to a
     department and is linked only to that department's courses. Its students may come from any
     department
-- **Rolls.** A course with batches linked for the session takes its roll from those batches.
-  Otherwise the roll comes from the course type: major courses take the offering department's
-  majors, open electives take students whose OE department it is, and so on.
+- **Rolls.** A course's roll is the members of the batches linked to it for the session, and
+  nothing else: a course with no batch linked has nobody on its roll, and no register to mark.
+  Attendance is taken against a batch, so a second opinion of who sits a course — worked out
+  from the course type and the students' departments — described a roll nobody could mark; it
+  was removed. Link a batch to a course to give it a roll.
 - **Statistics** grouped and filtered in several ways, plus per-student breakdowns with the dates
   of every lecture.
 - **Exports:**
@@ -119,6 +121,10 @@ apaarId,joinDate,leaveDate
   is refused.
 - `pronouns`, `email`, `minorDept`, `oeDept`, `semester`, `division`, `apaarId`, `joinDate` and
   `leaveDate` may be blank or left out.
+- Two columns with the same name — `Roll No` beside `rollNo` — are refused, and the file with
+  them: which of the two holds the value is not something to guess at.
+- `apaarId` is the 12-digit APAAR number, `email` has to look like an address, and a name is
+  stored up to 200 characters. These are refused by the file and by the app's own form alike.
 - Dates can be written as `2026-06-15`, `15/06/2026` or `15-06-2026`.
 - Departments, streams and years accept either the stored name or the display label, so
   `Computer Science` and `COMPUTER_SCIENCE` both work.
