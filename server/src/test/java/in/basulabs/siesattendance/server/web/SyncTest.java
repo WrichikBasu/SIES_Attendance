@@ -1188,6 +1188,53 @@ class SyncTest {
 	}
 
 	@Test
+	void aRollNumberArrivesAsTypedAndIsHandedBackCanonical() throws Exception {
+
+		// The one field a phone does not get back the way it sent it. V57 canonicalises every
+		// roll number written to student_year, so "cs-fy-642" is stored -- and fed to every
+		// other device -- as CSFY642. The app's own DAO canonicalises before it stores, so this
+		// is the shape a build older than V57 pushes.
+		//
+		// It is here because the instrumented tests write exactly this shape, and theirs are
+		// the only assertions on the spelling that crosses the wire. They stopped matching when
+		// V57 landed and nothing noticed for two commits: they need a phone, so a plain
+		// ./gradlew test never ran them. This one runs without one.
+		Phone phone = signInWithAPhone("office@sies.edu.in");
+		long studentID = phone.key(640);
+		String watermark = get(phone, "/sync/pull").body().get("watermark").stringValue();
+
+		Map<String, Object> enrolment = new LinkedHashMap<>();
+		enrolment.put("studentID", studentID);
+		enrolment.put("academicYear", (long) SESSION);
+		enrolment.put("rollNo", "cs-fy-642");
+		enrolment.put("year", "FY");
+		enrolment.put("stream", "BSc_unaided");
+		enrolment.put("majorDept", "COMPUTER_SCIENCE");
+		enrolment.put("minorDept", null);
+		enrolment.put("oeDept", null);
+		enrolment.put("semester", 1L);
+		enrolment.put("division", null);
+
+		Reply pushed = push(phone, List.of(studentIntent(studentID, "C CANON"),
+				intent("student_year", List.of(studentID, (long) SESSION), "UPSERT",
+						enrolment)));
+
+		assertEquals(2, pushed.body().get("accepted").intValue(),
+				"a roll number as typed is not a refusal, it is canonicalised: " + pushed);
+		assertEquals(1, count("SELECT count(*) FROM student_year WHERE student_id = "
+						+ studentID + " AND roll_no = 'CSFY642'"),
+				"the trigger, not the caller, decides the spelling");
+
+		List<JsonNode> enrolments = changesFor(
+				get(phone, "/sync/pull?since=" + urlEncode(watermark)).body(), "student_year");
+
+		assertEquals(1, enrolments.size(), enrolments::toString);
+		assertEquals("CSFY642", enrolments.get(0).get("row").get("rollNo").stringValue(),
+				"the feed hands back what is stored, which is how the other phones come to "
+						+ "hold the canonical spelling: " + enrolments);
+	}
+
+	@Test
 	void aMarkWhoseLectureHasNotArrivedIsKeptRatherThanDropped() throws Exception {
 
 		Phone phone = signInWithAPhone("a.cs@sies.edu.in");

@@ -28,6 +28,7 @@ import in.basulabs.siesattendance.backend.MainDatabase;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.sync.SyncSignIn;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 import in.basulabs.siesattendance.device.support.ServerSync;
 import in.basulabs.siesattendance.device.support.ServerSync.Totals;
 import in.basulabs.siesattendance.device.support.TwoPhones;
@@ -63,7 +64,8 @@ public class HeadOfDepartmentSyncTest extends TwoPhones {
 	public void theHeadPutsAStudentOnTheirRollAndItReachesTheirOtherPhone()
 			throws IOException {
 
-		long student = enrol(phoneA, "HEAD ADDS " + tag, "HA-" + tag, Department.PHYSICS);
+		String roll = "HA-" + tag;
+		long student = enrol(phoneA, "HEAD ADDS " + tag, roll, Department.PHYSICS);
 
 		Totals pushed = pushAll(phoneA);
 
@@ -72,7 +74,9 @@ public class HeadOfDepartmentSyncTest extends TwoPhones {
 
 		pullAll(phoneB);
 		assertNotNull(phoneB.daoStudent().getStudentSync(student));
-		assertEquals("HA-" + tag,
+		// Not the spelling that was pushed: the server canonicalises every roll number written
+		// to student_year (V57), so what the other phone pulls is the stored one. See enrol().
+		assertEquals(CanonicalCode.of(roll),
 				phoneB.daoStudent().getEnrolmentSync(student, SESSION).rollNo);
 	}
 
@@ -129,6 +133,15 @@ public class HeadOfDepartmentSyncTest extends TwoPhones {
 		assertEquals(pushed.toString(), 1, pushed.refused());
 	}
 
+	/**
+	 * A student and their enrolment, written straight to the tables.
+	 * <p>
+	 * Not through {@code DaoStudent}'s upsert, which canonicalises the roll number before it
+	 * stores it, so the roll goes out over the wire as it was typed — the shape a phone on a
+	 * build older than V57 pushes. The server canonicalises it on arrival and the other phone
+	 * pulls that spelling, which is why the assertion above expects
+	 * {@link CanonicalCode#of(String)} of what was written here and not the string itself.
+	 */
 	private static long enrol(@NonNull MainDatabase db, @NonNull String name,
 	                          @NonNull String roll, @NonNull Department major) {
 

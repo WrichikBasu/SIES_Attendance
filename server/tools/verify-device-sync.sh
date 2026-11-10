@@ -437,8 +437,12 @@ expect "the student they added is on Physics' roll" 1 \
      WHERE s.name LIKE 'HEAD ADDS %' AND y.major_dept = 'PHYSICS'" || STATUS=1
 expect "the student they removed is gone" 0 \
     "SELECT count(*) FROM students WHERE name LIKE 'HEAD REMOVES %'" || STATUS=1
+# By the student's name, not their roll number: the test writes "HC-<tag>" and V57
+# canonicalises it to "HC<tag>", so the hyphenated pattern this used to match on could never
+# find anything and the check passed whatever the head managed to write.
 expect "nobody put on Chemistry's roll" 0 \
-    "SELECT count(*) FROM student_year WHERE roll_no LIKE 'HC-%'" || STATUS=1
+    "SELECT count(*) FROM student_year y JOIN students s USING (student_id)
+     WHERE s.name LIKE 'HEAD CHEM %'" || STATUS=1
 expect "Chemistry's student still there" 1 \
     "SELECT count(*) FROM students WHERE student_id = ${K_2002}" || STATUS=1
 

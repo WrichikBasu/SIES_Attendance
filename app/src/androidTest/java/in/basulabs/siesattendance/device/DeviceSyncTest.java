@@ -46,6 +46,7 @@ import in.basulabs.siesattendance.backend.StructuredId;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.sync.SyncClient;
 import in.basulabs.siesattendance.backend.sync.SyncSignIn;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 import in.basulabs.siesattendance.device.support.ServerSync;
 import in.basulabs.siesattendance.device.support.ServerSync.Totals;
 import in.basulabs.siesattendance.device.support.StagingFiles;
@@ -150,7 +151,10 @@ public class DeviceSyncTest {
 		assertEquals(2, phoneB.daoAttendance().getMarkedIdsSync(seed.lecture).size());
 
 		assertEquals("ALICE " + tag, phoneB.daoStudent().getStudentSync(seed.alice).name);
-		assertEquals("A-" + tag, phoneB.daoStudent()
+		// The one field that does not arrive as it was sent: the server canonicalises every
+		// roll number written to student_year (V57), and this fixture writes one as typed.
+		// See enrol().
+		assertEquals(CanonicalCode.of("A-" + tag), phoneB.daoStudent()
 				.getEnrolmentSync(seed.alice, SESSION).rollNo);
 		assertEquals(2, phoneB.daoBatch().countStudentsSync(seed.batch));
 		assertEquals(List.of(seed.course), phoneB.daoBatch().getLinkedCourseIdsSync(seed.batch));
@@ -295,6 +299,17 @@ public class DeviceSyncTest {
 		return new Seed(professor, course, alice, bob, batch, lecture, start);
 	}
 
+	/**
+	 * A student and their enrolment, written straight to the tables.
+	 * <p>
+	 * Not through {@code DaoStudent}'s upsert, which canonicalises the roll number before it
+	 * stores it, so the roll goes out over the wire as it was typed — the shape a phone on a
+	 * build older than V57 pushes, and the one path that proves the server fixes the spelling
+	 * for every device rather than only for the one that typed it. The assertion above
+	 * therefore expects {@link CanonicalCode#of(String)} of what was written here. The course
+	 * code in {@link #seed(MainDatabase)} is canonicalised the same way, by the trigger on
+	 * {@code courses}.
+	 */
 	private static long enrol(@NonNull MainDatabase db, String name, String roll) {
 
 		long id = db.daoStudent().insertStudent(new EntityStudent(name, "they/them", null));
