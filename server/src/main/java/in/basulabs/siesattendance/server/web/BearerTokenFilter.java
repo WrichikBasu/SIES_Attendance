@@ -34,6 +34,26 @@ import jakarta.servlet.http.HttpServletResponse;
  * {@code SecurityContext} — is the thing to avoid here, because an actor that lives in a thread
  * local is an actor that can be read by code that never asked for it.
  *
+ * <h3>Deny by default</h3>
+ * {@link WebBeans} maps this filter to {@code /api/*} and to nothing else, so every request that
+ * arrives here is an API call and needs a token. Signing in is the one exception, and it is
+ * named by an exact path rather than found by a prefix test.
+ * <p>
+ * It used to be the other way round: the filter asked whether the path began with {@link Api#V1}
+ * and let everything else through. The path it asked about came from {@code getRequestURI()},
+ * which is the URI as it was written on the wire, while the container matches a filter — and
+ * Spring matches a handler — on the decoded one. So {@code /%61pi/v1/import/formats} ran this
+ * filter, failed the prefix test, was let through as though it were not an API call at all, and
+ * then reached the controller that the decoded path names. Nothing but {@link RequestActor#of}
+ * standing at the top of every controller kept that from being a way in, and it only holds for
+ * as long as every controller remembers to call it.
+ * <p>
+ * Refusing by default makes the spelling of the path stop mattering: one this filter does not
+ * recognise is one that needs a token. {@link #OPEN} and {@link #ROTATION_ONLY} are therefore
+ * compared against the path as written, deliberately — an encoded or decorated spelling of the
+ * login path is not the login path, and what that costs is a 401 on a request no client makes,
+ * rather than a hole.
+ *
  * <h3>Everything is a 401 with the same body</h3>
  * No such token, expired, revoked, account disabled, device mismatch: one status, one code, one
  * message. A 401 that says which it was answers questions for whoever is holding a token they
@@ -67,11 +87,11 @@ public final class BearerTokenFilter extends OncePerRequestFilter {
 	                                @NonNull FilterChain chain)
 			throws ServletException, IOException {
 
-		String path = request.getRequestURI();
+		String path = pathWithinApplication(request);
 
-		// Not an API call: the health probe, and whatever the actuator is configured to expose.
-		// Those are protected by what is exposed rather than by who is asking.
-		if (!path.startsWith(Api.V1) || OPEN.contains(path)) {
+		// The only way past without a token. Everything else that reaches this filter is an
+		// API call, whatever it is spelled as; see the class notes.
+		if (OPEN.contains(path)) {
 			chain.doFilter(request, response);
 			return;
 		}
@@ -124,6 +144,26 @@ public final class BearerTokenFilter extends OncePerRequestFilter {
 				.attachTo(request);
 
 		chain.doFilter(request, response);
+	}
+
+	/**
+	 * The request's path as it was written, with the context path taken off the front.
+	 * <p>
+	 * Nothing else is done to it. It is only ever compared with {@code equals} against the two
+	 * paths named above, and every spelling that does not match one of them exactly ends up
+	 * needing a token, which is the safe side to be wrong on. The context path is removed
+	 * because it is the deployment's, not the API's, and this service is one
+	 * {@code server.servlet.context-path} away from being served under one.
+	 */
+	@NonNull
+	private static String pathWithinApplication(@NonNull HttpServletRequest request) {
+
+		String path = request.getRequestURI();
+		String context = request.getContextPath();
+
+		return context.isEmpty() || !path.startsWith(context)
+				? path
+				: path.substring(context.length());
 	}
 
 	/** The token out of {@code Authorization: Bearer ...}, or null. */

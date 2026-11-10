@@ -3003,6 +3003,72 @@ class WireTest {
 		assertEquals("unauthenticated", refused.body().get("code").stringValue());
 	}
 
+	@Test
+	void aPathSpelledToLookLikeSomethingElseIsStillAnApiCall() throws Exception {
+
+		// The filter used to decide what was an API call by reading getRequestURI() -- the URI
+		// as written -- and letting anything that did not begin with /api/v1 through. The
+		// container matches a filter, and Spring matches a handler, on the decoded path, so
+		// one %61 was enough to walk past the token check and still reach the controller.
+		Reply refused = raw("GET", "/%61pi/v1/import/formats", null);
+
+		assertEquals(401, refused.status(), refused::toString);
+		assertEquals("unauthenticated", refused.body().get("code").stringValue());
+
+		// Whose 401 it is, asserted on the words, because the two are what tell them apart and
+		// only one of them is a gate. RequestActor.of answers "carried no verified session"
+		// from inside a controller the request should never have reached; this has to be the
+		// filter turning it away at the door.
+		assertTrue(refused.body().get("message").stringValue().contains("needs a bearer token"),
+				"the filter must be the one refusing this, not a controller: " + refused);
+
+		// And the same path with a token answers, which is what makes the line above mean
+		// something: the encoded spelling really does reach the controller, so the 401 is the
+		// filter refusing it rather than the route not existing.
+		Reply allowed = raw("GET", "/%61pi/v1/import/formats",
+				tokenFor("admin@sies.edu.in", "STAFF"));
+
+		assertEquals(200, allowed.status(), allowed::toString);
+	}
+
+	@Test
+	void anEncodedLoginPathIsNotTheLoginPath() throws Exception {
+
+		// The open path is matched exactly, so a spelling of it that is not it needs a token
+		// like everything else. What that costs is a 401 on a request no client makes.
+		Reply refused = raw("POST", "/%61pi/v1/auth/login", null);
+
+		assertEquals(401, refused.status(), refused::toString);
+		assertTrue(refused.body().get("message").stringValue().contains("needs a bearer token"),
+				refused::toString);
+	}
+
+	@Test
+	void anythingUnderTheApiNeedsATokenEvenWhenItIsNotAnEndpoint() throws Exception {
+
+		// Deny by default, and this is the shape that shows it: /api/v2 is inside the filter's
+		// registration and outside the version it used to test for, so the old filter let it
+		// through to a 404 and this one refuses it without having to know what it is.
+		Reply refused = raw("GET", "/api/v2/me", null);
+
+		assertEquals(401, refused.status(), refused::toString);
+		assertTrue(refused.body().get("message").stringValue().contains("needs a bearer token"),
+				refused::toString);
+
+		// With a session it is an honest 404, which is also the only way to tell them apart.
+		assertEquals(404, raw("GET", "/api/v2/me",
+				tokenFor("admin@sies.edu.in", "STAFF")).status());
+	}
+
+	@Test
+	void theCsvFormatsNeedASessionLikeEverythingElse() throws Exception {
+
+		assertEquals(401, get("/import/formats", null, null).status(),
+				"the one endpoint that used to answer with no actor at all");
+		assertEquals(200, get("/import/formats", tokenFor("admin@sies.edu.in", "STAFF"), null)
+				.status());
+	}
+
 	// ── The shape of the thing ───────────────────────────────────────────
 
 	@Test
@@ -3201,6 +3267,24 @@ class WireTest {
 				.POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
 
 		return send(request, token, install);
+	}
+
+	/**
+	 * A request to a path exactly as written, under no helper's idea of where the API lives.
+	 * <p>
+	 * {@link #get} and {@link #post} put {@link Api#V1} in front of what they are given, which
+	 * is right for every test but the ones about the filter: those are about what happens when
+	 * the path is <em>not</em> spelled the way this service expects, so they have to be able to
+	 * write it themselves. {@code URI.create} keeps the escapes it is given, and the HTTP
+	 * client sends the raw path, so {@code %61} arrives as {@code %61}.
+	 */
+	private Reply raw(String method, String rawPath, String token) throws Exception {
+
+		HttpRequest.Builder request = HttpRequest
+				.newBuilder(URI.create("http://localhost:" + port + rawPath))
+				.method(method, HttpRequest.BodyPublishers.noBody());
+
+		return send(request, token, null);
 	}
 
 	private Reply postCsv(String path, String csv, String token) throws Exception {
