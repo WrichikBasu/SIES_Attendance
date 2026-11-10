@@ -532,6 +532,17 @@ public final class SyncClient {
 
 				try (OutputStream out = connection.getOutputStream()) {
 					out.write(body.getBytes(StandardCharsets.UTF_8));
+
+				} catch (IOException e) {
+					// Where a push actually connects. openConnection() above does not open
+					// anything -- for a request with a body, the socket is made here, and for
+					// one without, at getResponseCode() below. So this is the line that throws
+					// when the phone has no signal and the sync is a push, and until it was
+					// wrapped the ConnectException went out of here as a plain IOException: the
+					// worker saw something it did not recognise, told the professor "Could not
+					// sync" instead of "Waiting for a connection", and logged a stack trace for
+					// the most ordinary event there is.
+					throw new Unavailable("could not send the request", e);
 				}
 			}
 

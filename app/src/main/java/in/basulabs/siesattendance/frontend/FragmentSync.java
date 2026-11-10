@@ -184,9 +184,22 @@ public class FragmentSync extends Fragment {
 
 		viewModel.getSyncState().observe(getViewLifecycleOwner(), this::showWhatCameDown);
 
-		viewModel.getSyncRunning().observe(getViewLifecycleOwner(), running ->
-				groupSyncing.setVisibility(Boolean.TRUE.equals(running)
-						? View.VISIBLE : View.GONE));
+		viewModel.getSyncRunning().observe(getViewLifecycleOwner(), running -> {
+
+			boolean busy = Boolean.TRUE.equals(running);
+
+			groupSyncing.setVisibility(busy ? View.VISIBLE : View.GONE);
+
+			// A run that has just finished has written the transport line, or cleared it, so
+			// everything read out of the preferences is read again here. It used to be read
+			// only when this screen was built or came back to the front, while the two lines
+			// above kept themselves current: somebody sitting on this screen watched "Could
+			// not sync" stay put over syncs that had since succeeded, and leaving the screen
+			// and coming back was the only thing that cleared it.
+			if (!busy) {
+				refresh();
+			}
+		});
 
 		// Nothing observes a message here. Signing in and out report through the ViewModel's
 		// toast channel, which the activity shows wherever the user has got to by then --
