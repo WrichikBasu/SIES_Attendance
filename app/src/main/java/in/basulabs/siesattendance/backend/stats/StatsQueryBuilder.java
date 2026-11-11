@@ -19,7 +19,9 @@ import in.basulabs.siesattendance.backend.CourseType;
 public final class StatsQueryBuilder {
 
 	/**
-	 * Attendance is the grain of the whole report: one row per student per lecture.
+	 * Attendance is the grain of the whole report: one row per student per lecture held for
+	 * them. {@link SqlBits#MARKS} supplies the rows, which are the marks on record and an
+	 * absence for each lecture a student has no mark for.
 	 * <p>
 	 * The join to {@code academic_years} is the important one. A lecture carries no session
 	 * column, only a timestamp, so the session is decided by matching that timestamp against
@@ -45,7 +47,7 @@ public final class StatsQueryBuilder {
 	 * consistently.
 	 */
 	private static final String FROM_CLAUSE =
-			" FROM attendance a"
+			" FROM " + SqlBits.MARKS + " a"
 					+ " INNER JOIN lectures l ON l.lectureID = a.lectureID"
 					+ " INNER JOIN courses c ON c.courseID = l.courseID"
 					+ " INNER JOIN students s ON s.studentID = a.studentID"

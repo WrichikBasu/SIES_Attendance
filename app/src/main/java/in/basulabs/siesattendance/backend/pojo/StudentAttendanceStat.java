@@ -7,8 +7,8 @@ import in.basulabs.siesattendance.backend.util.NameFormat;
 /**
  * Per-student attendance aggregate, used by the statistics screen.
  * <p>
- * Counts attendance rows rather than lectures held, so a student who was left off a sheet is
- * not counted absent for it. The export deliberately does the opposite; see {@code ExportRow}.
+ * Counts the lectures held for the student, so one they have no mark for is an absence, as
+ * it is in the export; see {@code ExportRow}.
  */
 public class StudentAttendanceStat {
 

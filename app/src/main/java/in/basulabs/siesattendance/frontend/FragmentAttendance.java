@@ -300,10 +300,6 @@ public class FragmentAttendance extends Fragment {
 
 		int present = 0, absent = 0;
 		for (AttendanceRow row : rows) {
-			// Neither: nobody has said, and nothing will be saved for them.
-			if (!row.marked) {
-				continue;
-			}
 			if (row.present) {
 				present++;
 			} else {

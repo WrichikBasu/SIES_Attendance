@@ -178,10 +178,10 @@
     <string name="section_lecture_by_lecture">Lecture by lecture</string>
     <string name="label_present">Present</string>
     <string name="label_absent">Absent</string>
-    <!-- 1: lectures attended, 2: lectures marked, 3: lectures missed -->
+    <!-- 1: lectures attended, 2: lectures held for the student, 3: lectures missed -->
     <string name="label_present_absent_summary">Present at %1$d of %2$d · absent %3$d</string>
-    <string name="empty_lecture_marks">This student has no marks recorded for this course
-        yet.</string>
+    <string name="empty_lecture_marks">No lectures of this course have been held for this
+        student yet.</string>
 
                 <string name="dialog_delete_batch_title">Delete this batch?</string>
     <string name="dialog_delete_batch_message">%1$s will be removed along with its student
@@ -592,8 +592,8 @@
     <string name="label_import_batch_all">%1$s · %2$d marked</string>
     <string name="label_import_counts">%1$d present · %2$d absent</string>
     <string name="label_import_session_years">Session: %1$s</string>
-    <string name="note_import_replaces_sheet">Replaces the sheet already recorded for this
-        class.</string>
+    <string name="note_import_replaces_sheet">Already recorded. P and AB overwrite the
+        marks there, and other marks stay.</string>
 
     <plurals name="action_import_sessions">
         <item quantity="one">Import %d class</item>
@@ -606,8 +606,8 @@
     </plurals>
 
     <plurals name="label_import_replaces">
-        <item quantity="one">%d replaces a sheet already recorded</item>
-        <item quantity="other">%d replace sheets already recorded</item>
+        <item quantity="one">%d updates a sheet already recorded</item>
+        <item quantity="other">%d update sheets already recorded</item>
     </plurals>
 
     <plurals name="label_import_skipped">
@@ -616,7 +616,7 @@
     </plurals>
 
     <string name="dialog_import_attendance_title">Save these records?</string>
-    <string name="dialog_import_attendance_message">Check each class\'s batch before saving. Classes already on record have their marks replaced.</string>
+    <string name="dialog_import_attendance_message">Check each class\'s batch before saving. For a class already on record, P and AB overwrite the marks there, and every other mark stays.</string>
 
     <string name="message_import_attendance_failed">Nothing was saved: %1$s</string>
 
@@ -626,8 +626,8 @@
     </plurals>
 
     <plurals name="message_import_replaced">
-        <item quantity="one">%d existing sheet replaced</item>
-        <item quantity="other">%d existing sheets replaced</item>
+        <item quantity="one">%d existing sheet updated</item>
+        <item quantity="other">%d existing sheets updated</item>
     </plurals>
 
     <plurals name="message_import_marks">

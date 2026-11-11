@@ -66,6 +66,48 @@ public final class PgSqlBits {
 	/** Pinned collation for every ordering that compares text. See the class comment. */
 	public static final String BYTE_ORDER = "COLLATE \"C\"";
 
+	private static final String HAS_NO_MARK =
+			"NOT EXISTS (SELECT 1 FROM attendance x"
+					+ " WHERE x.lecture_id = l.lecture_id AND x.student_id = y.student_id)";
+
+	/**
+	 * Every student at every lecture held for them, as {@code (lecture_id, student_id,
+	 * present)}: what a report reads in place of the {@code attendance} table.
+	 * <p>
+	 * Attendance is present or absent and nothing else, so a lecture held for a student with
+	 * no mark for them is an absence. This is the marks on record, and an absent row for each
+	 * missing one: for the members of the lecture's batch, or for the course's roll when the
+	 * lecture has no batch. Only for a student enrolled in the lecture's session, from the day
+	 * they joined, who has not left. The app's {@code SqlBits.MARKS} is the same rule and
+	 * says why.
+	 * <p>
+	 * A parenthesised subquery, to be given an alias by the query using it.
+	 */
+	public static final String MARKS =
+			"(SELECT m.lecture_id, m.student_id, m.present"
+					+ " FROM attendance m"
+					+ " UNION ALL"
+					+ " SELECT l.lecture_id, y.student_id, false"
+					+ " FROM lectures l"
+					+ " INNER JOIN batch_student_map bm ON bm.batch_id = l.batch_id"
+					+ "    AND bm.academic_year = session_year_of(l.start_at, l.start_zone)"
+					+ " INNER JOIN student_year y ON y.student_id = bm.student_id"
+					+ "    AND y.academic_year = bm.academic_year"
+					+ " WHERE y.leave_date IS NULL AND " + COUNTS_FOR_ENROLMENT
+					+ "   AND " + HAS_NO_MARK
+					+ " UNION ALL"
+					+ " SELECT l.lecture_id, y.student_id, false"
+					+ " FROM lectures l"
+					+ " INNER JOIN student_year y"
+					+ "    ON y.academic_year = session_year_of(l.start_at, l.start_zone)"
+					+ " WHERE l.batch_id IS NULL"
+					+ "   AND y.leave_date IS NULL AND " + COUNTS_FOR_ENROLMENT
+					+ "   AND EXISTS (SELECT 1 FROM course_batch_map cb"
+					+ "      INNER JOIN batch_student_map m2 ON m2.batch_id = cb.batch_id"
+					+ "      WHERE cb.course_id = l.course_id AND m2.student_id = y.student_id"
+					+ "        AND m2.academic_year = y.academic_year)"
+					+ "   AND " + HAS_NO_MARK + ")";
+
 	private PgSqlBits() {
 	}
 

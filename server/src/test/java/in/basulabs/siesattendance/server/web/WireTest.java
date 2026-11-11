@@ -896,6 +896,90 @@ class WireTest {
 	}
 
 	@Test
+	void importingASheetAgainCorrectsTheLectureAndKeepsTheMarksItDoesNotMention()
+			throws Exception {
+
+		// Three more in FY CS, so there is somebody to correct, somebody whose cell is
+		// emptied, and somebody the sheet never lists.
+		postgres.asSuperuser("""
+				INSERT INTO students (student_id, name, pronouns, email) VALUES
+				    (2003, 'T THREE', 'they/them', NULL),
+				    (2004, 'F FOUR',  'they/them', NULL),
+				    (2005, 'F FIVE',  'they/them', NULL);
+				INSERT INTO student_year
+				    (student_id, academic_year, roll_no, year, stream, major_dept, semester) VALUES
+				    (2003, 2025, 'CS-FY-003', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 1),
+				    (2004, 2025, 'CS-FY-004', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 1),
+				    (2005, 2025, 'CS-FY-005', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 1);
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year) VALUES
+				    (5901, 2003, 2025), (5901, 2004, 2025), (5901, 2005, 2025);
+				""");
+
+		String professor = tokenFor("a.cs@sies.edu.in", "STAFF");
+
+		Reply first = postCsv("/attendance/import?dryRun=false", """
+				Course code,CS-101
+				Date,22/07/2025
+				Start time,09:00
+				End time,10:00
+				CS-FY-001,P
+				CS-FY-003,P
+				CS-FY-004,AB
+				""", professor);
+
+		assertEquals(200, first.status(), first::toString);
+		assertEquals(1, first.body().get("written").get("created").intValue());
+
+		String theLecture = "(SELECT lecture_id FROM lectures WHERE course_id = 3001 "
+				+ "AND (start_at AT TIME ZONE 'Asia/Kolkata')::date = '2025-07-22')";
+
+		// Somebody marks the fourth student on the register afterwards. The sheet never
+		// lists them, so nothing it says is about them.
+		postgres.asSuperuser("INSERT INTO attendance (lecture_id, student_id, present) "
+				+ "VALUES (" + theLecture + ", 2005, true)");
+
+		String corrected = """
+				Course code,CS-101
+				Date,22/07/2025
+				Start time,09:00
+				End time,10:00
+				CS-FY-001,AB
+				CS-FY-003,
+				CS-FY-004,AB
+				""";
+
+		Reply second = postCsv("/attendance/import?dryRun=false", corrected, professor);
+
+		assertEquals(200, second.status(), second::toString);
+		assertEquals(0, second.body().get("written").get("created").intValue());
+		assertEquals(1, second.body().get("written").get("replaced").intValue());
+
+		assertEquals(1, count("SELECT count(*) FROM attendance WHERE lecture_id = " + theLecture
+				+ " AND student_id = 2001 AND NOT present"), "a P changed to AB is corrected");
+		assertEquals(1, count("SELECT count(*) FROM attendance WHERE lecture_id = " + theLecture
+				+ " AND student_id = 2003 AND present"),
+				"an emptied cell leaves the mark as it was");
+		assertEquals(1, count("SELECT count(*) FROM attendance WHERE lecture_id = " + theLecture
+				+ " AND student_id = 2004 AND NOT present"));
+		assertEquals(1, count("SELECT count(*) FROM attendance WHERE lecture_id = " + theLecture
+				+ " AND student_id = 2005 AND present"),
+				"a mark the sheet does not mention is still there");
+
+		// The same sheet a third time changes no mark, and so records none: only the entry
+		// that says a sheet was imported.
+		String markChanges = "SELECT count(*) FROM audit_log WHERE table_name = 'attendance' "
+				+ "AND action <> 'CSV_IMPORT'";
+		long audited = count(markChanges);
+
+		assertEquals(200, postCsv("/attendance/import?dryRun=false", corrected, professor)
+				.status());
+		assertEquals(audited, count(markChanges),
+				"importing an unchanged sheet again writes no marks");
+		assertEquals(4, count("SELECT count(*) FROM attendance WHERE lecture_id = "
+				+ theLecture));
+	}
+
+	@Test
 	void theOfficeLoadsARoster() throws Exception {
 
 		Reply reply = postCsv("/roster?year=" + SESSION, """

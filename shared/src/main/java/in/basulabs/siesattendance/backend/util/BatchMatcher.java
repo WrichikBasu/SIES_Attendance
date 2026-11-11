@@ -42,9 +42,8 @@ import java.util.Set;
  * </ol>
  * Where nothing covers, the ordering falls back to whichever batch accounts for the most marked
  * students. The caller is expected to report the shortfall rather than write marks for students
- * the chosen batch does not contain: those rows would count towards a student's attendance
- * without counting towards the lectures held for them, which can put a percentage above a
- * hundred.
+ * the chosen batch does not contain: those rows would file a student under a lecture of a
+ * batch they are not in.
  * <p>
  * Nothing here reads the database. The caller resolves the candidates and passes them in, which
  * keeps the rule itself testable on plain sets.

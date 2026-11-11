@@ -2259,7 +2259,7 @@ $("attendanceImport").addEventListener("click", async () => {
         const reply = await sendCsv("/attendance/import?dryRun=false", previewedAttendance);
         const written = reply.written;
 
-        say(written.created + " classes added, " + written.replaced + " replaced, "
+        say(written.created + " classes added, " + written.replaced + " updated, "
             + written.marks + " marks saved" + (written.skipped > 0
                 ? "; " + written.skipped + " skipped" : "") + ".", true);
 
@@ -2319,7 +2319,7 @@ function showAttendancePlan(plan) {
             .concat(lecture.notes.map((note) => [note, false]));
 
         if (lecture.replacesExisting && lecture.problems.length === 0) {
-            items.push(["Replaces the marks already recorded for this class.", false]);
+            items.push(["Already recorded: P and AB overwrite the marks there, and other marks stay.", false]);
         }
         if (items.length > 0) {
             notes.appendChild(lineList(items));

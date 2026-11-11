@@ -65,7 +65,7 @@ public final class PgStatsQueryBuilder {
 	 * double every figure in the report.
 	 */
 	private static final String FROM_CLAUSE =
-			" FROM attendance a"
+			" FROM " + PgSqlBits.MARKS + " a"
 					+ " INNER JOIN lectures l ON l.lecture_id = a.lecture_id"
 					+ " INNER JOIN courses c ON c.course_id = l.course_id"
 					+ " INNER JOIN students s ON s.student_id = a.student_id"

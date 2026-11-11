@@ -523,12 +523,11 @@ public abstract class DaoStudent {
 					"AND (:toEpoch IS NULL OR " + SqlBits.EPOCH_START + " <= :toEpoch) ";
 
 	/**
-	 * One row per course this student has any attendance recorded against.
+	 * One row per course this student has had a lecture held for them in.
 	 * <p>
-	 * The denominator counts the student's own attendance rows, not lectures held, so a lecture
-	 * they were left off entirely does not appear here at all. That is the opposite of what the
-	 * export does, and it is the right way round for this screen: this is a breakdown of what
-	 * was recorded for one student, whereas the export is a report on how much they attended.
+	 * The denominator is the lectures held for the student, so a lecture of their batch with
+	 * no mark for them is an absence, as it is in the register export and the statistics; see
+	 * {@code SqlBits.MARKS}.
 	 * <p>
 	 * Unfiltered this spans every session the student has been enrolled in, which is the honest
 	 * default for a record of a person rather than of a year. The window narrows it; see
@@ -547,7 +546,7 @@ public abstract class DaoStudent {
 	@Query("SELECT c.courseID, c.courseCode, c.courseTopic, " +
 			"COUNT(a.lectureID) AS totalLectures, " +
 			"SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) AS attended " +
-			"FROM attendance a " +
+			"FROM " + SqlBits.MARKS + " a " +
 			"INNER JOIN lectures l ON l.lectureID = a.lectureID " +
 			"INNER JOIN courses c ON c.courseID = l.courseID " +
 			"WHERE a.studentID = :studentID " +
@@ -571,7 +570,7 @@ public abstract class DaoStudent {
 	                                                                     List<Long> courseIDs);
 
 	/**
-	 * Every course this student has been marked in, for the chips that pick which of them the
+	 * Every course this student has had a lecture held for them in, for the chips that pick which of them the
 	 * breakdown covers.
 	 * <p>
 	 * Deliberately unfiltered. The chips are the control, so narrowing them by the window they
@@ -581,18 +580,17 @@ public abstract class DaoStudent {
 	 */
 	@Query("SELECT DISTINCT c.* FROM courses c " +
 			"INNER JOIN lectures l ON l.courseID = c.courseID " +
-			"INNER JOIN attendance a ON a.lectureID = l.lectureID " +
+			"INNER JOIN " + SqlBits.MARKS + " a ON a.lectureID = l.lectureID " +
 			"WHERE a.studentID = :studentID " +
 			"ORDER BY c.courseCode ASC")
 	public abstract List<EntityCourse> getAttendedCoursesSync(long studentID);
 
 	/**
 	 * The lectures behind one row of {@link #getCourseBreakdown}: every lecture of one course
-	 * this student was marked on, and whether they were present at it.
+	 * held for this student, and whether they were present at it.
 	 * <p>
-	 * Restricted to the student's own attendance rows for the same reason the breakdown is. A
-	 * lecture nobody put them on the sheet for is not an absence, and listing it as a date they
-	 * missed would put a record on screen that was never taken.
+	 * Read from {@code SqlBits.MARKS} for the same reason the breakdown is: a lecture of their
+	 * batch with no mark for them is an absence, and is listed as one.
 	 * <p>
 	 * Newest first, because a run of recent absences is what anyone opening this screen is
 	 * looking for. Ordered on the epoch prefix rather than the stored string, which would sort
@@ -603,7 +601,7 @@ public abstract class DaoStudent {
 	 */
 	@Query("SELECT l.lectureID, l.startDateTime, l.endDateTime, " +
 			"b.batchName AS batchName, a.present " +
-			"FROM attendance a " +
+			"FROM " + SqlBits.MARKS + " a " +
 			"INNER JOIN lectures l ON l.lectureID = a.lectureID " +
 			"LEFT JOIN batch_desc b ON b.batchID = l.batchID " +
 			"WHERE a.studentID = :studentID AND l.courseID = :courseID " +

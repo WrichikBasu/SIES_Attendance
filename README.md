@@ -41,7 +41,9 @@ and synced when there is a connection.
   of every lecture.
 - **Exports:**
   - an attendance register spreadsheet (`.ods`), with lectures held and attended per course and
-    students below the threshold shaded
+    students below the threshold shaded. Attendance is either present or absent: a lecture
+    held for a student's batch with no mark for them counts as an absence, here and in the
+    statistics
   - mark sheets for a lecture or a day, as `.ods` or CSV
 - **Imports:**
   - a student roster CSV (see below)
@@ -140,6 +142,9 @@ Imported from **Attendance → Import attendance** in the app, or the console's 
 first four rows name each class (course code, date, start time, end time) and every row after
 that is a student: their roll number, then `P`, `AB`, or blank for "not in this class". The blank
 cells decide which batch was in the room. Nothing is saved until the preview has been confirmed.
+
+Importing a class that is already on record corrects it: a `P` or `AB` overwrites that student's
+mark, and every other mark is left alone: a blank never removes one.
 
 ### Joining late and leaving
 

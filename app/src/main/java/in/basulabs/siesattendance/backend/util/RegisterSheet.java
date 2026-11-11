@@ -22,9 +22,9 @@ import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
  * <li>Everybody who holds a mark is on the sheet with that mark, whether or not they are still
  * on the roll. Leaving them off is how their mark used to be lost: the sheet was built from the
  * roll, and saving it replaced every mark with the sheet.</li>
- * <li>Somebody on the roll with no mark is on the sheet as <em>not marked</em>, and stays that
- * way unless the user marks them. They used to be shown as present, and saved as present, at a
- * class they may have joined after.</li>
+ * <li>Somebody on the roll with no mark is on the sheet as absent, and is saved as absent
+ * unless the user marks them present. A student is either present or absent, and a lecture
+ * held for them with no mark is an absence everywhere else, so the sheet shows it as one.</li>
  * <li>A register with no marks at all is a fresh sheet: the whole roll, everyone present.</li>
  * </ul>
  */
@@ -60,7 +60,7 @@ public final class RegisterSheet {
 		for (StudentWithYear student : roll) {
 			if (!marked.contains(student.studentID)) {
 				rows.add(new AttendanceRow(student.studentID, student.name, student.rollNo,
-						false, false));
+						false));
 			}
 		}
 
@@ -70,22 +70,5 @@ public final class RegisterSheet {
 				.thenComparing(row -> row.name));
 
 		return rows;
-	}
-
-	/**
-	 * The marks a save writes: one for every row that carries an answer, and none for a row
-	 * nobody has marked.
-	 */
-	@NonNull
-	public static List<AttendanceRow> toSave(@NonNull List<AttendanceRow> rows) {
-
-		List<AttendanceRow> answered = new ArrayList<>();
-
-		for (AttendanceRow row : rows) {
-			if (row.marked) {
-				answered.add(row);
-			}
-		}
-		return answered;
 	}
 }

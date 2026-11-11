@@ -2075,7 +2075,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	/**
 	 * Loads the register for one lecture. A lecture with marks is shown as it was marked:
 	 * everybody who holds a mark, with that mark, and anybody on the roll now who has none as
-	 * not marked. A lecture with no marks is a fresh sheet of the roll. {@link RegisterSheet}
+	 * absent. A lecture with no marks is a fresh sheet of the roll. {@link RegisterSheet}
 	 * has the rule and why.
 	 * <p>
 	 * The roll is read against the session the lecture itself falls in, not the session new
@@ -2121,7 +2121,6 @@ public class AttendanceViewModel extends AndroidViewModel {
 		for (AttendanceRow row : rows) {
 			if (row.studentID == studentID) {
 				row.present = present;
-				row.marked = true;
 				break;
 			}
 		}
@@ -2135,8 +2134,6 @@ public class AttendanceViewModel extends AndroidViewModel {
 		}
 		for (AttendanceRow row : rows) {
 			row.present = present;
-			// "All" means all: a row nobody had marked is marked by this, on purpose.
-			row.marked = true;
 		}
 		attendanceRows.setValue(rows);
 	}
@@ -2157,7 +2154,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		final long lectureID = currentLecture.lectureID;
 		final List<EntityAttendance> records = new ArrayList<>();
-		for (AttendanceRow row : RegisterSheet.toSave(rows)) {
+		for (AttendanceRow row : rows) {
 			records.add(new EntityAttendance(lectureID, row.studentID, row.present));
 		}
 

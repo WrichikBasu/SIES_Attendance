@@ -327,22 +327,97 @@ def test_export_denominator_counts_lectures_held(conn):
           f"held={rows[('2025CS01','CS201')]['held']} expected 3")
     check("export: batch lectures count only for that batch's members",
           rows[("2025CS01", "CS202")]["held"] == 1,
-          f"held={rows[('2025CS01','CS202')]['held']} expected 1")
+          f"held={rows[('2025CS01','CS202')]['held']} expected 1 (L3 only)")
     check("export: the other batch's lecture counts for the other batch",
           rows[("2025CS02", "CS202")]["held"] == 1)
 
-    # The load-bearing case: Rahul was left off L2's sheet entirely. Counting his own
-    # attendance rows would give 2/2 = 100%. Counting lectures held gives 2/3.
-    # Rahul: absent at L1, never on L2's sheet at all, present at L5. Counting his own
-    # attendance rows would make it 1 of 2 (50%); counting lectures held makes it 1 of 3
-    # (33%), which is the truth.
+    # The load-bearing case: Rahul was absent at L1, never on L2's sheet at all, and present
+    # at L5. Attendance is present or absent and nothing else, so L2 is an absence: 1 of 3.
+    # Counting his own attendance rows would make it 1 of 2.
     rahul = rows[("2025CS03", "CS201")]
     own_rows = conn.execute(
         "SELECT COUNT(*) FROM attendance a JOIN lectures l ON l.lectureID = a.lectureID "
         "WHERE a.studentID = 3 AND l.courseID = 1 AND l.lectureID != 6").fetchone()[0]
-    check("export: a student left off a sheet is not flattered by a shrunken denominator",
+    check("export: a lecture with no mark for a student is an absence",
           rahul["held"] == 3 and rahul["attended"] == 1 and own_rows == 2,
           f"held={rahul['held']} attended={rahul['attended']} ownRows={own_rows}")
+
+
+def test_export_keeps_history_and_never_exceeds_held():
+    """
+    Held is the lectures of the student's batches and any other the student has a mark for,
+    so a change of batch keeps what was sat before, a lecture with no marks is still held,
+    and attended can never be more than held.
+    """
+    conn = build_fixture()
+
+    def rows() -> dict[tuple[str, str], sqlite3.Row]:
+        return {(r["rollNo"], r["courseCode"]): r for r in run(conn, "export_unrestricted")}
+
+    # A student who moves to the course's other batch keeps the lecture they sat in the
+    # first, and now owes the other batch's lecture too. Aarav sat L3 with Batch A and has
+    # no mark at L4, Batch B's: two held, one attended.
+    conn.execute("UPDATE batch_student_map SET batchID = 2 WHERE batchID = 1 AND studentID = 1")
+    conn.commit()
+    aarav = rows()[("2025CS01", "CS202")]
+    check("export: a student who changed batch keeps the lectures they sat before",
+          aarav["held"] == 2 and aarav["attended"] == 1,
+          f"held={aarav['held']} attended={aarav['attended']}")
+
+    # A lecture whose marks were cleared was still held, and is an absence for everybody.
+    before = rows()[("2025CS02", "CS201")]
+    conn.execute("DELETE FROM attendance WHERE lectureID = 5")
+    conn.commit()
+    cleared = rows()[("2025CS02", "CS201")]
+    check("export: a lecture with its marks cleared is still held",
+          cleared["held"] == before["held"] and cleared["attended"] <= before["attended"],
+          f"before={dict(before)} after={dict(cleared)}")
+
+    check("export: nobody attends more than was held",
+          all(r["attended"] <= r["held"] for r in rows().values()))
+
+    conn.close()
+
+
+def test_export_agrees_with_the_statistics():
+    """
+    The register export and the statistics have to give one figure for one student. Both count
+    a lecture held for a student with no mark for them as an absence; three ways a mark goes
+    missing, and the two reports must still agree after each.
+    """
+    conn = build_fixture()
+
+    def export_totals() -> dict[str, tuple[int, int]]:
+        totals: dict[str, tuple[int, int]] = {}
+        for r in run(conn, "export_unrestricted"):
+            held, attended = totals.get(r["rollNo"], (0, 0))
+            totals[r["rollNo"]] = (held + r["held"], attended + r["attended"])
+        return totals
+
+    def stats_totals() -> dict[str, tuple[int, int]]:
+        return {r["primaryLabel"]: (r["total"], r["attended"])
+                for r in run(conn, "stats_grouped_STUDENT")}
+
+    def agree(label: str) -> None:
+        export = export_totals()
+        stats = stats_totals()
+        # A student with no lecture held for them has an export row of 0/0 and no
+        # statistics row.
+        held = {roll: figures for roll, figures in export.items() if figures[0] > 0}
+        check(f"export and statistics agree: {label}", held == stats,
+              f"export={held} stats={stats}")
+
+    agree("as recorded, with Rahul left off one sheet")
+
+    conn.execute("UPDATE batch_student_map SET batchID = 2 WHERE batchID = 1 AND studentID = 1")
+    conn.commit()
+    agree("after a student changes batch")
+
+    conn.execute("DELETE FROM attendance WHERE lectureID = 5")
+    conn.commit()
+    agree("after a lecture's marks are cleared")
+
+    conn.close()
 
 
 def test_export_roster_is_the_courses_batches(conn):
@@ -408,6 +483,7 @@ def test_export_date_window(conn):
           f"held={rows[('2025CS01','CS201')]['held']} expected 2")
     check("export: the date window narrows the attended count in step",
           rows[("2025CS01", "CS201")]["attended"] == 2)
+    # Rahul in July: absent at L1 and no mark at L2, so two lectures held and none attended.
     check("export: a windowed percentage stays over one denominator",
           rows[("2025CS03", "CS201")]["held"] == 2
           and rows[("2025CS03", "CS201")]["attended"] == 0,
@@ -445,7 +521,7 @@ def test_stats_grouped_by_student(conn):
           {"2025CS01", "2025CS02", "2025CS03"}, f"{sorted(rows)}")
 
     aarav = rows["2025CS01"]
-    check("stats: attendance rows are counted, not lectures held",
+    check("stats: a student marked at every lecture has one row per lecture",
           aarav["total"] == 4 and aarav["attended"] == 4,
           f"total={aarav['total']} attended={aarav['attended']}")
     check("stats: the secondary label carries the raw roster name",
@@ -456,8 +532,9 @@ def test_stats_grouped_by_student(conn):
           all(r["students"] == 1 for r in rows.values()))
 
     rahul = rows["2025CS03"]
-    check("stats: a student left off a sheet has a smaller denominator here than in export",
-          rahul["total"] == 3 and rahul["attended"] == 2,
+    # Rahul has no mark at L2, which is an absence here as it is in the export.
+    check("stats: a lecture with no mark for a student is an absence",
+          rahul["total"] == 4 and rahul["attended"] == 2,
           f"total={rahul['total']} attended={rahul['attended']}")
 
 
@@ -701,7 +778,8 @@ def test_stats_batch_filter_reaches_subset_batches():
     check("stats: whole-class lectures count towards a batch's students",
           rows["2025CS01"]["lectures"] == 4, f"{rows['2025CS01']}")
 
-    # Batch A itself: Aarav's four rows plus Rahul's three.
+    # Batch A itself: Aarav's four rows plus Rahul's four, one of them the absence at L2
+    # that nobody marked.
     parent = {r["primaryLabel"]: r for r in run(conn, "stats_batch_only", [2025, 1])}
     check("stats: the parent batch returns both its students",
           set(parent) == {"2025CS01", "2025CS03"}, f"{sorted(parent)}")
@@ -710,7 +788,7 @@ def test_stats_batch_filter_reaches_subset_batches():
 
     total = sum(r["total"] for r in parent.values())
     check("stats: the parent's rows are its members' rows, not one lecture's sheet",
-          total == 7, f"total={total}")
+          total == 8, f"total={total}")
 
     conn.close()
 
@@ -743,11 +821,12 @@ def test_stats_lecture_counts_are_distinct(conn):
     rows = {r["primaryLabel"]: r for r in run(conn, "stats_grouped_COURSE")}
 
     cs201 = rows["CS201"]
-    # 3 lectures inside the session, 8 attendance rows across them.
+    # 3 lectures inside the session, held for 3 students each: 8 marks, and Rahul's absence
+    # at L2 that nobody marked.
     check("stats: lectures are counted DISTINCT, not once per marked student",
           cs201["lectures"] == 3, f"lectures={cs201['lectures']}")
-    check("stats: total counts attendance rows",
-          cs201["total"] == 8, f"total={cs201['total']}")
+    check("stats: total counts each student at each lecture held for them",
+          cs201["total"] == 9, f"total={cs201['total']}")
     check("stats: distinct students across a course",
           cs201["students"] == 3, f"students={cs201['students']}")
 
@@ -759,8 +838,9 @@ def test_stats_excludes_orphan_lectures(conn):
     check("stats: the session join excludes lectures outside every session",
           summary["lectures"] == 5,
           f"lectures={summary['lectures']} of 6 recorded")
-    check("stats: the summary total equals every in-session attendance row",
-          summary["total"] == total_rows,
+    # Every mark, and the one absence nobody marked: Rahul at L2.
+    check("stats: the summary total is every in-session mark and every missing one",
+          summary["total"] == total_rows + 1,
           f"summary={summary['total']} table={total_rows}")
 
     orphans = conn.execute(
@@ -842,11 +922,12 @@ def test_stats_sort_orders(conn):
     desc = [r["primaryLabel"] for r in run(conn, "stats_sort_PERCENT_DESC")]
     label = [r["primaryLabel"] for r in run(conn, "stats_sort_LABEL_ASC")]
 
-    # By attendance rows: Sneha 2/4 = 50%, Rahul 2/3 = 67%, Aarav 4/4 = 100%.
-    check("stats: lowest-percentage-first puts the worst attender at the top",
+    # Sneha 2/4 = 50%, Rahul 2/4 = 50% with his unmarked L2 an absence, Aarav 4/4 = 100%.
+    # The two at 50% are in register order whichever way the percentage is sorted.
+    check("stats: lowest-percentage-first puts the worst attenders at the top",
           asc == ["2025CS02", "2025CS03", "2025CS01"], f"{asc}")
-    check("stats: highest-first is the exact reverse",
-          desc == list(reversed(asc)), f"{desc}")
+    check("stats: highest-first puts the best attender at the top, ties in register order",
+          desc == ["2025CS01", "2025CS02", "2025CS03"], f"{desc}")
     check("stats: label order is register order",
           label == sorted(label), f"{label}")
 
@@ -1256,6 +1337,8 @@ def main():
     test_every_generated_statement_parses_and_runs(conn)
     test_a_null_argument_round_trips(conn)
     test_export_denominator_counts_lectures_held(conn)
+    test_export_keeps_history_and_never_exceeds_held()
+    test_export_agrees_with_the_statistics()
     test_export_roster_is_the_courses_batches(conn)
     test_export_excludes_other_sessions_and_orphans(conn)
     test_export_date_window(conn)

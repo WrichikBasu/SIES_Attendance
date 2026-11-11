@@ -109,9 +109,8 @@ public final class AttendanceRecordImporter {
 		/**
 		 * Marks that will not be written because the student is not in the chosen batch.
 		 * <p>
-		 * Writing them anyway would give the student attendance for a lecture that does not
-		 * count among the lectures held for them, and a percentage over a hundred. Non-zero
-		 * here means the file describes a group no batch matches — commonly a class taught to
+		 * Writing them anyway would file the student under a lecture of a batch they are not
+		 * in. Non-zero here means the file describes a group no batch matches — commonly a class taught to
 		 * everybody, which now has to be described by a batch that holds everybody — and is
 		 * reported rather than silently dropped.
 		 */
@@ -531,9 +530,12 @@ public final class AttendanceRecordImporter {
 	/**
 	 * Writes every usable column of a plan the user has approved.
 	 * <p>
-	 * Re-recording a session that is already on record replaces its sheet rather than failing on
-	 * the unique index, which is what {@code recordLectureWithAttendance} does when attendance is
-	 * taken twice for the same class, and what someone correcting a register expects.
+	 * A session that is already on record is corrected by the file, not replaced by it. Each
+	 * P or AB overwrites that student's mark, and no mark is ever taken away: a student is
+	 * either present or absent, and an empty cell is neither, so it changes nothing. A student
+	 * who is not listed, or who has left the batch since, was marked by somebody and the file
+	 * is no evidence that they were wrong. Clearing the lecture first, which this used to do,
+	 * deleted exactly those marks.
 	 * <p>
 	 * Blocks; call off the main thread.
 	 */
@@ -561,7 +563,6 @@ public final class AttendanceRecordImporter {
 
 					if (existing != null) {
 						lectureID = existing;
-						db.daoAttendance().clearForLecture(lectureID);
 						result.replaced++;
 					} else {
 						lectureID = db.daoLecture().insert(new EntityLecture(lecture.courseID,

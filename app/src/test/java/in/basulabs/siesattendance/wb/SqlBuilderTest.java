@@ -105,9 +105,10 @@ public class SqlBuilderTest {
 
 		assertEquals("argument count must match placeholder count",
 				placeholders(query.getSql()), argsOf(query).size());
-		// Five each for held and attended, two for the session joins, and one for the roll:
-		// the student's membership, that session, of the course's batches.
-		assertEquals(13, argsOf(query).size());
+		// Five for held (the session of the student's batches, then the date window), four for
+		// attended (the window), two for the session joins, and one for the roll: the student's
+		// membership, that session, of the course's batches.
+		assertEquals(12, argsOf(query).size());
 	}
 
 	@Test
@@ -188,8 +189,29 @@ public class SqlBuilderTest {
 
 		List<Object> args = argsOf(ExportQueryBuilder.build(2025, filter));
 
-		// Arguments 0-4 belong to "held", 5-9 to "attended"; they must be identical.
-		assertEquals(args.subList(0, 5).toString(), args.subList(5, 10).toString());
+		// Arguments 1-4 are the window of "held", 5-8 that of "attended"; they must be
+		// identical.
+		assertEquals(args.subList(1, 5).toString(), args.subList(5, 9).toString());
+	}
+
+	@Test
+	public void heldCountsLecturesHeldAndAttendedTheStudentsOwnMarks() {
+		// Attendance is present or absent: a lecture of the student's batch with no mark for
+		// them is held and not attended. A lecture they have a mark for is held whatever
+		// batch they are in today, so a change of batch does not lose their history.
+		String sql = ExportQueryBuilder.build(2025, new ExportFilter()).getSql();
+
+		String held = sql.substring(0, sql.indexOf("AS held"));
+		String attended = sql.substring(sql.indexOf("AS held"), sql.indexOf("AS attended"));
+
+		assertTrue("held must be counted from the lectures, not from attendance rows",
+				held.contains("COUNT(*) FROM lectures l"));
+		assertTrue("held must take in the lectures of the student's batches",
+				held.contains("batch_student_map"));
+		assertTrue("held must take in a lecture the student has a mark for",
+				held.contains("EXISTS (SELECT 1 FROM attendance h"));
+		assertFalse("attended must not depend on the batches the student is in today",
+				attended.contains("batch_student_map"));
 	}
 
 	@Test

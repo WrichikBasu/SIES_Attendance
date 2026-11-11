@@ -34,6 +34,11 @@ public final class PgExportQueryBuilder {
 	 * One row per student per course they are on the roll for, with lectures held and lectures
 	 * attended.
 	 * <p>
+	 * Held is every lecture the student was supposed to be at (whole-class, one of their
+	 * batches, or one they have a mark for) and attended the ones marked present, so a
+	 * lecture with no mark is an absence. The app's {@code ExportQueryBuilder} has the rule
+	 * and why.
+	 * <p>
 	 * The join from students to courses repeats the roster condition the app's
 	 * {@code DaoStudent.getRollForCourseSync} applies. The two have to agree, since a student
 	 * who counts as taking a course in one and not the other would appear on a sheet without
@@ -57,32 +62,30 @@ public final class PgExportQueryBuilder {
 				.append("c.course_code AS \"courseCode\", ")
 				.append("c.course_topic AS \"courseTopic\", ");
 
-		// held
-		sql.append("(SELECT COUNT(DISTINCT l.lecture_id) FROM lectures l ")
+		// held: the lectures of the student's batches, and any other they have a mark for
+		sql.append("(SELECT COUNT(*) FROM lectures l ")
 				.append(" WHERE l.course_id = c.course_id ")
 				.append("   AND (l.batch_id IS NULL OR l.batch_id IN ")
 				.append("        (SELECT m.batch_id FROM batch_student_map m ")
 				.append("         WHERE m.student_id = s.student_id ")
-				.append("           AND m.academic_year = ?)) ")
+				.append("           AND m.academic_year = ?) ")
+				.append("        OR EXISTS (SELECT 1 FROM attendance h ")
+				.append("         WHERE h.lecture_id = l.lecture_id ")
+				.append("           AND h.student_id = s.student_id)) ")
 				.append("   AND ").append(lectureWindow())
 				.append("   AND ").append(PgSqlBits.COUNTS_FOR_ENROLMENT)
 				.append(") AS held, ");
 		args.add(academicYear);
 		addWindowArgs(filter, args);
 
-		// attended
+		// attended: the student's marks of present, every one of which is in held
 		sql.append("(SELECT COUNT(*) FROM attendance a ")
 				.append(" INNER JOIN lectures l ON l.lecture_id = a.lecture_id ")
 				.append(" WHERE a.student_id = s.student_id AND a.present ")
 				.append("   AND l.course_id = c.course_id ")
-				.append("   AND (l.batch_id IS NULL OR l.batch_id IN ")
-				.append("        (SELECT m2.batch_id FROM batch_student_map m2 ")
-				.append("         WHERE m2.student_id = s.student_id ")
-				.append("           AND m2.academic_year = ?)) ")
 				.append("   AND ").append(lectureWindow())
 				.append("   AND ").append(PgSqlBits.COUNTS_FOR_ENROLMENT)
 				.append(") AS attended ");
-		args.add(academicYear);
 		addWindowArgs(filter, args);
 
 		sql.append("FROM students s ")

@@ -33,6 +33,13 @@ public final class ExportQueryBuilder {
 	 * Builds the query behind {@code DaoAttendance.getExportRowsSync}: one row per student per
 	 * course they are on the roll for, with lectures held and lectures attended.
 	 * <p>
+	 * A student is either present at a lecture or absent from it; there is nothing in
+	 * between. Held is every lecture the student was supposed to be at: a whole-class lecture,
+	 * one for a batch they belong to, or one they have a mark for. Attended is the ones
+	 * marked present, so a lecture of their batch with no mark for them is an absence. The
+	 * last of the three is there for a student who has moved to another of the course's
+	 * batches, who keeps the lectures they sat in the first.
+	 * <p>
 	 * The join from students to courses repeats the roster condition from
 	 * {@code DaoStudent.getRollForCourseSync}: the members of the course's linked batches for the
 	 * session, and nobody else. The two have to agree, since a student
@@ -54,30 +61,29 @@ public final class ExportQueryBuilder {
 				.append("s.name AS studentName, c.courseID AS courseID, ")
 				.append("c.courseCode AS courseCode, c.courseTopic AS courseTopic, ");
 
-		// held
-		sql.append("(SELECT COUNT(DISTINCT l.lectureID) FROM lectures l ")
+		// held: the lectures of the student's batches, and any other they have a mark for
+		sql.append("(SELECT COUNT(*) FROM lectures l ")
 				.append(" WHERE l.courseID = c.courseID ")
 				.append("   AND (l.batchID IS NULL OR l.batchID IN ")
 				.append("        (SELECT m.batchID FROM batch_student_map m ")
-				.append("         WHERE m.studentID = s.studentID AND m.academicYear = ?)) ")
+				.append("         WHERE m.studentID = s.studentID AND m.academicYear = ?) ")
+				.append("        OR EXISTS (SELECT 1 FROM attendance h ")
+				.append("         WHERE h.lectureID = l.lectureID ")
+				.append("           AND h.studentID = s.studentID)) ")
 				.append("   AND ").append(lectureWindow())
 				.append("   AND ").append(SqlBits.COUNTS_FOR_ENROLMENT)
 				.append(") AS held, ");
 		args.add(academicYear);
 		addWindowArgs(filter, args);
 
-		// attended
+		// attended: the student's marks of present, every one of which is in held
 		sql.append("(SELECT COUNT(*) FROM attendance a ")
 				.append(" INNER JOIN lectures l ON l.lectureID = a.lectureID ")
 				.append(" WHERE a.studentID = s.studentID AND a.present = 1 ")
 				.append("   AND l.courseID = c.courseID ")
-				.append("   AND (l.batchID IS NULL OR l.batchID IN ")
-				.append("        (SELECT m2.batchID FROM batch_student_map m2 ")
-				.append("         WHERE m2.studentID = s.studentID AND m2.academicYear = ?)) ")
 				.append("   AND ").append(lectureWindow())
 				.append("   AND ").append(SqlBits.COUNTS_FOR_ENROLMENT)
 				.append(") AS attended ");
-		args.add(academicYear);
 		addWindowArgs(filter, args);
 
 		sql.append("FROM students s ")

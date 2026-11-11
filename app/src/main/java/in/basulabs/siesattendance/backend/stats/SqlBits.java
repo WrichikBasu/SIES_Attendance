@@ -42,6 +42,59 @@ public final class SqlBits {
 	public static final String COUNTS_FOR_ENROLMENT =
 			"(y.joinDate IS NULL OR " + LECTURE_LOCAL_DAY + " >= y.joinDate)";
 
+	/** The session a lecture falls in: the latest one whose bounds contain its start. */
+	private static final String SESSION_OF_LECTURE =
+			"(SELECT ay2.academicYear FROM academic_years ay2"
+					+ " WHERE " + EPOCH_START + " BETWEEN ay2.startEpoch AND ay2.endEpoch"
+					+ " ORDER BY ay2.academicYear DESC LIMIT 1)";
+
+	private static final String HAS_NO_MARK =
+			"NOT EXISTS (SELECT 1 FROM attendance x"
+					+ " WHERE x.lectureID = l.lectureID AND x.studentID = y.studentID)";
+
+	/**
+	 * Every student at every lecture held for them, as {@code (lectureID, studentID, present)}:
+	 * what a report reads in place of the {@code attendance} table.
+	 * <p>
+	 * Attendance is present or absent and nothing else, so a lecture held for a student with
+	 * no mark for them is an absence. The table only has the marks somebody wrote; this adds a
+	 * row with {@code present = 0} for each one that is missing:
+	 * <ul>
+	 * <li>a lecture for a batch, for each member of that batch in the lecture's session;</li>
+	 * <li>a whole-class lecture, which has no batch, for each student on the course's roll,
+	 * that is, in a batch linked to the course.</li>
+	 * </ul>
+	 * Only for a student enrolled in that session, from the day they joined, and only while
+	 * they have not left: somebody who has left is off the rolls, and keeps the marks they
+	 * have. It is the rule {@code ExportQueryBuilder} counts "held" by, so the register export
+	 * and the statistics give the same figures.
+	 * <p>
+	 * A parenthesised subquery, to be given an alias by the query using it.
+	 */
+	public static final String MARKS =
+			"(SELECT m.lectureID AS lectureID, m.studentID AS studentID, m.present AS present"
+					+ " FROM attendance m"
+					+ " UNION ALL"
+					+ " SELECT l.lectureID, y.studentID, 0"
+					+ " FROM lectures l"
+					+ " INNER JOIN batch_student_map bm ON bm.batchID = l.batchID"
+					+ "    AND bm.academicYear = " + SESSION_OF_LECTURE
+					+ " INNER JOIN student_year y ON y.studentID = bm.studentID"
+					+ "    AND y.academicYear = bm.academicYear"
+					+ " WHERE y.leaveDate IS NULL AND " + COUNTS_FOR_ENROLMENT
+					+ "   AND " + HAS_NO_MARK
+					+ " UNION ALL"
+					+ " SELECT l.lectureID, y.studentID, 0"
+					+ " FROM lectures l"
+					+ " INNER JOIN student_year y ON y.academicYear = " + SESSION_OF_LECTURE
+					+ " WHERE l.batchID IS NULL"
+					+ "   AND y.leaveDate IS NULL AND " + COUNTS_FOR_ENROLMENT
+					+ "   AND EXISTS (SELECT 1 FROM course_batch_map cb"
+					+ "      INNER JOIN batch_student_map m2 ON m2.batchID = cb.batchID"
+					+ "      WHERE cb.courseID = l.courseID AND m2.studentID = y.studentID"
+					+ "        AND m2.academicYear = y.academicYear)"
+					+ "   AND " + HAS_NO_MARK + ")";
+
 	private SqlBits() {
 	}
 

@@ -26,12 +26,11 @@ import in.basulabs.siesattendance.backend.pojo.StudentAttendanceStat;
  * and {@link #insertAll} writes over the ones it is given and leaves the rest, which is what
  * saving a reopened register does.
  * <p>
- * The read side is where the subtlety is. Anything reporting on how much a student attended has
- * to be careful about what it divides by: counting their own attendance rows shrinks the
- * denominator for any student who was left off a sheet, which flatters precisely the record
- * being examined. The export query counts lectures held instead. The statistics queries below
- * count rows, because they are describing what was recorded rather than judging a student, and
- * they say so where it matters.
+ * The read side is where the subtlety is. A student is either present at a lecture or absent
+ * from it, so every report divides by the lectures held for the student, and a lecture of
+ * their batch with no row for them is an absence. The register export counts it that way, and
+ * the statistics queries below read {@code SqlBits.MARKS}, which adds the missing rows as
+ * absences, in place of this table.
  */
 @Dao
 public abstract class DaoAttendance {
@@ -121,10 +120,9 @@ public abstract class DaoAttendance {
 	 * A raw query because the shape changes with the filter. See {@code ExportQueryBuilder},
 	 * which owns the SQL and binds every user-supplied value as an argument.
 	 * <p>
-	 * The denominator counts lectures <em>held</em> rather than attendance rows: a lecture
-	 * counts for a student when it was a whole-class lecture, or one for a batch they belong
-	 * to. Counting their own rows instead would shrink the denominator for any student missed
-	 * off a sheet, flattering precisely the record under scrutiny.
+	 * Held is the lectures held for the student: whole-class ones, those of a batch they
+	 * belong to, and any other they have a mark for. Attended is the ones marked present, so
+	 * a lecture with no mark is an absence. {@code ExportQueryBuilder} says why.
 	 */
 	@RawQuery
 	@NonNull
@@ -163,7 +161,8 @@ public abstract class DaoAttendance {
 	// ── Statistics ───────────────────────────────────────────────────────
 
 	/**
-	 * Per-student totals across every lecture they have a mark for, worst attendance first.
+	 * Per-student totals across every lecture held for them, worst attendance first. A lecture
+	 * with no mark counts as an absence; see {@code SqlBits.MARKS}.
 	 * <p>
 	 * The join to attendance is LEFT, so a student with nothing recorded still appears, with
 	 * zero of zero. Those students sort last rather than first, which takes an explicit
@@ -179,7 +178,7 @@ public abstract class DaoAttendance {
 			"FROM students s " +
 			"INNER JOIN student_year y ON y.studentID = s.studentID " +
 			"   AND y.academicYear = :academicYear " +
-			"LEFT JOIN attendance a ON a.studentID = s.studentID " +
+			"LEFT JOIN " + SqlBits.MARKS + " a ON a.studentID = s.studentID " +
 			"GROUP BY s.studentID, s.name, y.rollNo " +
 			"ORDER BY (COUNT(a.lectureID) = 0) ASC, " +
 			"         (CAST(SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) AS REAL) / " +
@@ -190,10 +189,10 @@ public abstract class DaoAttendance {
 	/**
 	 * Per-student totals restricted to one course, in roll number order.
 	 * <p>
-	 * Both joins are INNER here, unlike the query above, so only students with a mark for this
-	 * course appear. That is the intended reading of a per-course list: a student with no rows
-	 * against the course is not a student at nought per cent, they are somebody who does not
-	 * take it.
+	 * Both joins are INNER here, unlike the query above, so only students with a lecture of
+	 * this course held for them appear. That is the intended reading of a per-course list: a
+	 * student with nothing against the course is not a student at nought per cent, they are
+	 * somebody who does not take it.
 	 */
 	@Query("SELECT s.studentID, s.name, y.rollNo, " +
 			"COUNT(a.lectureID) AS totalLectures, " +
@@ -201,7 +200,7 @@ public abstract class DaoAttendance {
 			"FROM students s " +
 			"INNER JOIN student_year y ON y.studentID = s.studentID " +
 			"   AND y.academicYear = :academicYear " +
-			"INNER JOIN attendance a ON a.studentID = s.studentID " +
+			"INNER JOIN " + SqlBits.MARKS + " a ON a.studentID = s.studentID " +
 			"INNER JOIN lectures l ON l.lectureID = a.lectureID AND l.courseID = :courseID " +
 			"GROUP BY s.studentID, s.name, y.rollNo " +
 			"ORDER BY y.rollNo ASC")
@@ -211,8 +210,8 @@ public abstract class DaoAttendance {
 	/**
 	 * Per-course aggregates, one row per course including those with no lectures yet.
 	 * <p>
-	 * {@code lectureCount} is a DISTINCT count because the join to attendance repeats each
-	 * lecture once per student marked on it.
+	 * {@code lectureCount} is a DISTINCT count because the join repeats each lecture once per
+	 * student it was held for.
 	 */
 	@Query("SELECT c.courseID, c.courseCode, c.courseTopic, " +
 			"COUNT(a.studentID) AS totalRecords, " +
@@ -220,7 +219,7 @@ public abstract class DaoAttendance {
 			"COUNT(DISTINCT l.lectureID) AS lectureCount " +
 			"FROM courses c " +
 			"LEFT JOIN lectures l ON l.courseID = c.courseID " +
-			"LEFT JOIN attendance a ON a.lectureID = l.lectureID " +
+			"LEFT JOIN " + SqlBits.MARKS + " a ON a.lectureID = l.lectureID " +
 			"GROUP BY c.courseID, c.courseCode, c.courseTopic " +
 			"ORDER BY c.courseCode ASC")
 	public abstract LiveData<List<CourseAttendanceStat>> getCourseStats();
@@ -232,8 +231,8 @@ public abstract class DaoAttendance {
 	 * anything to report on. The statistics screen is where a bounded version lives.
 	 */
 	@Query("SELECT CASE WHEN COUNT(*) = 0 THEN 0 ELSE " +
-			"(SUM(CASE WHEN present = 1 THEN 1 ELSE 0 END) * 100.0) / COUNT(*) END " +
-			"FROM attendance")
+			"(SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) * 100.0) / COUNT(*) END " +
+			"FROM " + SqlBits.MARKS + " a")
 	public abstract LiveData<Double> getOverallPercentage();
 
 	@Query("SELECT COUNT(DISTINCT lectureID) FROM attendance")

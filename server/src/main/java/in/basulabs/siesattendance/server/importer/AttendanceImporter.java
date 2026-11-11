@@ -294,8 +294,14 @@ public final class AttendanceImporter {
 	// ── Writing ──────────────────────────────────────────────────────────
 
 	/**
-	 * Writes every usable lecture of the plan, on the caller's transaction. A lecture already on
-	 * record has its marks replaced; a new one is keyed under the server's node.
+	 * Writes every usable lecture of the plan, on the caller's transaction. A new lecture is
+	 * keyed under the server's node.
+	 * <p>
+	 * A lecture already on record is corrected by the sheet, not replaced by it: each P or AB
+	 * overwrites that student's mark, and no mark is taken away: an empty cell changes
+	 * nothing, and a mark the sheet says nothing about stays. The device's
+	 * {@code AttendanceRecordImporter.commit} has the same rule and why; clearing the lecture
+	 * first, which both used to do, deleted the marks of everybody the sheet did not list.
 	 */
 	@NonNull
 	public static Result commit(@NonNull Connection connection, @NonNull Plan plan)
@@ -318,11 +324,6 @@ public final class AttendanceImporter {
 			Long lectureId = lookups.existing(lecture);
 
 			if (lectureId != null) {
-				try (PreparedStatement clear = connection.prepareStatement(
-						"DELETE FROM attendance WHERE lecture_id = ?")) {
-					clear.setLong(1, lectureId);
-					clear.executeUpdate();
-				}
 				replaced++;
 
 			} else {
@@ -345,7 +346,13 @@ public final class AttendanceImporter {
 			}
 
 			try (PreparedStatement mark = connection.prepareStatement(
-					"INSERT INTO attendance (lecture_id, student_id, present) VALUES (?, ?, ?)")) {
+					"INSERT INTO attendance (lecture_id, student_id, present) VALUES (?, ?, ?) "
+							// Over the mark that is there, and only when it differs, so a
+							// sheet imported twice writes nothing the second time and leaves
+							// nothing in the audit log.
+							+ "ON CONFLICT (lecture_id, student_id) DO UPDATE "
+							+ "SET present = EXCLUDED.present "
+							+ "WHERE attendance.present IS DISTINCT FROM EXCLUDED.present")) {
 
 				for (Map.Entry<Long, Boolean> entry : lecture.marks.entrySet()) {
 					mark.setLong(1, lectureId);

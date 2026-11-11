@@ -61,8 +61,8 @@ public class AdapterAttendance extends RecyclerView.Adapter<AdapterAttendance.Ho
 		final List<AttendanceRow> incoming = new ArrayList<>();
 		if (newRows != null) {
 			for (AttendanceRow row : newRows) {
-				incoming.add(new AttendanceRow(row.studentID, row.name, row.rollNo, row.present,
-						row.marked));
+				incoming.add(new AttendanceRow(row.studentID, row.name, row.rollNo,
+						row.present));
 			}
 		}
 
@@ -88,7 +88,6 @@ public class AdapterAttendance extends RecyclerView.Adapter<AdapterAttendance.Ho
 				AttendanceRow a = rows.get(oldPos);
 				AttendanceRow b = incoming.get(newPos);
 				return a.present == b.present
-						&& a.marked == b.marked
 						&& a.name.equals(b.name)
 						&& a.rollNo.equals(b.rollNo);
 			}
@@ -167,14 +166,15 @@ public class AdapterAttendance extends RecyclerView.Adapter<AdapterAttendance.Ho
 			}
 
 			AttendanceRow row = rows.get(position);
-			// A row nobody has marked takes either answer, including the one its unused
-			// default happens to hold.
-			if (readOnly || (row.marked && isPresent == row.present)) {
+			// A checkable button unchecks itself when it is tapped while checked, which
+			// would leave neither lit. The row is bound again whatever happens, so the one
+			// that carries the answer is lit and the other is not.
+			if (readOnly || isPresent == row.present) {
+				bindPresence(row);
 				return;
 			}
 
 			row.present = isPresent;
-			row.marked = true;
 			bindPresence(row);
 
 			if (listener != null) {
@@ -190,14 +190,13 @@ public class AdapterAttendance extends RecyclerView.Adapter<AdapterAttendance.Ho
 		}
 
 		/**
-		 * Exactly one of the two is lit on a row that carries an answer, so the buttons read
-		 * as a two-way switch rather than a pair of independent toggles. Neither is lit on a
-		 * row nobody has marked, which only a reopened register has: see
-		 * {@link AttendanceRow#marked}.
+		 * Exactly one of the two is lit on every row, so the buttons read as a two-way switch
+		 * rather than a pair of independent toggles. A student is present or absent; there is
+		 * no row with neither.
 		 */
 		void bindPresence(@NonNull AttendanceRow row) {
-			present.setChecked(row.marked && row.present);
-			absent.setChecked(row.marked && !row.present);
+			present.setChecked(row.present);
+			absent.setChecked(!row.present);
 			present.setClickable(!readOnly);
 			absent.setClickable(!readOnly);
 		}
