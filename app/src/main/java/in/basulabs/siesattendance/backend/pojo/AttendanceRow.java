@@ -8,8 +8,8 @@ import in.basulabs.siesattendance.backend.util.NameFormat;
  * One row on the mark-attendance screen: a student, and whether they were there.
  * <p>
  * Built from the roll rather than read from the database, so a sheet exists in full before
- * anything is saved. Reopening a lecture rebuilds the rows the same way and then applies the
- * marks already stored over the top.
+ * anything is saved. Reopening a lecture that has marks starts from those marks instead, so
+ * nobody who was marked is missing from it; see {@code RegisterSheet}.
  */
 public class AttendanceRow {
 
@@ -36,12 +36,30 @@ public class AttendanceRow {
 	 */
 	public boolean present = true;
 
+	/**
+	 * Whether this row carries an answer to save.
+	 * <p>
+	 * True on a fresh sheet, where every row does: see {@link #present}. False only on a
+	 * register that is reopened with marks already stored, for a student who is on the roll
+	 * now and has no mark for that lecture: somebody who joined the batch afterwards, or was
+	 * left off the sheet. Nothing was recorded for them, so nothing is saved for them unless
+	 * the user marks them, and {@link #present} means nothing until then. Saving the default
+	 * instead would file a student as present at a class held before they arrived.
+	 */
+	public boolean marked = true;
+
 	public AttendanceRow(long studentID, @NonNull String name, @NonNull String rollNo,
 	                     boolean present) {
+		this(studentID, name, rollNo, present, true);
+	}
+
+	public AttendanceRow(long studentID, @NonNull String name, @NonNull String rollNo,
+	                     boolean present, boolean marked) {
 		this.studentID = studentID;
 		this.name = name;
 		this.rollNo = rollNo;
 		this.present = present;
+		this.marked = marked;
 	}
 
 	/** A student on a fresh sheet: present until someone says otherwise. */

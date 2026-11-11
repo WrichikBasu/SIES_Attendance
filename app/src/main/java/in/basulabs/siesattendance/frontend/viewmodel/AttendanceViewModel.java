@@ -76,6 +76,7 @@ import in.basulabs.siesattendance.backend.sync.SyncSignIn;
 import in.basulabs.siesattendance.backend.util.CsvImporter;
 import in.basulabs.siesattendance.backend.util.LectureFilter;
 import in.basulabs.siesattendance.backend.util.MarkSheetExporter;
+import in.basulabs.siesattendance.backend.util.RegisterSheet;
 
 /**
  * The single ViewModel behind every screen.
@@ -2072,8 +2073,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
-	 * Loads the roll for one lecture. Any attendance already saved for it is pre-applied, so
-	 * reopening a marked lecture shows the previous answers rather than a blank sheet.
+	 * Loads the register for one lecture. A lecture with marks is shown as it was marked:
+	 * everybody who holds a mark, with that mark, and anybody on the roll now who has none as
+	 * not marked. A lecture with no marks is a fresh sheet of the roll. {@link RegisterSheet}
+	 * has the rule and why.
 	 * <p>
 	 * The roll is read against the session the lecture itself falls in, not the session new
 	 * work is being filed under. Those differ whenever a past year's lecture is opened, and
@@ -2100,26 +2103,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 					? repository.rollForCourseSync(details.courseID,
 					sessionYearFor(details.startDateTime))
 					: repository.studentsInBatchSync(details.batchID);
-			List<Long> presentIds = repository.presentStudentIdsSync(lectureID);
 
-			List<EntityAttendance> existing = repository.attendanceForLectureSync(lectureID);
-			List<Long> markedIds = new ArrayList<>();
-			for (EntityAttendance record : existing) {
-				markedIds.add(record.studentID);
-			}
-
-			List<AttendanceRow> rows = new ArrayList<>();
-			for (StudentWithYear student : students) {
-				// A student with no stored row joined the class after this lecture was
-				// filed. There is nothing recorded either way, so they take the same
-				// default as a fresh sheet.
-				boolean present = !markedIds.contains(student.studentID)
-						|| presentIds.contains(student.studentID);
-				rows.add(new AttendanceRow(student.studentID, student.name, student.rollNo,
-						present));
-			}
-
-			attendanceRows.postValue(rows);
+			// The marks themselves, not the roll with marks laid over it: a student who has
+			// left or changed batch since is on neither roll above, and has to be on the
+			// sheet all the same.
+			attendanceRows.postValue(RegisterSheet.rows(students,
+					repository.sheetMarksSync(lectureID, sessionYearFor(details.startDateTime))));
 			busy.postValue(false);
 		});
 	}
@@ -2132,6 +2121,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		for (AttendanceRow row : rows) {
 			if (row.studentID == studentID) {
 				row.present = present;
+				row.marked = true;
 				break;
 			}
 		}
@@ -2145,6 +2135,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 		}
 		for (AttendanceRow row : rows) {
 			row.present = present;
+			// "All" means all: a row nobody had marked is marked by this, on purpose.
+			row.marked = true;
 		}
 		attendanceRows.setValue(rows);
 	}
@@ -2165,13 +2157,19 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		final long lectureID = currentLecture.lectureID;
 		final List<EntityAttendance> records = new ArrayList<>();
-		for (AttendanceRow row : rows) {
+		for (AttendanceRow row : RegisterSheet.toSave(rows)) {
 			records.add(new EntityAttendance(lectureID, row.studentID, row.present));
 		}
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				repository.saveAttendanceSheet(lectureID, records);
+				// Written over the marks that are there, not in place of them. The sheet
+				// holds every mark the lecture had when it was opened, so there is nothing
+				// for a save to remove; and clearing first would delete any mark that is
+				// not on the sheet -- one a sync brought in while it was open, say -- which
+				// is how reopening a register used to lose the marks of students who had
+				// left the batch.
+				repository.insertAttendance(records);
 				toastMessage.postValue("Attendance saved");
 				onDone.run();
 			} catch (Exception e) {

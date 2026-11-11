@@ -27,6 +27,7 @@ import in.basulabs.siesattendance.backend.pojo.ClassKey;
 import in.basulabs.siesattendance.backend.pojo.CourseAttendanceStat;
 import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
+import in.basulabs.siesattendance.backend.pojo.LectureMark;
 import in.basulabs.siesattendance.backend.pojo.SessionImpact;
 import in.basulabs.siesattendance.backend.pojo.StatRow;
 import in.basulabs.siesattendance.backend.pojo.StatsSummary;
@@ -325,6 +326,13 @@ public interface AttendanceRepository {
 
 	@NonNull
 	List<Long> markedStudentIdsSync(long lectureID);
+
+	/**
+	 * Every mark stored for a lecture, whoever holds it, named and with the roll number of the
+	 * given session. For reopening a register; see {@code RegisterSheet}.
+	 */
+	@NonNull
+	List<LectureMark> sheetMarksSync(long lectureID, int academicYear);
 
 	@NonNull
 	LiveData<List<CourseAttendanceStat>> observeCourseStats();

@@ -21,8 +21,10 @@ import in.basulabs.siesattendance.backend.pojo.StudentAttendanceStat;
 /**
  * Attendance rows: writing sheets, and reading the totals back out.
  * <p>
- * The write side is small on purpose. A sheet is only ever replaced whole, through
- * {@link #saveSheet}, so there is no path that leaves a lecture half marked.
+ * The write side is small on purpose. A sheet is written in one transaction, so there is no
+ * path that leaves a lecture half marked: {@link #saveSheet} replaces a lecture's marks whole,
+ * and {@link #insertAll} writes over the ones it is given and leaves the rest, which is what
+ * saving a reopened register does.
  * <p>
  * The read side is where the subtlety is. Anything reporting on how much a student attended has
  * to be careful about what it divides by: counting their own attendance rows shrinks the
@@ -52,6 +54,27 @@ public abstract class DaoAttendance {
 
 	@Query("SELECT * FROM attendance WHERE lectureID = :lectureID")
 	public abstract List<EntityAttendance> getForLectureSync(long lectureID);
+
+	/**
+	 * Every mark stored for one lecture, with the student's name and the roll number they held
+	 * in the given session, for reopening its register.
+	 * <p>
+	 * Deliberately unlike the rolls: no test of the leave date and none of batch membership. A
+	 * student who has left, or moved to another batch, was still in the room that day, and a
+	 * register that did not list them would lose their mark the next time it was saved. The
+	 * join is LEFT for the same reason, so a student with no row for that session still
+	 * appears, with a blank roll number.
+	 */
+	@Query("SELECT a.lectureID AS lectureID, a.studentID AS studentID, s.name AS name, " +
+			"COALESCE(y.rollNo, '') AS rollNo, a.present AS present " +
+			"FROM attendance a " +
+			"INNER JOIN students s ON s.studentID = a.studentID " +
+			"LEFT JOIN student_year y ON y.studentID = a.studentID " +
+			"   AND y.academicYear = :academicYear " +
+			"WHERE a.lectureID = :lectureID " +
+			"ORDER BY rollNo ASC, s.name ASC")
+	@NonNull
+	public abstract List<LectureMark> getSheetMarksSync(long lectureID, int academicYear);
 
 	/**
 	 * Who was present. Used when reopening a sheet, so the previous marks come back rather than

@@ -32,6 +32,7 @@ import in.basulabs.siesattendance.backend.pojo.ClassKey;
 import in.basulabs.siesattendance.backend.pojo.CourseAttendanceStat;
 import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
+import in.basulabs.siesattendance.backend.pojo.LectureMark;
 import in.basulabs.siesattendance.backend.pojo.SessionImpact;
 import in.basulabs.siesattendance.backend.pojo.StatRow;
 import in.basulabs.siesattendance.backend.pojo.StatsSummary;
@@ -544,6 +545,12 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	@NonNull
 	public List<Long> markedStudentIdsSync(long lectureID) {
 		return db.daoAttendance().getMarkedIdsSync(lectureID);
+	}
+
+	@Override
+	@NonNull
+	public List<LectureMark> sheetMarksSync(long lectureID, int academicYear) {
+		return db.daoAttendance().getSheetMarksSync(lectureID, academicYear);
 	}
 
 	@Override
