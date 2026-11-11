@@ -203,7 +203,7 @@
     <string name="label_whole_class">Whole class</string>
 
 
-    <string name="helper_no_batches_for_session">No batches in this session yet. Create one first.</string>
+    <string name="helper_no_batches_linked_to_course">No batch in this session is linked to this course. Link one from the course first.</string>
 
 
     <string name="title_edit_batch">Edit batch</string>
@@ -490,6 +490,11 @@
         <item quantity="one">1 student marked on this lecture is not on the new roll. Their mark would count towards a course they don\'t take.</item>
         <item quantity="other">%1$d students marked on this lecture are not on the new roll. Their marks would count towards a course they don\'t take.</item>
     </plurals>
+    <!-- The same, for a class representative, who cannot remove marks -->
+    <plurals name="dialog_stranded_message_keep_only">
+        <item quantity="one">1 student marked on this lecture is not on the new roll. Their mark would count towards a course they don\'t take, and only a professor can remove it.</item>
+        <item quantity="other">%1$d students marked on this lecture are not on the new roll. Their marks would count towards a course they don\'t take, and only a professor can remove them.</item>
+    </plurals>
     <string name="option_drop_stranded">Remove those marks</string>
     <string name="option_keep_stranded">Keep them anyway</string>
 
@@ -498,6 +503,8 @@
     <string name="dialog_discard_roll_message">Switching courses discards the marks you haven\'t saved.</string>
     <string name="action_keep_marking">Keep marking</string>
     <string name="action_discard_and_switch">Discard and switch</string>
+    <string name="dialog_batch_not_linked_message">%1$s isn\'t linked to %2$s, so its roll can\'t be kept. Switching discards the marks you haven\'t saved.</string>
+    <string name="error_batch_not_linked">%1$s isn\'t linked to this course. Choose one of its batches.</string>
 
     <!-- Duplicating an attendance record -->
     <string name="action_duplicate_attendance">Duplicate this attendance</string>

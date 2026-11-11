@@ -74,6 +74,13 @@ public class FragmentAttendance extends Fragment {
 
 	private View markAllRow, save;
 
+	/**
+	 * Whether this fragment has already asked for its register. It outlives its view while
+	 * another screen is on top of it, so true here on a rebuilt view means the user is coming
+	 * back to a sheet they may have been part way through.
+	 */
+	private boolean sheetRequested;
+
 	/** Exporting this lecture's marks; a field so its save dialogs are registered in time. */
 	private final MarkExportFlow exportFlow = new MarkExportFlow(this);
 
@@ -119,8 +126,15 @@ public class FragmentAttendance extends Fragment {
 
 		viewModel.getAttendanceRows().observe(getViewLifecycleOwner(), this::onRowsChanged);
 
+		// The register is read every time the view is built, but only a fresh visit starts
+		// from what is saved. A rotation (a saved state) or coming back from "Edit lecture"
+		// (this same fragment, its view rebuilt) keeps the marks changed and not yet saved,
+		// which reading the register afresh used to throw away (R25). After the app was killed
+		// there is a saved state but nothing held, and the ViewModel starts afresh by itself.
 		if (lectureID > 0) {
-			viewModel.loadAttendanceSheet(lectureID);
+			viewModel.loadAttendanceSheet(lectureID,
+					sheetRequested || savedInstanceState != null);
+			sheetRequested = true;
 		}
 
 		setupMenu();
@@ -138,12 +152,17 @@ public class FragmentAttendance extends Fragment {
 				inflater.inflate(R.menu.menu_attendance_record, menu);
 			}
 
-			/** A register this account only reads can still be exported, and nothing else. */
+			/**
+			 * A register this account only reads can still be exported, and nothing else. A
+			 * class representative may correct a register but not delete one or its marks, which
+			 * the server refuses them (R26), so the delete item is not offered at all.
+			 */
 			@Override
 			public void onPrepareMenu(@NonNull Menu menu) {
 				menu.findItem(R.id.action_edit_lecture).setVisible(!readOnly);
 				menu.findItem(R.id.action_duplicate_attendance).setVisible(!readOnly);
-				menu.findItem(R.id.action_delete_attendance).setVisible(!readOnly);
+				menu.findItem(R.id.action_delete_attendance)
+						.setVisible(!readOnly && viewModel.mayDeleteRegisters());
 			}
 
 			@Override

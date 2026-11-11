@@ -263,7 +263,7 @@ public class FragmentTakeAttendance extends Fragment {
 				courses = list;
 				List<String> labels = new ArrayList<>();
 				for (EntityCourse course : list) {
-					labels.add(course.courseCode + " – " + course.courseTopic);
+					labels.add(courseLabel(course));
 				}
 				actvCourse.setAdapter(new ArrayAdapter<>(requireContext(),
 						android.R.layout.simple_list_item_1, labels));
@@ -277,15 +277,14 @@ public class FragmentTakeAttendance extends Fragment {
 	}
 
 	/**
-	 * Changing the course keeps whatever has been marked.
+	 * Changing the course keeps whatever has been marked, as long as the new course takes the
+	 * batch already chosen.
 	 * <p>
-	 * The group is what decides who is in the room, and it is left alone here: the same
-	 * students are sitting there whether the hour goes down as theory or practicals. The roll
-	 * is re-read because a different course can reach a slightly different set of students,
-	 * and every mark already made is carried across it.
-	 * <p>
-	 * Only changing the group discards anything, which is the one case where the people
-	 * themselves differ.
+	 * The group is what decides who is in the room, and it is left alone when it can be: the
+	 * same students are sitting there whether the hour goes down as theory or practicals. The
+	 * roll is re-read because a different course can reach a slightly different set of
+	 * students, and every mark already made is carried across it. A batch the new course does
+	 * not take is cleared instead; see {@link #keepOrDropBatch}.
 	 */
 	private void requestCourseChange(@NonNull EntityCourse course) {
 
@@ -350,52 +349,110 @@ public class FragmentTakeAttendance extends Fragment {
 	 */
 	private void onCourseChosen(@NonNull EntityCourse course) {
 
-		boolean hadGroup = selectedBatchID != null;
+		EntityCourse previous = selectedCourse;
 
 		selectedCourse = course;
 		tilCourse.setError(null);
 		tilBatch.setError(null);
 
-		// The batch survives the course change. Batches are listed per session rather than
-		// per course, so the one already chosen is still a valid choice for the new course.
-		loadBatchOptions(course);
-
-		if (hadGroup) {
-			viewModel.loadRoll(course.courseID, selectedBatchID, true);
-		}
+		// Whether the batch survives depends on whether the new course takes it, which is
+		// known once its batches are in.
+		loadBatchOptions(course, () -> keepOrDropBatch(previous));
 		updateRollVisibility();
 	}
 
 	/**
-	 * Loads the batches attendance can be taken for: every batch in the current academic year,
-	 * and nothing else.
+	 * Settles the chosen batch after the course changed, once the new course's batches are in.
 	 * <p>
-	 * The list is not narrowed by the course. A batch is a named group of students for a
-	 * session, not a property of a course, and whoever is taking attendance knows which batch
-	 * is sitting in front of them.
+	 * A batch the new course also takes is kept, with the marks made on it: the same students
+	 * are in the room whether the hour goes down as theory or practicals. One the new course does
+	 * not take cannot be kept (R27), so the selection is cleared, and when there are marks to
+	 * lose that is asked first, with the old course as the way back.
+	 *
+	 * @param previous the course chosen before, or null when there was none
+	 */
+	private void keepOrDropBatch(@Nullable EntityCourse previous) {
+
+		if (selectedCourse == null || selectedBatchID == null) {
+			return;
+		}
+
+		if (indexOfBatch(selectedBatchID) >= 0) {
+			viewModel.loadRoll(selectedCourse.courseID, selectedBatchID, true);
+			return;
+		}
+
+		String batchName = actvBatch.getText().toString();
+
+		if (!rollTouched || previous == null) {
+			dropBatch(batchName);
+			return;
+		}
+
+		new MaterialAlertDialogBuilder(requireContext())
+				.setTitle(R.string.dialog_discard_roll_title)
+				.setMessage(getString(R.string.dialog_batch_not_linked_message, batchName,
+						selectedCourse.courseCode))
+				.setCancelable(false)
+				.setNegativeButton(R.string.action_keep_marking, (d, w) -> {
+					// Back to the course the marks were made for, and its batches.
+					selectedCourse = previous;
+					actvCourse.setText(courseLabel(previous), false);
+					loadBatchOptions(previous, null);
+					updateRollVisibility();
+				})
+				.setPositiveButton(R.string.action_discard_and_switch, (d, w) ->
+						dropBatch(batchName))
+				.show();
+	}
+
+	/**
+	 * Clears a batch the chosen course does not take, and the roll that was read for it, and
+	 * says why the field is empty again.
+	 */
+	private void dropBatch(@NonNull String batchName) {
+		selectedBatchID = null;
+		rollTouched = false;
+		actvBatch.setText("", false);
+		viewModel.clearRoll();
+		tilBatch.setError(batchName.isEmpty()
+				? null
+				: getString(R.string.error_batch_not_linked, batchName));
+		updateRollVisibility();
+	}
+
+	@NonNull
+	private static String courseLabel(@NonNull EntityCourse course) {
+		return course.courseCode + " – " + course.courseTopic;
+	}
+
+	/**
+	 * Loads the batches attendance can be taken for: the current session's batches that are
+	 * linked to the course, and nothing else.
+	 * <p>
+	 * Narrowed by the course because a register against a batch the course does not take is
+	 * counted by the statistics and missing from the register export, which lists a course
+	 * only for the students of its linked batches (R27).
 	 * <p>
 	 * An empty list is a dead end rather than a detail: with no whole-class option there is
 	 * nothing to record a session against, so the helper text says what to do about it instead
 	 * of merely noting the absence.
+	 *
+	 * @param then run on the main thread once the list is in place, or null
 	 */
-	private void loadBatchOptions(@NonNull EntityCourse course) {
-		viewModel.loadBatchesForSession(all -> {
+	private void loadBatchOptions(@NonNull EntityCourse course, @Nullable Runnable then) {
+		viewModel.loadBatchesForCourse(course.courseID, list -> {
 			if (!isAdded()) {
 				return;
 			}
 
-			// The course's own department's batches (V31), and any nobody has placed yet,
-			// which could be anybody's. Every department's, for an OE, AEC, IKS or VEC
-			// course (V52).
-			List<EntityBatchDesc> list = new ArrayList<>();
-			for (EntityBatchDesc batch : all) {
-				if (course.courseType.mayLinkBatchOf(course.offeringDepartment,
-						batch.department)) {
-					list.add(batch);
-				}
-			}
-
 			Ui.onMain(this, () -> {
+
+				// Overtaken by another course chosen while this one's list was read.
+				if (selectedCourse == null || selectedCourse.courseID != course.courseID) {
+					return;
+				}
+
 				batches = list;
 
 				List<String> labels = new ArrayList<>();
@@ -432,6 +489,10 @@ public class FragmentTakeAttendance extends Fragment {
 				// which reloads the roll from the database and would overwrite the marks
 				// being restored.
 				applyPendingBatch(labels);
+
+				if (then != null) {
+					then.run();
+				}
 			});
 		});
 	}
@@ -738,7 +799,7 @@ public class FragmentTakeAttendance extends Fragment {
 
 		selectedCourse = courses.get(index);
 		actvCourse.setText(labels.get(index), false);
-		loadBatchOptions(selectedCourse);
+		loadBatchOptions(selectedCourse, null);
 		updateRollVisibility();
 	}
 

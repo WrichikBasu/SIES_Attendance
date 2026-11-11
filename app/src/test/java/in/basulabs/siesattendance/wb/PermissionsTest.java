@@ -396,6 +396,25 @@ public class PermissionsTest {
 	}
 
 	@Test
+	public void registersAreDeletedByProfessorsAndAdministratorsAndNotByAClassRepresentative() {
+
+		Permissions.Capability deleting = Permissions.Capability.DELETE_REGISTERS;
+
+		assertFalse("a class representative: the server grants no delete (V6)",
+				Permissions.may(AccountKind.STUDENT, false, Set.of(), deleting));
+		assertTrue("a course's instructor",
+				Permissions.may(AccountKind.PROFESSOR, false, Set.of(), deleting));
+		assertTrue("a head of department",
+				Permissions.may(AccountKind.PROFESSOR, true, Set.of("HOD"), deleting));
+		assertTrue("an administrator",
+				Permissions.may(AccountKind.STAFF, true, Set.of("ADMIN"), deleting));
+		assertFalse("the office, which only reads registers",
+				Permissions.may(AccountKind.STAFF, true, Set.of("OFFICE"), deleting));
+		assertTrue("a build with no server, which has nobody to refuse it",
+				Permissions.may(null, true, null, deleting));
+	}
+
+	@Test
 	public void theStaffListIsTheOfficesAndNoProfessors() {
 
 		Permissions.Capability professors = Permissions.Capability.PROFESSORS;

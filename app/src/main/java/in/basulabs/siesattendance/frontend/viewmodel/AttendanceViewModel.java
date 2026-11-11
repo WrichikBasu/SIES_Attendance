@@ -806,6 +806,16 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
+	 * Whether this account may clear a register, delete a lecture, or drop the marks an edit
+	 * leaves stranded; see {@link Permissions.Capability#DELETE_REGISTERS}. The screens hide
+	 * those actions when it is false, since the server would refuse every row and the phone
+	 * would be left disagreeing with it.
+	 */
+	public boolean mayDeleteRegisters() {
+		return may(Permissions.Capability.DELETE_REGISTERS);
+	}
+
+	/**
 	 * Whether to offer that course's class representatives; see
 	 * {@link Permissions#mayAppointFor}. Only with a server signed in to, since that is where
 	 * an appointment is made.
@@ -1809,7 +1819,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public int noBatchesHelper() {
 		return DeviceIdentity.accountKind(getApplication()) == AccountKind.STUDENT
 				? R.string.helper_no_linked_batches_cr
-				: R.string.helper_no_batches_for_session;
+				: R.string.helper_no_batches_linked_to_course;
 	}
 
 	/**
@@ -2009,8 +2019,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	public void clearRoll() {
+		sheetGeneration++;
 		attendanceRows.setValue(new ArrayList<>());
 		currentLecture = null;
+		sheetAsLoaded = null;
 	}
 
 	/**
@@ -2085,13 +2097,71 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * wholesale.
 	 */
 	public void loadAttendanceSheet(long lectureID) {
+		loadAttendanceSheet(lectureID, false);
+	}
+
+	/**
+	 * Whether the sheet held here is that lecture's register, as opened on the register screen.
+	 * False while taking a new register, whose sheet belongs to no lecture yet.
+	 */
+	public boolean holdsSheetOf(long lectureID) {
+		return currentLecture != null && currentLecture.lectureID == lectureID
+				&& sheetAsLoaded != null;
+	}
+
+	/**
+	 * Every mark on the register as it was last read from the database, by student. The changes
+	 * not yet saved are whatever the sheet on screen differs from this by.
+	 * <p>
+	 * Null while no register is open. Main thread only.
+	 */
+	@Nullable
+	private Map<Long, Boolean> sheetAsLoaded;
+
+	/**
+	 * Counts the registers asked for, so that a load overtaken by a later one, or by
+	 * {@link #clearRoll()}, is thrown away rather than landing on top of it. Main thread only.
+	 */
+	private int sheetGeneration;
+
+	/**
+	 * Loads the register for one lecture, optionally keeping the changes not yet saved.
+	 * <p>
+	 * Keeping them is what the register screen asks for when its view is rebuilt around a sheet
+	 * this ViewModel is already holding: a rotation, or a trip to "Edit lecture" and back. The
+	 * register is read again all the same, because the edit may have moved the lecture to
+	 * another course, batch or session, and a sync may have brought marks in; then every row
+	 * whose mark differed from the one read last time gets that mark back. A student no longer on
+	 * the sheet takes their change with them, since there is nowhere left to show it.
+	 * <p>
+	 * Not keeping them is a fresh visit, where whatever is still held from the last time this
+	 * register was open -- left without saving -- must not reappear as though it were saved.
+	 *
+	 * @param keepEdits carry over the marks changed on screen since the sheet was last read
+	 */
+	public void loadAttendanceSheet(long lectureID, boolean keepEdits) {
 		busy.setValue(true);
+
+		// A fresh visit shows nothing until its own register is in, rather than the last one
+		// opened under this one's header, which saving would then write to the wrong lecture.
+		if (!keepEdits || !holdsSheetOf(lectureID)) {
+			attendanceRows.setValue(new ArrayList<>());
+			currentLecture = null;
+			sheetAsLoaded = null;
+		}
+
+		final int generation = ++sheetGeneration;
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			LectureDetails details = repository.lectureDetailsSync(lectureID);
-			currentLecture = details;
 
 			if (details == null) {
+				new Handler(Looper.getMainLooper()).post(() -> {
+					if (generation == sheetGeneration) {
+						currentLecture = null;
+						sheetAsLoaded = null;
+					}
+				});
 				toastMessage.postValue("Lecture not found");
 				busy.postValue(false);
 				return;
@@ -2107,10 +2177,63 @@ public class AttendanceViewModel extends AndroidViewModel {
 			// The marks themselves, not the roll with marks laid over it: a student who has
 			// left or changed batch since is on neither roll above, and has to be on the
 			// sheet all the same.
-			attendanceRows.postValue(RegisterSheet.rows(students,
-					repository.sheetMarksSync(lectureID, sessionYearFor(details.startDateTime))));
-			busy.postValue(false);
+			List<AttendanceRow> rows = RegisterSheet.rows(students,
+					repository.sheetMarksSync(lectureID, sessionYearFor(details.startDateTime)));
+
+			Map<Long, Boolean> asLoaded = new HashMap<>();
+			for (AttendanceRow row : rows) {
+				asLoaded.put(row.studentID, row.present);
+			}
+
+			// Published together on the main thread, so that the lecture, the sheet and what
+			// it is compared against never belong to different registers.
+			new Handler(Looper.getMainLooper()).post(() -> {
+				busy.setValue(false);
+
+				if (generation != sheetGeneration) {
+					return;
+				}
+
+				// The changes not yet saved, read here rather than when the load was asked
+				// for, so a mark tapped while it ran is kept as well. A fresh visit cleared the
+				// sheet above and so has none.
+				Map<Long, Boolean> edits = unsavedEdits();
+
+				for (AttendanceRow row : rows) {
+					Boolean edited = edits.get(row.studentID);
+					if (edited != null) {
+						row.present = edited;
+					}
+				}
+
+				currentLecture = details;
+				sheetAsLoaded = asLoaded;
+				attendanceRows.setValue(rows);
+			});
 		});
+	}
+
+	/**
+	 * The marks on screen that differ from the register as last read, by student. Main thread
+	 * only.
+	 */
+	@NonNull
+	private Map<Long, Boolean> unsavedEdits() {
+
+		Map<Long, Boolean> edits = new HashMap<>();
+		List<AttendanceRow> rows = attendanceRows.getValue();
+
+		if (rows == null || sheetAsLoaded == null) {
+			return edits;
+		}
+
+		for (AttendanceRow row : rows) {
+			Boolean loaded = sheetAsLoaded.get(row.studentID);
+			if (loaded == null || loaded != row.present) {
+				edits.put(row.studentID, row.present);
+			}
+		}
+		return edits;
 	}
 
 	public void setPresence(long studentID, boolean present) {
@@ -2681,6 +2804,13 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                          @Nullable String notes, boolean dropStranded,
 	                          @NonNull Runnable onDone) {
 
+		// Asked here as well as on the screen: dropping marks is a deletion, which the server
+		// refuses a class representative.
+		if (dropStranded && !mayDeleteRegisters()) {
+			sayNotPermitted();
+			return;
+		}
+
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				if (!end.isAfter(start)) {
@@ -2735,6 +2865,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * there is simply gone until it is taken again.
 	 */
 	public void clearAttendanceForLecture(long lectureID, @NonNull Runnable onDone) {
+
+		if (!mayDeleteRegisters()) {
+			sayNotPermitted();
+			return;
+		}
+
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				repository.clearAttendanceForLecture(lectureID);
@@ -2752,6 +2888,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * happened, so it is the wrong choice for a sheet that was simply filled in wrongly.
 	 */
 	public void deleteLecture(long lectureID, @NonNull Runnable onDone) {
+
+		if (!mayDeleteRegisters()) {
+			sayNotPermitted();
+			return;
+		}
+
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
 				EntityLecture lecture = repository.lectureSync(lectureID);
@@ -2986,17 +3128,30 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
-	 * Every batch in the current academic year.
+	 * The current session's batches that are linked to a course, which are the only ones its
+	 * attendance can be taken for.
 	 * <p>
-	 * The course is not consulted. A batch is a named group of students for a session, not a
-	 * property of a course, and filtering the list by the selected course previously made
-	 * batches disappear for minor and open-elective courses whose roster matching failed.
+	 * A register against a batch the course does not take shows in the statistics and never in
+	 * the register export, which lists a course only for the students of its linked batches
+	 * (R27). The course's links already respect which departments' batches it may take (V31,
+	 * V52), so nothing else needs checking here.
 	 */
-	public void loadBatchesForSession(
-			@NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
+	public void loadBatchesForCourse(long courseID,
+	                                 @NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
 		final int acadYear = academicYearValue();
-		MainDatabase.DB_EXECUTOR.execute(() ->
-				cb.accept(visibleBatches(repository.batchesForYearSync(acadYear))));
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+
+			Set<Long> linked = new HashSet<>(
+					repository.batchIdsLinkedToSync(java.util.Collections.singletonList(courseID)));
+
+			List<EntityBatchDesc> batches = new ArrayList<>();
+			for (EntityBatchDesc batch : visibleBatches(repository.batchesForYearSync(acadYear))) {
+				if (linked.contains(batch.batchID)) {
+					batches.add(batch);
+				}
+			}
+			cb.accept(batches);
+		});
 	}
 
 	/**
