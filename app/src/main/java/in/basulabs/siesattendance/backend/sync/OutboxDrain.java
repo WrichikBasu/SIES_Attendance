@@ -635,16 +635,59 @@ public final class OutboxDrain {
 		// REPLACE deletes the row that is there first, and the device's own rows point at it
 		// with RESTRICT, so the server's copy of a lecture this phone has marks against could
 		// not be accepted at all. See DeviceSql.updateRow.
-		String update = DeviceSql.updateRow(table);
+		//
+		// And when the insert collides with a row this phone made under another id -- the same
+		// class another phone recorded first, a roll number the office used -- settled rather
+		// than allowed to fail the page, which used to stop every pull behind it (C3). See
+		// PulledRows for what each case comes to.
+		PulledRows.Outcome outcome = PulledRows.write(device(sqlite), table, row);
 
-		if (update != null
-				&& change(sqlite, update, bindings(DeviceSql.updateColumns(table), row)) > 0) {
-			return true;
+		switch (outcome) {
+			case REKEYED -> Log.i(TAG, "took " + table.name() + change.key() + " in place of "
+					+ "this phone's copy of the same row, which had another id");
+			case REPLACED -> Log.i(TAG, "took " + table.name() + change.key() + " in place of "
+					+ "this phone's row claiming the same " + (table.name().equals("student_year")
+					? "roll number" : "value"));
+			case SET_ASIDE -> Log.w(TAG, "set aside " + table.name() + change.key() + ": a "
+					+ "different row here holds the same unique value");
+			default -> {
+			}
 		}
+		return outcome != PulledRows.Outcome.SET_ASIDE;
+	}
 
-		sqlite.execSQL(DeviceSql.insertRow(table),
-				bindings(DeviceSql.insertColumns(table), row));
-		return true;
+	/** The database as {@link PulledRows} reaches it. */
+	@NonNull
+	private static PulledRows.Device device(@NonNull SupportSQLiteDatabase sqlite) {
+
+		return new PulledRows.Device() {
+
+			@Override
+			public int change(@NonNull String sql, @NonNull Object[] values) {
+				try {
+					return OutboxDrain.change(sqlite, sql, values);
+				} catch (SQLiteConstraintException refused) {
+					throw new PulledRows.Conflict(refused);
+				}
+			}
+
+			@Nullable
+			@Override
+			public List<Long> firstRow(@NonNull String sql, @NonNull Object[] values) {
+				try (Cursor cursor = sqlite.query(sql, values)) {
+
+					if (!cursor.moveToFirst()) {
+						return null;
+					}
+
+					List<Long> row = new ArrayList<>();
+					for (int at = 0; at < cursor.getColumnCount(); at++) {
+						row.add(cursor.getLong(at));
+					}
+					return row;
+				}
+			}
+		};
 	}
 
 	/** A row a pulled row points at, by its table and its key. */
@@ -687,20 +730,6 @@ public final class OutboxDrain {
 			}
 		}
 		return null;
-	}
-
-	/** A row's values in the order a statement's columns list them. */
-	@NonNull
-	private static Object[] bindings(@NonNull List<DeviceTables.Column> columns,
-	                                 @NonNull Map<String, Object> row) {
-
-		Object[] values = new Object[columns.size()];
-
-		for (int at = 0; at < columns.size(); at++) {
-			values[at] = row.get(columns.get(at).room());
-		}
-
-		return values;
 	}
 
 	/**

@@ -61,6 +61,23 @@ import in.basulabs.siesattendance.backend.sync.OutboxOp;
  * with the roster in it, a truncated snapshot that reported the head as its watermark would have
  * silently dropped every row past the first page and no pull would ever have asked for them
  * again.
+ *
+ * <h3>The watermark is a transaction, not a position</h3>
+ * It used to be the position of the last entry sent, {@code (occurred_at, audit_id)}. Both are
+ * fixed when the audit trigger fires, inside the writing transaction, and the entry is visible
+ * only when that commits. A pull while an import was still running saw later entries from
+ * shorter transactions, moved past the import's position, and never looked back: the import
+ * never reached that phone until it started over (C1). The same hole was open across a snapshot.
+ * <p>
+ * Since V63 the watermark is a {@link Frontier}: the oldest transaction still open when the pull
+ * ran. Every older transaction had finished and was sent; every one still open, or not yet
+ * started, is at or past the frontier and is sent by a later pull whenever it commits. The cost
+ * is that entries of transactions younger than an open one are sent again, which a phone absorbs
+ * by applying them by key.
+ * <p>
+ * A phone that last pulled before V63 holds a position. It is caught up by position once, from a
+ * day before that position to be safe, and then handed a frontier taken before the catch-up
+ * began; see {@link Positions}.
  */
 public final class SyncReader {
 
@@ -106,65 +123,171 @@ public final class SyncReader {
 			return snapshot(connection, capped, Resume.parse(watermark));
 		}
 
-		Cursor cursor = Cursor.parse(watermark);
+		if (Frontier.looksLikeOne(watermark)) {
+			return byTransaction(connection, Frontier.parse(watermark), capped);
+		}
+
+		if (Positions.looksLikeOne(watermark)) {
+			return byPosition(connection, Positions.parse(watermark), capped);
+		}
+
+		// A position issued before V63. Caught up by position once, from a day earlier in case a
+		// transaction was open across it -- the hole the frontier closes -- and then moved on to
+		// a frontier taken now, before anything is read.
+		Cursor before = Cursor.parse(watermark);
+
+		return byPosition(connection, new Positions(frontier(connection),
+				new Cursor(before.at().minus(CATCH_UP), 0L)), capped);
+	}
+
+	/**
+	 * How far behind a pre-V63 position the catch-up starts. A transaction that was open across
+	 * that position for longer than this, and committed since, is the one case the catch-up can
+	 * still miss; an import runs for minutes.
+	 */
+	private static final java.time.Duration CATCH_UP = java.time.Duration.ofDays(1);
+
+	/**
+	 * Every entry written by a transaction at or past the frontier, in transaction order.
+	 * <p>
+	 * The pass's own frontier is taken on its first page, before anything is read, and handed on
+	 * through every page of the pass: it is the watermark the pass finishes on. Taken at the end
+	 * instead, it could pass a transaction that was open at the start and committed while the
+	 * pages were being sent, entries of which sort before where the pass had got to.
+	 */
+	@NonNull
+	private static Page byTransaction(@NonNull Connection connection, @NonNull Frontier from,
+	                                  int capped) throws SQLException {
+
+		String finish = from.carry() != null ? from.carry() : frontier(connection);
+
 		List<Change> changes = new ArrayList<>();
-		Cursor last = cursor;
+		String lastTxid = null;
+		long lastId = 0;
+		int entries = 0;
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT cursor_txid::text AS cursor_txid, cursor_id, table_name, row_key, action "
+						+ "FROM changes_after(?::xid8, ?::xid8, ?, ?)")) {
+
+			statement.setString(1, from.frontier());
+			statement.setString(2, from.afterTxid());
+			statement.setLong(3, from.afterId());
+			statement.setInt(4, capped);
+
+			try (ResultSet results = statement.executeQuery()) {
+
+				while (results.next()) {
+					entries++;
+					lastTxid = results.getString("cursor_txid");
+					lastId = results.getLong("cursor_id");
+					change(connection, results, changes);
+				}
+			}
+		}
+
+		if (entries == capped) {
+			// More of this pass to come, from where this page stopped.
+			return new Page(new Frontier(from.frontier(), finish, lastTxid, lastId).toString(),
+					true, dedupe(changes));
+		}
+
+		return new Page(new Frontier(finish, null, null, 0).toString(), false,
+				dedupe(changes));
+	}
+
+	/**
+	 * A pre-V63 position caught up by position, and then moved on to a frontier.
+	 */
+	@NonNull
+	private static Page byPosition(@NonNull Connection connection, @NonNull Positions from,
+	                               int capped) throws SQLException {
+
+		List<Change> changes = new ArrayList<>();
+		Cursor last = from.after();
 		int entries = 0;
 
 		try (PreparedStatement statement = connection.prepareStatement(
 				"SELECT cursor_at, cursor_id, table_name, row_key, action "
 						+ "FROM changes_since(?, ?, ?)")) {
 
-			statement.setTimestamp(1, Timestamp.from(cursor.at()));
-			statement.setLong(2, cursor.id());
+			statement.setTimestamp(1, Timestamp.from(from.after().at()));
+			statement.setLong(2, from.after().id());
 			statement.setInt(3, capped);
 
 			try (ResultSet results = statement.executeQuery()) {
 
 				while (results.next()) {
-
 					entries++;
 					last = new Cursor(results.getTimestamp("cursor_at").toInstant(),
 							results.getLong("cursor_id"));
-
-					String table = results.getString("table_name");
-					List<Long> key = keyFrom(table, results.getString("row_key"));
-
-					if (key == null) {
-						// An entry whose key this build cannot read is skipped rather than
-						// fatal: the watermark still moves past it, because stopping here would
-						// wedge every future pull on one unreadable entry.
-						continue;
-					}
-
-					String action = results.getString("action");
-
-					if ("DELETE".equals(action)) {
-						changes.add(new Change(table, key, OutboxOp.DELETE, null));
-					} else {
-						// Read now, not as the entry recorded it: the device wants the row as
-						// it stands, and three changes to one row between pulls should cost one
-						// row rather than three.
-						Map<String, Object> row = rowFor(connection, table, key);
-
-						if (row != null) {
-							changes.add(new Change(table, key, OutboxOp.UPSERT, row));
-
-						} else if ("UPDATE".equals(action)) {
-							// Changed, and now out of this actor's sight: a student moved to
-							// another department, a batch handed to another one. The device
-							// may hold it from before, and nothing else would ever tell it
-							// to let go, so it hears of a deletion. An insertion it cannot
-							// read was never its to hold and is still dropped. See the class
-							// notes on what a deletion gives away.
-							changes.add(new Change(table, key, OutboxOp.DELETE, null));
-						}
-					}
+					change(connection, results, changes);
 				}
 			}
 		}
 
-		return new Page(last.toString(), entries == capped, dedupe(changes));
+		if (entries == capped) {
+			return new Page(new Positions(from.finish(), last).toString(), true,
+					dedupe(changes));
+		}
+
+		// Caught up. The frontier was taken before the first page of the catch-up, so every
+		// transaction open then -- or since -- is sent by the next pull.
+		return new Page(new Frontier(from.finish(), null, null, 0).toString(), false,
+				dedupe(changes));
+	}
+
+	/** One feed entry as the change to send, added to {@code changes}; or nothing. */
+	private static void change(@NonNull Connection connection, @NonNull ResultSet results,
+	                           @NonNull List<Change> changes) throws SQLException {
+
+		String table = results.getString("table_name");
+		List<Long> key = keyFrom(table, results.getString("row_key"));
+
+		if (key == null) {
+			// An entry whose key this build cannot read is skipped rather than fatal: the
+			// watermark still moves past it, because stopping here would wedge every future
+			// pull on one unreadable entry.
+			return;
+		}
+
+		String action = results.getString("action");
+
+		if ("DELETE".equals(action)) {
+			changes.add(new Change(table, key, OutboxOp.DELETE, null));
+			return;
+		}
+
+		// Read now, not as the entry recorded it: the device wants the row as it stands, and
+		// three changes to one row between pulls should cost one row rather than three.
+		Map<String, Object> row = rowFor(connection, table, key);
+
+		if (row != null) {
+			changes.add(new Change(table, key, OutboxOp.UPSERT, row));
+
+		} else if ("UPDATE".equals(action)) {
+			// Changed, and now out of this actor's sight: a student moved to another
+			// department, a batch handed to another one. The device may hold it from before,
+			// and nothing else would ever tell it to let go, so it hears of a deletion. An
+			// insertion it cannot read was never its to hold and is still dropped. See the
+			// class notes on what a deletion gives away.
+			changes.add(new Change(table, key, OutboxOp.DELETE, null));
+		}
+	}
+
+	/** The oldest transaction still open, as this pull's snapshot sees it; see V63. */
+	@NonNull
+	private static String frontier(@NonNull Connection connection) throws SQLException {
+
+		try (Statement statement = connection.createStatement();
+		     ResultSet results = statement.executeQuery(
+				     "SELECT changes_frontier()::text")) {
+
+			if (!results.next() || results.getString(1) == null) {
+				throw new SQLException("the database gave no transaction frontier");
+			}
+			return results.getString(1);
+		}
 	}
 
 	/**
@@ -184,7 +307,13 @@ public final class SyncReader {
 		// would be both in the snapshot and before the watermark, and the device would never
 		// hear about the change -- whereas a head taken first means that change arrives again
 		// on the next pull, which costs one row and loses nothing.
-		Cursor head = resume == null ? head(connection) : resume.head();
+		//
+		// And it is a frontier, not the newest entry (V63): a transaction open while the
+		// snapshot reads is in neither the rows it sees nor, were the head a position, the
+		// feed after it. A frontier is at or before every such transaction.
+		String head = resume == null
+				? new Frontier(frontier(connection), null, null, 0).toString()
+				: resume.head();
 
 		List<Change> changes = new ArrayList<>();
 		boolean reached = resume == null;
@@ -264,7 +393,7 @@ public final class SyncReader {
 			// next pull is an ordinary one. lastTable null with more set would mean the limit
 			// was reached before a single row was read, which cannot happen for a positive
 			// limit and would be a watermark nothing could resume from.
-			return new Page(head.toString(), more, changes);
+			return new Page(head, more, changes);
 		}
 
 		return new Page(new Resume(lastTable, lastKey, head).toString(), true, changes);
@@ -563,24 +692,6 @@ public final class SyncReader {
 		return ordered;
 	}
 
-	@NonNull
-	private static Cursor head(@NonNull Connection connection) throws SQLException {
-
-		try (Statement statement = connection.createStatement();
-		     ResultSet results = statement.executeQuery(
-				     "SELECT cursor_at, cursor_id FROM changes_head()")) {
-
-			if (!results.next()) {
-				return new Cursor(java.time.Instant.EPOCH, 0L);
-			}
-
-			Timestamp at = results.getTimestamp("cursor_at");
-
-			return new Cursor(at == null ? java.time.Instant.EPOCH : at.toInstant(),
-					results.getLong("cursor_id"));
-		}
-	}
-
 	/**
 	 * A snapshot in progress: the table and key it got to, and the head it will finish on.
 	 * <p>
@@ -588,11 +699,12 @@ public final class SyncReader {
 	 * device stores a string and sends it back, and that is the whole of what it knows about
 	 * it. That contract is what lets this exist without the phone being taught anything.
 	 * <p>
-	 * {@code snap|<table>|<k1,k2>|<instant>@<id>}, with the cursor last so that an older
-	 * watermark is still parsed by {@link Cursor#parse} and a newer one is told apart by its
-	 * prefix rather than by counting separators.
+	 * {@code snap|<table>|<k1,k2>|<head>}, with the head last because it has separators of its
+	 * own. The head is the watermark the snapshot finishes on: a {@link Frontier} since V63, or
+	 * the {@code <instant>@<id>} position of a snapshot that started before it, which finishes
+	 * on that position and is then caught up like any other.
 	 */
-	record Resume(@NonNull String table, @NonNull List<Long> afterKey, @NonNull Cursor head) {
+	record Resume(@NonNull String table, @NonNull List<Long> afterKey, @NonNull String head) {
 
 		private static final String PREFIX = "snap|";
 
@@ -641,7 +753,97 @@ public final class SyncReader {
 				throw new IllegalArgumentException("not a watermark: " + watermark);
 			}
 
-			return new Resume(table.name(), key, Cursor.parse(parts[2]));
+			// Either kind of head, checked here so a bad one is refused now and not at the end
+			// of the snapshot.
+			if (Frontier.looksLikeOne(parts[2])) {
+				Frontier.parse(parts[2]);
+			} else {
+				Cursor.parse(parts[2]);
+			}
+			return new Resume(table.name(), key, parts[2]);
+		}
+	}
+
+	/**
+	 * A transaction frontier, and where a pass from it has got to.
+	 * <p>
+	 * {@code x|<frontier>} between passes: send every entry of a transaction at or past it.
+	 * {@code x|<frontier>|<finish>|<txid>|<id>} inside a pass whose page filled: carry on from
+	 * that entry, and finish on {@code <finish>}, the frontier the pass took on its first page.
+	 * Transaction ids are {@code xid8}, written in decimal.
+	 */
+	record Frontier(@NonNull String frontier, @Nullable String carry, @Nullable String afterTxid,
+	                long afterId) {
+
+		private static final String PREFIX = "x|";
+
+		static boolean looksLikeOne(@NonNull String watermark) {
+			return watermark.startsWith(PREFIX);
+		}
+
+		@Override
+		@NonNull
+		public String toString() {
+			return carry == null ? PREFIX + frontier
+					: PREFIX + frontier + "|" + carry + "|" + afterTxid + "|" + afterId;
+		}
+
+		@NonNull
+		static Frontier parse(@NonNull String watermark) {
+
+			String[] parts = watermark.substring(PREFIX.length()).split("\\|", -1);
+
+			if (parts.length == 1 && txid(parts[0])) {
+				return new Frontier(parts[0], null, null, 0);
+			}
+
+			if (parts.length == 4 && txid(parts[0]) && txid(parts[1]) && txid(parts[2])) {
+				try {
+					return new Frontier(parts[0], parts[1], parts[2], Long.parseLong(parts[3]));
+				} catch (NumberFormatException e) {
+					throw new IllegalArgumentException("not a watermark: " + watermark);
+				}
+			}
+
+			throw new IllegalArgumentException("not a watermark: " + watermark);
+		}
+
+		/** A transaction id as the database writes one: decimal, and at most 20 digits. */
+		private static boolean txid(@NonNull String text) {
+			return !text.isEmpty() && text.length() <= 20 && text.chars().allMatch(Character::isDigit);
+		}
+	}
+
+	/**
+	 * A pre-V63 position being caught up: the frontier to finish on, taken before the catch-up
+	 * read anything, and the position it has got to. {@code p|<finish>|<instant>@<id>}.
+	 */
+	record Positions(@NonNull String finish, @NonNull Cursor after) {
+
+		private static final String PREFIX = "p|";
+
+		static boolean looksLikeOne(@NonNull String watermark) {
+			return watermark.startsWith(PREFIX);
+		}
+
+		@Override
+		@NonNull
+		public String toString() {
+			return PREFIX + finish + "|" + after;
+		}
+
+		@NonNull
+		static Positions parse(@NonNull String watermark) {
+
+			String[] parts = watermark.substring(PREFIX.length()).split("\\|", 2);
+
+			if (parts.length != 2) {
+				throw new IllegalArgumentException("not a watermark: " + watermark);
+			}
+
+			// Read through Frontier, so a finish that is not a transaction id is refused here.
+			return new Positions(Frontier.parse(Frontier.PREFIX + parts[0]).frontier(),
+					Cursor.parse(parts[1]));
 		}
 	}
 

@@ -26,6 +26,7 @@ import in.basulabs.siesattendance.backend.sync.DeviceDerived;
 import in.basulabs.siesattendance.backend.sync.DeviceSql;
 import in.basulabs.siesattendance.backend.sync.DeviceTables;
 import in.basulabs.siesattendance.backend.sync.OutboxTriggers;
+import in.basulabs.siesattendance.backend.sync.PulledRows;
 
 /**
  * White-box probes of what a pulled page does to a phone that already holds something.
@@ -34,11 +35,10 @@ import in.basulabs.siesattendance.backend.sync.OutboxTriggers;
  * the next question: whether it lands in a device that has rows of its own, which is every device
  * after the first lecture is taken on it.
  * <p>
- * The statements are the ones {@code OutboxDrain.apply} runs ({@link DeviceSql#updateRow} then
- * {@link DeviceSql#insertRow}), against the real schema with foreign keys and the outbox triggers
- * on. What stands in for Android is sqlite-jdbc, as in {@link PullApplyTest}; the order of the
- * steps is copied from {@code OutboxDrain} and {@code SyncWorker} and is the part to check
- * against them.
+ * A pulled row is written by {@link PulledRows#write}, which is what {@code OutboxDrain.apply}
+ * calls, against the real schema with foreign keys and the outbox triggers on. What stands in
+ * for Android is sqlite-jdbc, as in {@link PullApplyTest}; the order of the steps around it is
+ * copied from {@code OutboxDrain} and {@code SyncWorker} and is the part to check against them.
  * <p>
  * Every test asserts the behaviour the phone should have. The ones that fail today are marked
  * BUG in their notes.
@@ -145,6 +145,20 @@ class PullCollisionProbeTest {
 		assertDoesNotThrow(() -> applyPulled("lectures", incoming),
 				"the page holding the other phone's lecture cannot be applied, so this phone "
 						+ "never moves its watermark again");
+
+		// And what it came to: one lecture for the slot, the server's, holding this phone's
+		// mark, with the mark's queued change moved to it so it is sent under that lecture.
+		assertEquals(0, count("SELECT count(*) FROM lectures WHERE lectureID = " + MINE),
+				"this phone's copy of the lecture is gone");
+		assertEquals(1, count("SELECT count(*) FROM lectures WHERE lectureID = " + THEIRS));
+		assertEquals(1, count("SELECT count(*) FROM attendance WHERE lectureID = " + THEIRS
+				+ " AND studentID = " + STUDENT + " AND present = 1"),
+				"the mark taken on this phone follows the lecture");
+		assertEquals(1, count("SELECT count(*) FROM outbox WHERE tableName = 'attendance' "
+				+ "AND key1 = " + THEIRS + " AND key2 = " + STUDENT),
+				"the queued mark is sent under the server's lecture");
+		assertEquals(0, count("SELECT count(*) FROM outbox WHERE key1 = " + MINE),
+				"nothing is queued under the old id");
 	}
 
 	/**
@@ -170,6 +184,12 @@ class PullCollisionProbeTest {
 				() -> applyPulled("student_year", enrolment(loadedByTheOffice, "CSFY002")),
 				"the page holding the office's enrolment for that roll number cannot be "
 						+ "applied, so this phone never moves its watermark again");
+
+		assertEquals(loadedByTheOffice, count("SELECT studentID FROM student_year "
+						+ "WHERE rollNo = 'CSFY002'"),
+				"the roll number is the office's student's, as on the server");
+		assertEquals(1, count("SELECT count(*) FROM students WHERE studentID = " + addedHere),
+				"the student added here is not removed, only their claim to the roll number");
 	}
 
 	/** The same again for a course code two professors both typed in. */
@@ -190,6 +210,32 @@ class PullCollisionProbeTest {
 		assertDoesNotThrow(() -> applyPulled("courses", incoming),
 				"the page holding the other phone's course cannot be applied, so this phone "
 						+ "never moves its watermark again");
+
+		assertEquals(3_000_888L, count("SELECT courseID FROM courses WHERE courseCode = 'CS202'"),
+				"the same course, so this phone's copy takes the server's id");
+	}
+
+	/**
+	 * A code reused for a different course is not the same course: the server refuses it in
+	 * words rather than folding it, and the phone keeps its own and sets the server's aside
+	 * rather than filing one course's lectures under the other.
+	 */
+	@Test
+	void aDifferentCourseUnderTheSameCodeIsSetAsideRatherThanMerged() throws Exception {
+
+		execute("INSERT INTO courses (courseID, profID, courseCode, courseTopic, stream, "
+				+ "offeringDepartment, year, semester, courseType) VALUES (3000777, " + PROF
+				+ ", 'CS202', 'Data Structures', 'BSc_unaided', 'COMPUTER_SCIENCE', 'SY', 3, "
+				+ "'MAJOR')");
+
+		Map<String, Object> incoming = row("courseID", 3_000_888L, "profID", PROF,
+				"courseCode", "CS202", "courseTopic", "Ethics", "stream", "BSc_unaided",
+				"offeringDepartment", "COMPUTER_SCIENCE", "year", "TY", "semester", 5L,
+				"courseType", "VSC", "remarks", null, "dateIntroduced", null,
+				"dateDiscontinued", null);
+
+		assertEquals(PulledRows.Outcome.SET_ASIDE, applyPulled("courses", incoming));
+		assertEquals(3_000_777L, count("SELECT courseID FROM courses WHERE courseCode = 'CS202'"));
 	}
 
 	// ── A row the server sends for one the user has just changed ─────────
@@ -248,12 +294,13 @@ class PullCollisionProbeTest {
 	// ── The device's own statements ──────────────────────────────────────
 
 	/** A pulled row, applied the way a pull applies it: with the outbox triggers held off. */
-	private void applyPulled(String table, Map<String, Object> row) throws SQLException {
+	private PulledRows.Outcome applyPulled(String table, Map<String, Object> row)
+			throws SQLException {
 
 		execute("UPDATE sync_state SET applying = 1 WHERE id = 1");
 
 		try {
-			applyRow(table, row);
+			return applyRow(table, row);
 		} finally {
 			execute("UPDATE sync_state SET applying = 0 WHERE id = 1");
 		}
@@ -264,31 +311,56 @@ class PullCollisionProbeTest {
 		applyPulled(table, row);
 	}
 
-	/** Exactly the pair {@code OutboxDrain.apply} runs: change it where it is, else insert. */
-	private void applyRow(String name, Map<String, Object> incoming) throws SQLException {
+	/** What {@code OutboxDrain.apply} runs for a pulled row: {@link PulledRows#write}. */
+	private PulledRows.Outcome applyRow(String name, Map<String, Object> incoming) {
 
 		DeviceTables.Table table = DeviceTables.of(name);
 		Map<String, Object> row = DeviceDerived.fill(table, incoming, ZONE);
 
-		String update = DeviceSql.updateRow(table);
-
-		if (update != null && run(update, DeviceSql.updateColumns(table), row) > 0) {
-			return;
-		}
-
-		run(DeviceSql.insertRow(table), DeviceSql.insertColumns(table), row);
+		return PulledRows.write(device(), table, row);
 	}
 
-	private int run(String sql, List<DeviceTables.Column> columns, Map<String, Object> row)
-			throws SQLException {
+	/** The JDBC connection as {@link PulledRows} reaches a device database. */
+	private PulledRows.Device device() {
 
-		try (PreparedStatement statement = connection.prepareStatement(sql)) {
+		return new PulledRows.Device() {
 
-			for (int at = 0; at < columns.size(); at++) {
-				statement.setObject(at + 1, row.get(columns.get(at).room()));
+			@Override
+			public int change(String sql, Object[] values) {
+				try (PreparedStatement statement = connection.prepareStatement(sql)) {
+					for (int at = 0; at < values.length; at++) {
+						statement.setObject(at + 1, values[at]);
+					}
+					return statement.executeUpdate();
+				} catch (SQLException e) {
+					if (String.valueOf(e.getMessage()).contains("constraint")) {
+						throw new PulledRows.Conflict(e);
+					}
+					throw new IllegalStateException(e);
+				}
 			}
-			return statement.executeUpdate();
-		}
+
+			@Override
+			public List<Long> firstRow(String sql, Object[] values) {
+				try (PreparedStatement statement = connection.prepareStatement(sql)) {
+					for (int at = 0; at < values.length; at++) {
+						statement.setObject(at + 1, values[at]);
+					}
+					try (ResultSet results = statement.executeQuery()) {
+						if (!results.next()) {
+							return null;
+						}
+						List<Long> row = new java.util.ArrayList<>();
+						for (int at = 1; at <= results.getMetaData().getColumnCount(); at++) {
+							row.add(results.getLong(at));
+						}
+						return row;
+					}
+				} catch (SQLException e) {
+					throw new IllegalStateException(e);
+				}
+			}
+		};
 	}
 
 	/** What {@code OutboxDrain.readRow} hands to the push for one queued key. */

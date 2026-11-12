@@ -669,6 +669,59 @@ class SyncTest {
 		assertEquals("that course code is already another course's", reason);
 	}
 
+	/**
+	 * The same course typed in on two phones offline (C2). The second is folded into the first
+	 * rather than refused on every sync for ever, and a lecture the second phone files under its
+	 * own copy lands under the course the server kept.
+	 */
+	@Test
+	void theSameCourseFromTwoPhonesIsFoldedIntoOne() throws Exception {
+
+		Phone first = signInWithAPhone("c.head@sies.edu.in");
+		Phone second = signInWithAPhone("c.head@sies.edu.in");
+
+		long kept = first.key(651);
+		long folded = second.key(652);
+
+		Reply won = push(first, List.of(intent("courses", List.of(kept), "UPSERT",
+				sameCourse(kept))));
+		assertEquals(1, won.body().get("accepted").intValue(), won::toString);
+
+		Reply lost = push(second, List.of(
+				intent("courses", List.of(folded), "UPSERT", sameCourse(folded)),
+				lectureIntent(second.key(653), folded, 11)));
+
+		assertEquals(2, lost.body().get("accepted").intValue(), lost::toString);
+		assertEquals(0, lost.body().get("rejected").size(), lost::toString);
+
+		assertEquals(0, count("SELECT count(*) FROM courses WHERE course_id = " + folded),
+				"the duplicate is not written");
+		assertEquals(1, count("SELECT count(*) FROM lectures WHERE lecture_id = "
+				+ second.key(653) + " AND course_id = " + kept),
+				"the second phone's lecture is filed under the course the server kept");
+
+		// And again, an hour later, as the phone will until its pull re-keys it: the same
+		// answer, and nothing more written.
+		Reply again = push(second, List.of(
+				intent("courses", List.of(folded), "UPSERT", sameCourse(folded))));
+		assertEquals(1, again.body().get("accepted").intValue(), again::toString);
+		assertEquals(1, count("SELECT count(*) FROM courses WHERE course_code = 'CSOE9'"));
+	}
+
+	private static Map<String, Object> sameCourse(long courseID) {
+		Map<String, Object> course = new LinkedHashMap<>();
+		course.put("courseID", courseID);
+		course.put("profID", PROF_CS);
+		course.put("courseCode", "CS-OE-9");
+		course.put("courseTopic", "Computing for all");
+		course.put("stream", "BSc");
+		course.put("offeringDepartment", "COMPUTER_SCIENCE");
+		course.put("year", "SY");
+		course.put("semester", 3);
+		course.put("courseType", "OE");
+		return course;
+	}
+
 	@Test
 	void aCoordinatorsInstructorRowCannotBeDeletedWhileTheyCoordinate() throws Exception {
 
