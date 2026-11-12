@@ -258,7 +258,7 @@ public class ReadingConfirmDeviceTest {
 
 		List<StudentCourseStat> breakdown = await(room.daoStudent().getCourseBreakdown(bob,
 				null, null, true, List.of(), true, List.of()));
-		Double overall = await(room.daoAttendance().getOverallPercentage());
+		Double overall = await(room.daoAttendance().getOverallPercentage(SESSION));
 
 		assertEquals("the student's own breakdown counts the lecture before he joined", 1,
 				breakdown.get(0).totalLectures);

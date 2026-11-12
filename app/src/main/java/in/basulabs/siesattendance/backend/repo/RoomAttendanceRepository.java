@@ -510,8 +510,9 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 	@Override
 	public void updateLecture(long lectureID, long courseID, Long batchID, ZonedDateTime start,
-	                          ZonedDateTime end, String notes) {
-		db.daoLecture().updateLecture(lectureID, courseID, batchID, start, end, notes);
+	                          ZonedDateTime end, String notes, @Nullable List<Long> keep) {
+		db.daoLecture().updateLectureKeeping(lectureID, courseID, batchID, start, end, notes,
+				keep);
 	}
 
 	// ── Attendance ───────────────────────────────────────────────────────
@@ -561,8 +562,8 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 	@Override
 	@NonNull
-	public LiveData<Double> observeOverallPercentage() {
-		return db.daoAttendance().getOverallPercentage();
+	public LiveData<Double> observeOverallPercentage(int academicYear) {
+		return db.daoAttendance().getOverallPercentage(academicYear);
 	}
 
 	@Override
@@ -669,9 +670,11 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 			Long existing = db.daoLecture().findExisting(courseID, batchID, start, end);
 
+			// The same slot again corrects its register: each mark on the sheet replaces that
+			// student's, and every other mark stays. Clearing first dropped the marks of
+			// students no longer on the roll, which F4 fixed for sheet imports (R29).
 			if (existing != null) {
 				lectureID[0] = existing;
-				db.daoAttendance().clearForLecture(lectureID[0]);
 			} else {
 				lectureID[0] = db.daoLecture().insert(
 						new EntityLecture(courseID, batchID, start, end, notes));

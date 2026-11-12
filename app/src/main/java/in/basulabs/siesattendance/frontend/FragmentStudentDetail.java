@@ -915,6 +915,21 @@ public class FragmentStudentDetail extends Fragment {
 	 */
 	private void confirmDelete(@NonNull DeletionImpact impact) {
 
+		// A student with marks is deleted entirely by an administrator alone (R28). Anyone
+		// else is told why, and offered the leave date, which keeps the marks counting.
+		if (impact.hasHistory()
+				&& !viewModel.may(Permissions.Capability.DELETE_STUDENT_WITH_HISTORY)) {
+			new MaterialAlertDialogBuilder(requireContext())
+					.setTitle(R.string.dialog_delete_student_title)
+					.setMessage(getString(R.string.dialog_delete_student_needs_admin,
+							impact.attendanceRecords))
+					.setNegativeButton(R.string.action_cancel, null)
+					.setPositiveButton(R.string.action_set_leave_date_instead,
+							(d, w) -> openEditForm())
+					.show();
+			return;
+		}
+
 		String message = impact.hasHistory()
 				? getString(R.string.dialog_delete_student_message_with_history,
 				impact.attendanceRecords, impact.enrolments)

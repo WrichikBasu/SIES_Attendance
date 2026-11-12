@@ -814,4 +814,18 @@
     <string name="error_student_exists_roll_no">%1$s already has this roll number this session. Nothing was saved; edit their record instead.</string>
     <string name="error_student_exists_apaar_id">%1$s already has this APAAR ID. Nothing was saved; edit their record instead.</string>
     <string name="error_student_exists_email">%1$s already has this email address. Nothing was saved; edit their record instead.</string>
+    <!-- Taking a register (R29, R30) -->
+    <string name="error_register_in_future">That date hasn\'t happened yet. A register records a class that has been held. Nothing was saved.</string>
+    <string name="dialog_register_exists_title">This class already has a register</string>
+    <plurals name="dialog_register_exists_message">
+        <item quantity="one">%2$s already has a register for this batch and time, with 1 mark. Saving corrects it: each mark on this sheet replaces that student\'s, and any other mark is kept.</item>
+        <item quantity="other">%2$s already has a register for this batch and time, with %1$d marks. Saving corrects it: each mark on this sheet replaces that student\'s, and any other marks are kept.</item>
+    </plurals>
+    <string name="action_correct_register">Correct it</string>
+    <string name="dialog_date_changes_session_title">That date is in another session</string>
+    <string name="dialog_date_changes_session_message">%1$s is in another session, which has its own batches and roll. Changing the date clears the batch and discards the marks you haven\'t saved.</string>
+    <string name="action_change_date">Change the date</string>
+    <!-- Deleting a student with attendance (R28) -->
+    <string name="dialog_delete_student_needs_admin">This student has %1$d attendance record(s). Only an administrator can delete a student with attendance, because the server would keep some of those marks and the student with them. If they have left, set a leave date: their marks keep counting up to that day.</string>
+    <string name="not_permitted_delete_student_with_history">Only an administrator can delete a student who has attendance. Set a leave date instead.</string>
 </resources>

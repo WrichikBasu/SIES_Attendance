@@ -1203,7 +1203,9 @@ public class AttendanceViewModel extends AndroidViewModel {
 		// screen, but a stale list from another lecture must not be compared against this one.
 		if (rows != null && currentLecture != null && currentLecture.lectureID == lectureID) {
 			for (AttendanceRow row : rows) {
-				onScreen.put(row.studentID, row.present);
+				if (row.marked) {
+					onScreen.put(row.studentID, row.present);
+				}
 			}
 		}
 
@@ -1983,10 +1985,20 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 	/**
 	 * Loads the roll for a course without creating anything. Passing a batch narrows it to that
-	 * batch's members; passing null takes the course's whole class for the academic year.
+	 * batch's members; passing null takes the course's whole class for the session.
+	 *
+	 * @param date the day the register is for, whose session the roll is read from
 	 */
-	public void loadRoll(long courseID, @Nullable Long batchID) {
-		loadRoll(courseID, batchID, false);
+	public void loadRoll(long courseID, @Nullable Long batchID, @NonNull LocalDate date) {
+		loadRoll(courseID, batchID, date, false);
+	}
+
+	/**
+	 * The session a day falls in, or the current one when none covers it. Reads the database,
+	 * so off the main thread only.
+	 */
+	private int sessionYearOn(@NonNull LocalDate date) {
+		return sessionYearFor(date.atStartOfDay(ZoneId.systemDefault()));
 	}
 
 	/**
@@ -1998,12 +2010,15 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * sheet, and marks for students no longer on it are dropped because there is nowhere left to
 	 * show them.
 	 *
+	 * @param date      the day the register is for. The roll is that day's session's, not the
+	 *                  session the app is working in: a register dated in another session was
+	 *                  marked against the wrong roll (R30)
 	 * @param keepMarks carry existing marks over to students who appear in the new roll too
 	 */
-	public void loadRoll(long courseID, @Nullable Long batchID, boolean keepMarks) {
+	public void loadRoll(long courseID, @Nullable Long batchID, @NonNull LocalDate date,
+	                     boolean keepMarks) {
 
 		busy.setValue(true);
-		final int acadYear = academicYearValue();
 
 		// Read on the main thread before handing off, since the LiveData's value is only safe
 		// to touch here.
@@ -2019,6 +2034,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		}
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
+			int acadYear = sessionYearOn(date);
 			List<StudentWithYear> students = batchID == null
 					? repository.rollForCourseSync(courseID, acadYear)
 					: repository.rollForBatchSync(batchID, acadYear);
@@ -2039,6 +2055,20 @@ public class AttendanceViewModel extends AndroidViewModel {
 				toastMessage.postValue("No students are enrolled in this course for "
 						+ acadYear + "-" + ((acadYear + 1) % 100));
 			}
+		});
+	}
+
+	/**
+	 * The register already on record for that course, batch and times, or null. Saving a sheet
+	 * for the same slot corrects that register, so the screen asks first (R29). The callback
+	 * runs off the main thread.
+	 */
+	public void findExistingRegister(long courseID, @Nullable Long batchID,
+	                                 @NonNull ZonedDateTime start, @NonNull ZonedDateTime end,
+	                                 @NonNull java.util.function.Consumer<LectureDetails> cb) {
+		MainDatabase.DB_EXECUTOR.execute(() -> {
+			Long existing = repository.findLecture(courseID, batchID, start, end);
+			cb.accept(existing == null ? null : repository.lectureDetailsSync(existing));
 		});
 	}
 
@@ -2080,6 +2110,14 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
+				// Not ahead of time: a register is what happened, so a date to come is a slip
+				// of the picker (R30).
+				if (start.toLocalDate().isAfter(LocalDate.now(start.getZone()))) {
+					toastMessage.postValue(getApplication().getString(
+							R.string.error_register_in_future));
+					return;
+				}
+
 				// A register no session covers would count nowhere: statistics and the
 				// export find a lecture's session by its date (R38). The app works in the
 				// latest session when today falls outside every one, so this is reachable.
@@ -2122,7 +2160,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	/**
 	 * Loads the register for one lecture. A lecture with marks is shown as it was marked:
 	 * everybody who holds a mark, with that mark, and anybody on the roll now who has none as
-	 * absent. A lecture with no marks is a fresh sheet of the roll. {@link RegisterSheet}
+	 * not marked. A lecture with no marks is a fresh sheet of the roll. {@link RegisterSheet}
 	 * has the rule and why.
 	 * <p>
 	 * The roll is read against the session the lecture itself falls in, not the session new
@@ -2215,9 +2253,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 			List<AttendanceRow> rows = RegisterSheet.rows(students,
 					repository.sheetMarksSync(lectureID, sessionYearFor(details.startDateTime)));
 
+			// Null for a row nobody has marked, so marking it either way is a change.
 			Map<Long, Boolean> asLoaded = new HashMap<>();
 			for (AttendanceRow row : rows) {
-				asLoaded.put(row.studentID, row.present);
+				asLoaded.put(row.studentID, row.marked ? row.present : null);
 			}
 
 			// Published together on the main thread, so that the lecture, the sheet and what
@@ -2238,6 +2277,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 					Boolean edited = edits.get(row.studentID);
 					if (edited != null) {
 						row.present = edited;
+						row.marked = true;
 					}
 				}
 
@@ -2263,6 +2303,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 		}
 
 		for (AttendanceRow row : rows) {
+			// Still not marked: nothing to carry over.
+			if (!row.marked) {
+				continue;
+			}
 			Boolean loaded = sheetAsLoaded.get(row.studentID);
 			if (loaded == null || loaded != row.present) {
 				edits.put(row.studentID, row.present);
@@ -2279,6 +2323,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 		for (AttendanceRow row : rows) {
 			if (row.studentID == studentID) {
 				row.present = present;
+				row.marked = true;
 				break;
 			}
 		}
@@ -2292,6 +2337,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 		}
 		for (AttendanceRow row : rows) {
 			row.present = present;
+			// "All" means all: a row nobody had marked is marked by this, on purpose.
+			row.marked = true;
 		}
 		attendanceRows.setValue(rows);
 	}
@@ -2299,8 +2346,10 @@ public class AttendanceViewModel extends AndroidViewModel {
 	/**
 	 * Writes the sheet.
 	 * <p>
-	 * Every row carries an answer by construction, present unless someone marked otherwise, so
-	 * there is nothing to refuse here. An untouched sheet saves as a full house.
+	 * On a fresh sheet every row carries an answer, present unless someone marked otherwise,
+	 * so an untouched sheet saves as a full house. On a reopened register a student on the
+	 * roll now with no mark carries none, and nothing is written for them unless the user
+	 * marked them; see {@link AttendanceRow#marked}.
 	 */
 	public void saveAttendance(@NonNull Runnable onDone) {
 		List<AttendanceRow> rows = attendanceRows.getValue();
@@ -2312,7 +2361,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		final long lectureID = currentLecture.lectureID;
 		final List<EntityAttendance> records = new ArrayList<>();
-		for (AttendanceRow row : rows) {
+		for (AttendanceRow row : RegisterSheet.toSave(rows)) {
 			records.add(new EntityAttendance(lectureID, row.studentID, row.present));
 		}
 
@@ -2449,8 +2498,20 @@ public class AttendanceViewModel extends AndroidViewModel {
 	/** Removes the student and every record naming them. */
 	public void deleteStudent(long studentID, @NonNull Runnable onDone) {
 
+		final boolean mayDeleteHistory = may(Permissions.Capability.DELETE_STUDENT_WITH_HISTORY);
+
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
+				// Asked here as well as on the screen. Only an account the server lets delete
+				// every mark may delete a student who has any, or the deletion half-applies on
+				// the server (R28). The session passed only shapes the per-session count.
+				if (!mayDeleteHistory && repository.studentDeletionImpactSync(studentID,
+						academicYearValue()).hasHistory()) {
+					toastMessage.postValue(getApplication().getString(
+							R.string.not_permitted_delete_student_with_history));
+					return;
+				}
+
 				repository.deleteStudentCascade(studentID);
 				toastMessage.postValue("Student deleted");
 				refreshStudents();
@@ -2862,26 +2923,16 @@ public class AttendanceViewModel extends AndroidViewModel {
 					return;
 				}
 
-				repository.updateLecture(lectureID, courseID, batchID, start, end, notes);
+				// The marks to keep when dropping stranded ones: the roll read against the
+				// session the lecture is being moved into, matching what countStrandedMarks
+				// put in front of the user. Taking the current session instead would find none
+				// of a past lecture's students on the roll and delete every mark it has.
+				List<Long> keep = dropStranded
+						? new ArrayList<>(rollIds(courseID, batchID, sessionYearFor(start)))
+						: null;
 
-				if (dropStranded) {
-					// Read against the session the lecture is being moved into, matching
-					// what countStrandedMarks put in front of the user. Taking the current
-					// session instead would find none of a past lecture's students on the
-					// roll and delete every mark it has.
-					Set<Long> onRoll = rollIds(courseID, batchID, sessionYearFor(start));
-
-					// Room writes an empty list as NOT IN (), which SQLite accepts and
-					// evaluates as true for every row, so leaving it to the statement would
-					// clear the sheet by accident rather than by decision. Doing it
-					// explicitly is what an empty roll actually means.
-					if (onRoll.isEmpty()) {
-						repository.clearAttendanceForLecture(lectureID);
-					} else {
-						repository.deleteAttendanceExcept(lectureID,
-								new ArrayList<>(onRoll));
-					}
-				}
+				// The change and the drop together, in one transaction (R32).
+				repository.updateLecture(lectureID, courseID, batchID, start, end, notes, keep);
 
 				toastMessage.postValue("Lecture updated");
 				onDone.run();
@@ -3170,10 +3221,13 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * (R27). The course's links already respect which departments' batches it may take (V31,
 	 * V52), so nothing else needs checking here.
 	 */
-	public void loadBatchesForCourse(long courseID,
+	public void loadBatchesForCourse(long courseID, @NonNull LocalDate date,
 	                                 @NonNull java.util.function.Consumer<List<EntityBatchDesc>> cb) {
-		final int acadYear = academicYearValue();
 		MainDatabase.DB_EXECUTOR.execute(() -> {
+
+			// The session of the day being marked, not the one the app is in (R30): batches
+			// do not carry forward, so another session's register needs that session's.
+			int acadYear = sessionYearOn(date);
 
 			Set<Long> linked = new HashSet<>(
 					repository.batchIdsLinkedToSync(java.util.Collections.singletonList(courseID)));
@@ -3253,8 +3307,9 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return repository.observeCourseStats();
 	}
 
+	/** The current session's attendance, as the statistics screen counts it (R32). */
 	public LiveData<Double> getOverallPercentage() {
-		return repository.observeOverallPercentage();
+		return Transformations.switchMap(academicYear, repository::observeOverallPercentage);
 	}
 
 	public LiveData<Integer> countStudents() {

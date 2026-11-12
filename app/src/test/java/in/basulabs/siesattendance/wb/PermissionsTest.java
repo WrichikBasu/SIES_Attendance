@@ -415,6 +415,23 @@ public class PermissionsTest {
 	}
 
 	@Test
+	public void aStudentWithAttendanceIsDeletedEntirelyByAnAdministratorAlone() {
+
+		Permissions.Capability deleting = Permissions.Capability.DELETE_STUDENT_WITH_HISTORY;
+
+		assertTrue("an administrator, whom the server lets delete any mark",
+				Permissions.may(AccountKind.STAFF, true, Set.of("ADMIN"), deleting));
+		assertFalse("not a head, whose deletion stops at another department's marks (R28)",
+				Permissions.may(AccountKind.PROFESSOR, true, Set.of("HOD"), deleting));
+		assertFalse("not the office",
+				Permissions.may(AccountKind.STAFF, true, Set.of("OFFICE"), deleting));
+		assertFalse("never a student",
+				Permissions.may(AccountKind.STUDENT, false, Set.of(), deleting));
+		assertTrue("a build with no server, which has nobody to refuse it",
+				Permissions.may(null, true, null, deleting));
+	}
+
+	@Test
 	public void theStaffListIsTheOfficesAndNoProfessors() {
 
 		Permissions.Capability professors = Permissions.Capability.PROFESSORS;

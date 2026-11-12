@@ -39,7 +39,10 @@ public class RegisterSheetTest {
 
 		for (AttendanceRow row : rows) {
 			assertTrue("everyone present until somebody says otherwise", row.present);
+			assertTrue("and every row is saved, as a fresh sheet always was", row.marked);
 		}
+
+		assertEquals(2, RegisterSheet.toSave(rows).size());
 	}
 
 	@Test
@@ -54,21 +57,41 @@ public class RegisterSheetTest {
 		AttendanceRow left = row(rows, 2);
 
 		assertFalse("their mark, as it was recorded", left.present);
+		assertTrue(left.marked);
 		assertEquals("in roll-number order, where they sat on the day",
 				List.of(1L, 2L, 3L), ids(rows));
+
+		assertEquals("a save writes all three, so nothing a save does can drop theirs",
+				List.of(1L, 2L, 3L), ids(RegisterSheet.toSave(rows)));
 	}
 
 	@Test
-	public void aStudentOnTheRollWithNoMarkIsOnTheSheetAsAbsent() {
+	public void aStudentWhoJoinedSinceIsNotMarkedAndNotSaved() {
+
+		List<AttendanceRow> rows = RegisterSheet.rows(
+				List.of(onRoll(1, "CS001"), onRoll(9, "CS009")),
+				List.of(mark(1, "CS001", false)));
+
+		AttendanceRow joined = row(rows, 9);
+
+		assertFalse("nothing was recorded for them, and the sheet says so", joined.marked);
+		assertEquals("so nothing is written for them", List.of(1L),
+				ids(RegisterSheet.toSave(rows)));
+	}
+
+	@Test
+	public void markingAStudentWhoJoinedSinceSavesThem() {
 
 		List<AttendanceRow> rows = RegisterSheet.rows(
 				List.of(onRoll(1, "CS001"), onRoll(9, "CS009")),
 				List.of(mark(1, "CS001", true)));
 
-		// Present or absent, nothing in between: a lecture held for them with no mark is an
-		// absence, and the sheet shows it and saves it as one.
-		assertFalse(row(rows, 9).present);
-		assertEquals(List.of(1L, 9L), ids(rows));
+		// What the screen does when either button on the row is tapped.
+		AttendanceRow joined = row(rows, 9);
+		joined.present = false;
+		joined.marked = true;
+
+		assertEquals(List.of(1L, 9L), ids(RegisterSheet.toSave(rows)));
 	}
 
 	@Test
@@ -79,7 +102,7 @@ public class RegisterSheetTest {
 				List.of(mark(1, "CS001", true), mark(5, "", true)));
 
 		assertEquals(2, rows.size());
-		assertTrue(row(rows, 5).present);
+		assertTrue(row(rows, 5).marked);
 	}
 
 	private static StudentWithYear onRoll(long id, String rollNo) {

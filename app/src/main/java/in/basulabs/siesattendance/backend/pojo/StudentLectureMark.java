@@ -13,9 +13,8 @@ import java.time.ZonedDateTime;
  * there is a problem; the dates are what anybody has to look at to do something about it, since
  * three absences in a row is a different conversation from three spread over a term.
  * <p>
- * Every lecture held for the student appears, which is the same reckoning
- * {@code DaoStudent.getCourseBreakdown} uses: a lecture of their batch with no mark for them
- * is an absence, and is shown as one.
+ * Every lecture the student has a mark for appears, which is the same reckoning
+ * {@code DaoStudent.getCourseBreakdown} uses, so the list adds up to its fraction.
  * <p>
  * The lecture's note is not carried. It describes the class rather than this student, so it has
  * nothing to add to a row that exists to say whether they were there.

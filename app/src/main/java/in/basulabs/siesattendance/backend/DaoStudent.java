@@ -574,9 +574,8 @@ public abstract class DaoStudent {
 	/**
 	 * One row per course this student has had a lecture held for them in.
 	 * <p>
-	 * The denominator is the lectures held for the student, so a lecture of their batch with
-	 * no mark for them is an absence, as it is in the register export and the statistics; see
-	 * {@code SqlBits.MARKS}.
+	 * The denominator is the lectures the student has a mark for, as it is in the register
+	 * export and the statistics; see {@code SqlBits.MARKS}.
 	 * <p>
 	 * Unfiltered this spans every session the student has been enrolled in, which is the honest
 	 * default for a record of a person rather than of a year. The window narrows it; see
@@ -598,7 +597,11 @@ public abstract class DaoStudent {
 			"FROM " + SqlBits.MARKS + " a " +
 			"INNER JOIN lectures l ON l.lectureID = a.lectureID " +
 			"INNER JOIN courses c ON c.courseID = l.courseID " +
+			SqlBits.ENROLMENT_AT_LECTURE +
 			"WHERE a.studentID = :studentID " +
+			// From the day they joined, as the statistics count (R32): a mark from before is
+			// left out here too, so the two give the same fraction.
+			"AND " + SqlBits.COUNTS_FOR_ENROLMENT + " " +
 			LECTURE_IN_WINDOW +
 			// Several types at once: "how are the practicals doing" is one breakdown across
 			// every laboratory type, not one per type. Guarded by its own flag for the same
@@ -638,8 +641,8 @@ public abstract class DaoStudent {
 	 * The lectures behind one row of {@link #getCourseBreakdown}: every lecture of one course
 	 * held for this student, and whether they were present at it.
 	 * <p>
-	 * Read from {@code SqlBits.MARKS} for the same reason the breakdown is: a lecture of their
-	 * batch with no mark for them is an absence, and is listed as one.
+	 * Read from {@code SqlBits.MARKS} as the breakdown is, so the list is the marks the
+	 * fraction was counted from.
 	 * <p>
 	 * Newest first, because a run of recent absences is what anyone opening this screen is
 	 * looking for. Ordered on the epoch prefix rather than the stored string, which would sort
@@ -653,7 +656,10 @@ public abstract class DaoStudent {
 			"FROM " + SqlBits.MARKS + " a " +
 			"INNER JOIN lectures l ON l.lectureID = a.lectureID " +
 			"LEFT JOIN batch_desc b ON b.batchID = l.batchID " +
+			SqlBits.ENROLMENT_AT_LECTURE +
 			"WHERE a.studentID = :studentID AND l.courseID = :courseID " +
+			// The breakdown's own rule, so this list adds up to its fraction (R32).
+			"AND " + SqlBits.COUNTS_FOR_ENROLMENT + " " +
 			LECTURE_IN_WINDOW +
 			"ORDER BY " + SqlBits.EPOCH_START + " DESC")
 	public abstract LiveData<List<StudentLectureMark>> getLectureMarks(long studentID,

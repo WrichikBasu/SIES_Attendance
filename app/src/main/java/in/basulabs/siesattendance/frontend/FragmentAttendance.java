@@ -246,8 +246,8 @@ public class FragmentAttendance extends Fragment {
 	/**
 	 * Two different things get called "deleting the attendance", and they are not
 	 * interchangeable: one throws away who was present, the other says the lecture never
-	 * happened. Statistics treat them differently, since a cleared lecture still counts as a
-	 * session that was held, so the choice is put to the user rather than assumed.
+	 * happened. A cleared lecture stays on the timetable, waiting to be marked again, and
+	 * counts for nobody until it is, so the choice is put to the user rather than assumed.
 	 */
 	private void askHowToDelete() {
 
@@ -275,7 +275,7 @@ public class FragmentAttendance extends Fragment {
 
 	/**
 	 * Clearing keeps the lecture and discards its sheet, which is what is wanted after marking
-	 * the wrong roll. The lecture itself stays, so it still counts as having been held.
+	 * the wrong roll. The lecture itself stays on the timetable, to be marked again.
 	 */
 	private void confirmClearMarks() {
 
@@ -319,6 +319,10 @@ public class FragmentAttendance extends Fragment {
 
 		int present = 0, absent = 0;
 		for (AttendanceRow row : rows) {
+			// Neither: nobody has said, and nothing will be saved for them.
+			if (!row.marked) {
+				continue;
+			}
 			if (row.present) {
 				present++;
 			} else {

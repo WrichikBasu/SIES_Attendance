@@ -36,12 +36,34 @@ public class AttendanceRow {
 	 */
 	public boolean present = true;
 
+	/**
+	 * Whether this row carries an answer to save.
+	 * <p>
+	 * True on a fresh sheet, where every row does: see {@link #present}. False only on a
+	 * register that is reopened with marks already stored, for a student who is on the roll
+	 * now and has no mark for that lecture: somebody who joined the batch afterwards, or was
+	 * left off the sheet. Nothing was recorded for them, so nothing is saved for them unless
+	 * the user marks them, and {@link #present} means nothing until then.
+	 * <p>
+	 * This matters because attendance is counted from the marks alone. Saving a default for
+	 * such a row would file a student who changed batch in October as absent from, or present
+	 * at, a class held in July before they arrived, every time somebody re-saved that
+	 * register.
+	 */
+	public boolean marked = true;
+
 	public AttendanceRow(long studentID, @NonNull String name, @NonNull String rollNo,
 	                     boolean present) {
+		this(studentID, name, rollNo, present, true);
+	}
+
+	public AttendanceRow(long studentID, @NonNull String name, @NonNull String rollNo,
+	                     boolean present, boolean marked) {
 		this.studentID = studentID;
 		this.name = name;
 		this.rollNo = rollNo;
 		this.present = present;
+		this.marked = marked;
 	}
 
 	/** A student on a fresh sheet: present until someone says otherwise. */

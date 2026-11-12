@@ -48,52 +48,36 @@ public final class SqlBits {
 					+ " WHERE " + EPOCH_START + " BETWEEN ay2.startEpoch AND ay2.endEpoch"
 					+ " ORDER BY ay2.academicYear DESC LIMIT 1)";
 
-	private static final String HAS_NO_MARK =
-			"NOT EXISTS (SELECT 1 FROM attendance x"
-					+ " WHERE x.lectureID = l.lectureID AND x.studentID = y.studentID)";
+	/**
+	 * Joins {@code y}, the student's enrolment in the session of lecture {@code l}, for the
+	 * student {@code a}, so {@link #COUNTS_FOR_ENROLMENT} can be applied. A left join: a mark in
+	 * a session the student is no longer enrolled in has no row, and is kept, since
+	 * {@code COUNTS_FOR_ENROLMENT} passes a null join date.
+	 */
+	public static final String ENROLMENT_AT_LECTURE =
+			" LEFT JOIN student_year y ON y.studentID = a.studentID"
+					+ "    AND y.academicYear = " + SESSION_OF_LECTURE + " ";
 
 	/**
-	 * Every student at every lecture held for them, as {@code (lectureID, studentID, present)}:
-	 * what a report reads in place of the {@code attendance} table.
+	 * The marks on record, as {@code (lectureID, studentID, present)}: what every report counts.
 	 * <p>
-	 * Attendance is present or absent and nothing else, so a lecture held for a student with
-	 * no mark for them is an absence. The table only has the marks somebody wrote; this adds a
-	 * row with {@code present = 0} for each one that is missing:
-	 * <ul>
-	 * <li>a lecture for a batch, for each member of that batch in the lecture's session;</li>
-	 * <li>a whole-class lecture, which has no batch, for each student on the course's roll,
-	 * that is, in a batch linked to the course.</li>
-	 * </ul>
-	 * Only for a student enrolled in that session, from the day they joined, and only while
-	 * they have not left: somebody who has left is off the rolls, and keeps the marks they
-	 * have. It is the rule {@code ExportQueryBuilder} counts "held" by, so the register export
-	 * and the statistics give the same figures.
+	 * Attendance is computed from the marks alone. A register writes a mark, present or
+	 * absent, for everybody on its sheet, so the marks are the record of who a lecture was
+	 * held for on the day; a student with no mark at a lecture was not on its sheet, and the
+	 * lecture counts neither for nor against them.
 	 * <p>
-	 * A parenthesised subquery, to be given an alias by the query using it.
+	 * This used to add an absence for every lecture of a student's <em>current</em> batch that
+	 * they had no mark for. Batch membership is only what is true today, and students change
+	 * batch during the year, so that charged a student who moved into a batch with every
+	 * lecture it had held before they arrived. {@code ExportQueryBuilder} counts the same way,
+	 * so the register export and the statistics give the same figures.
+	 * <p>
+	 * A parenthesised subquery, to be given an alias by the query using it. Kept as a name, and
+	 * not replaced by the table, so that there is one place that says what a report reads.
 	 */
 	public static final String MARKS =
 			"(SELECT m.lectureID AS lectureID, m.studentID AS studentID, m.present AS present"
-					+ " FROM attendance m"
-					+ " UNION ALL"
-					+ " SELECT l.lectureID, y.studentID, 0"
-					+ " FROM lectures l"
-					+ " INNER JOIN batch_student_map bm ON bm.batchID = l.batchID"
-					+ "    AND bm.academicYear = " + SESSION_OF_LECTURE
-					+ " INNER JOIN student_year y ON y.studentID = bm.studentID"
-					+ "    AND y.academicYear = bm.academicYear"
-					+ " WHERE y.leaveDate IS NULL AND " + COUNTS_FOR_ENROLMENT
-					+ "   AND " + HAS_NO_MARK
-					+ " UNION ALL"
-					+ " SELECT l.lectureID, y.studentID, 0"
-					+ " FROM lectures l"
-					+ " INNER JOIN student_year y ON y.academicYear = " + SESSION_OF_LECTURE
-					+ " WHERE l.batchID IS NULL"
-					+ "   AND y.leaveDate IS NULL AND " + COUNTS_FOR_ENROLMENT
-					+ "   AND EXISTS (SELECT 1 FROM course_batch_map cb"
-					+ "      INNER JOIN batch_student_map m2 ON m2.batchID = cb.batchID"
-					+ "      WHERE cb.courseID = l.courseID AND m2.studentID = y.studentID"
-					+ "        AND m2.academicYear = y.academicYear)"
-					+ "   AND " + HAS_NO_MARK + ")";
+					+ " FROM attendance m)";
 
 	private SqlBits() {
 	}

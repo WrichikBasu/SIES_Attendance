@@ -31,18 +31,14 @@ public final class PgExportQueryBuilder {
 	}
 
 	/**
-	 * One row per student per course they are on the roll for, with lectures held and lectures
-	 * attended.
+	 * One row per student per course, with lectures held and lectures attended.
 	 * <p>
-	 * Held is every lecture the student was supposed to be at (whole-class, one of their
-	 * batches, or one they have a mark for) and attended the ones marked present, so a
-	 * lecture with no mark is an absence. The app's {@code ExportQueryBuilder} has the rule
-	 * and why.
-	 * <p>
-	 * The join from students to courses repeats the roster condition the app's
-	 * {@code DaoStudent.getRollForCourseSync} applies. The two have to agree, since a student
-	 * who counts as taking a course in one and not the other would appear on a sheet without
-	 * appearing in the report, or the reverse.
+	 * Both figures are counted from the student's own marks: held is the lectures of the
+	 * course they have a mark for, and attended the ones marked present. Batches are not
+	 * consulted for the figures, because membership is only what is true today and students
+	 * change batch during the year. A student has a row for a course when they hold a mark in
+	 * it this session or are on its roll now. The app's {@code ExportQueryBuilder} has the
+	 * rule and why.
 	 * <p>
 	 * Argument order is the thing to be careful about here. The arguments are positional and
 	 * the subqueries are appended ahead of the FROM clause they refer to, so each block adds its
@@ -62,23 +58,17 @@ public final class PgExportQueryBuilder {
 				.append("c.course_code AS \"courseCode\", ")
 				.append("c.course_topic AS \"courseTopic\", ");
 
-		// held: the lectures of the student's batches, and any other they have a mark for
-		sql.append("(SELECT COUNT(*) FROM lectures l ")
-				.append(" WHERE l.course_id = c.course_id ")
-				.append("   AND (l.batch_id IS NULL OR l.batch_id IN ")
-				.append("        (SELECT m.batch_id FROM batch_student_map m ")
-				.append("         WHERE m.student_id = s.student_id ")
-				.append("           AND m.academic_year = ?) ")
-				.append("        OR EXISTS (SELECT 1 FROM attendance h ")
-				.append("         WHERE h.lecture_id = l.lecture_id ")
-				.append("           AND h.student_id = s.student_id)) ")
+		// held: the lectures of the course the student has a mark for, present or absent
+		sql.append("(SELECT COUNT(*) FROM attendance a ")
+				.append(" INNER JOIN lectures l ON l.lecture_id = a.lecture_id ")
+				.append(" WHERE a.student_id = s.student_id ")
+				.append("   AND l.course_id = c.course_id ")
 				.append("   AND ").append(lectureWindow())
 				.append("   AND ").append(PgSqlBits.COUNTS_FOR_ENROLMENT)
 				.append(") AS held, ");
-		args.add(academicYear);
 		addWindowArgs(filter, args);
 
-		// attended: the student's marks of present, every one of which is in held
+		// attended: the same marks, narrowed to present, so it can never exceed held
 		sql.append("(SELECT COUNT(*) FROM attendance a ")
 				.append(" INNER JOIN lectures l ON l.lecture_id = a.lecture_id ")
 				.append(" WHERE a.student_id = s.student_id AND a.present ")
@@ -92,14 +82,22 @@ public final class PgExportQueryBuilder {
 				.append("INNER JOIN student_year y ON y.student_id = s.student_id ")
 				.append("   AND y.academic_year = ? ")
 				.append("INNER JOIN academic_years ay ON ay.academic_year = ? ")
-				// The roll: the members of the course's linked batches for the session.
-				// course_admits() in V41 is the same decision, written inline because the
-				// differ runs on V1 and V2 alone.
-				.append("INNER JOIN courses c ON EXISTS (SELECT 1 FROM course_batch_map cb ")
+				// On the roll now, or holding a mark in the course this session. The roll is
+				// the members of the course's linked batches for the session; course_admits()
+				// in V41 is the same decision, written inline because the differ runs on V1
+				// and V2 alone.
+				.append("INNER JOIN courses c ON (EXISTS (SELECT 1 FROM course_batch_map cb ")
 				.append("   INNER JOIN batch_student_map m ON m.batch_id = cb.batch_id ")
 				.append("   WHERE cb.course_id = c.course_id ")
 				.append("     AND m.student_id = y.student_id ")
-				.append("     AND m.academic_year = ?) ");
+				.append("     AND m.academic_year = ?) ")
+				.append(" OR EXISTS (SELECT 1 FROM attendance a ")
+				.append("   INNER JOIN lectures l ON l.lecture_id = a.lecture_id ")
+				.append("   WHERE a.student_id = y.student_id ")
+				.append("     AND l.course_id = c.course_id ")
+				.append("     AND ").append(PgSqlBits.LECTURE_LOCAL_DATE)
+				.append("         BETWEEN ay.start_date AND ay.end_date ")
+				.append("     AND ").append(PgSqlBits.COUNTS_FOR_ENROLMENT).append(")) ");
 		// The two in student_year and academic_years, then the one in the roll condition, in
 		// the order the placeholders appear.
 		args.add(academicYear);

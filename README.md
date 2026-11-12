@@ -41,9 +41,12 @@ and synced when there is a connection.
   of every lecture.
 - **Exports:**
   - an attendance register spreadsheet (`.ods`), with lectures held and attended per course and
-    students below the threshold shaded. Attendance is either present or absent: a lecture
-    held for a student's batch with no mark for them counts as an absence, here and in the
-    statistics
+    students below the threshold shaded. The figures are counted from the marks alone, here
+    and in the statistics: held is the lectures a student has a mark for, present or absent,
+    and attended is the ones marked present. Batches are not consulted, so a student who
+    changes batch during the year keeps exactly the lectures they were marked at, and one who
+    is taken out of every batch of a course keeps their row for it. A student on a course's
+    roll with nothing marked yet is listed with nought held
   - mark sheets for a lecture or a day, as `.ods` or CSV
 - **Imports:**
   - a student roster CSV (see below)

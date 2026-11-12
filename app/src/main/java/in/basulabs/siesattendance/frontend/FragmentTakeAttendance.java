@@ -378,7 +378,7 @@ public class FragmentTakeAttendance extends Fragment {
 		}
 
 		if (indexOfBatch(selectedBatchID) >= 0) {
-			viewModel.loadRoll(selectedCourse.courseID, selectedBatchID, true);
+			viewModel.loadRoll(selectedCourse.courseID, selectedBatchID, date, true);
 			return;
 		}
 
@@ -441,15 +441,20 @@ public class FragmentTakeAttendance extends Fragment {
 	 * @param then run on the main thread once the list is in place, or null
 	 */
 	private void loadBatchOptions(@NonNull EntityCourse course, @Nullable Runnable then) {
-		viewModel.loadBatchesForCourse(course.courseID, list -> {
+
+		// The day being marked decides the session, and so which batches there are (R30).
+		final LocalDate day = date;
+
+		viewModel.loadBatchesForCourse(course.courseID, day, list -> {
 			if (!isAdded()) {
 				return;
 			}
 
 			Ui.onMain(this, () -> {
 
-				// Overtaken by another course chosen while this one's list was read.
-				if (selectedCourse == null || selectedCourse.courseID != course.courseID) {
+				// Overtaken by another course or date chosen while this list was read.
+				if (selectedCourse == null || selectedCourse.courseID != course.courseID
+						|| !day.equals(date)) {
 					return;
 				}
 
@@ -468,6 +473,11 @@ public class FragmentTakeAttendance extends Fragment {
 					long newBatchID = batches.get(position).batchID;
 
 					if (selectedBatchID != null && selectedBatchID == newBatchID) {
+						// The same batch again does nothing, unless its roll is missing, as
+						// after Android ended the app in the background (R31).
+						if (rollIsEmpty()) {
+							applyGroupChange(newBatchID);
+						}
 						return;
 					}
 
@@ -508,7 +518,7 @@ public class FragmentTakeAttendance extends Fragment {
 
 		rollHeader.setText(getString(R.string.roll_header_for,
 				actvBatch.getText().toString()));
-		viewModel.loadRoll(selectedCourse.courseID, selectedBatchID);
+		viewModel.loadRoll(selectedCourse.courseID, selectedBatchID, date);
 	}
 
 	// ── Date and time ────────────────────────────────────────────────────
@@ -527,12 +537,58 @@ public class FragmentTakeAttendance extends Fragment {
 		picker.addOnPositiveButtonClickListener(selection -> {
 			// The picker hands back UTC midnight, so reading it back in UTC avoids landing on
 			// the previous day for anyone east or west of Greenwich.
-			date = Instant.ofEpochMilli(selection).atZone(ZoneId.of("UTC")).toLocalDate();
-			etDate.setText(date.format(DATE_LABEL));
-			tilDate.setError(null);
+			onDateChosen(Instant.ofEpochMilli(selection).atZone(ZoneId.of("UTC")).toLocalDate());
 		});
 
 		picker.show(getParentFragmentManager(), "date");
+	}
+
+	/**
+	 * Moves the sheet to another day. The batches and the roll belong to the day's session
+	 * (R30), so with a course chosen they are read again: a batch that is still there is kept
+	 * with its marks, and one that is not, because the day is in another session, is cleared,
+	 * asking first when there are marks to lose.
+	 */
+	private void onDateChosen(@NonNull LocalDate picked) {
+
+		LocalDate previous = date;
+		date = picked;
+		etDate.setText(date.format(DATE_LABEL));
+		tilDate.setError(null);
+
+		if (selectedCourse == null || picked.equals(previous)) {
+			return;
+		}
+
+		loadBatchOptions(selectedCourse, () -> {
+
+			if (selectedBatchID == null || indexOfBatch(selectedBatchID) >= 0) {
+				return;
+			}
+
+			String batchName = actvBatch.getText().toString();
+
+			if (!rollTouched) {
+				dropBatch(batchName);
+				return;
+			}
+
+			new MaterialAlertDialogBuilder(requireContext())
+					.setTitle(R.string.dialog_date_changes_session_title)
+					.setMessage(getString(R.string.dialog_date_changes_session_message,
+							picked.format(DATE_LABEL)))
+					.setCancelable(false)
+					.setNegativeButton(R.string.action_keep_marking, (d, w) -> {
+						date = previous;
+						etDate.setText(date.format(DATE_LABEL));
+						if (selectedCourse != null) {
+							loadBatchOptions(selectedCourse, null);
+						}
+					})
+					.setPositiveButton(R.string.action_change_date, (d, w) ->
+							dropBatch(batchName))
+					.show();
+		});
 	}
 
 	private void pickTime(boolean isStart) {
@@ -667,8 +723,11 @@ public class FragmentTakeAttendance extends Fragment {
 		}
 
 		String notes = etNotes.getText() == null ? "" : etNotes.getText().toString().trim();
+		long courseID = selectedCourse.courseID;
+		String courseCode = selectedCourse.courseCode;
+		Long batchID = selectedBatchID;
 
-		viewModel.recordLectureWithAttendance(selectedCourse.courseID, selectedBatchID,
+		Runnable record = () -> viewModel.recordLectureWithAttendance(courseID, batchID,
 				start, end, notes.isEmpty() ? null : notes,
 				() -> Ui.onMain(this, () -> {
 					if (thenDuplicate) {
@@ -676,6 +735,25 @@ public class FragmentTakeAttendance extends Fragment {
 					} else {
 						Navigation.findNavController(button).navigateUp();
 					}
+				}));
+
+		// A register already on record for this slot is corrected by saving, which used to
+		// happen without a word (R29). Asked first, with how many marks it holds.
+		viewModel.findExistingRegister(courseID, batchID, start, end, existing ->
+				Ui.onMain(this, () -> {
+					if (existing == null || existing.markedCount == 0) {
+						record.run();
+						return;
+					}
+					new MaterialAlertDialogBuilder(requireContext())
+							.setTitle(R.string.dialog_register_exists_title)
+							.setMessage(getResources().getQuantityString(
+									R.plurals.dialog_register_exists_message,
+									existing.markedCount, existing.markedCount, courseCode))
+							.setNegativeButton(R.string.action_cancel, null)
+							.setPositiveButton(R.string.action_correct_register,
+									(d, w) -> record.run())
+							.show();
 				}));
 	}
 
@@ -824,7 +902,22 @@ public class FragmentTakeAttendance extends Fragment {
 
 		selectedBatchID = batches.get(index).batchID;
 		actvBatch.setText(labels.get(index), false);
+
+		// A rotation keeps the roll in the ViewModel, marks and all. After Android ended the
+		// app in the background the ViewModel is new and the roll is gone, so it is read
+		// again rather than left empty with no way to reload it (R31). The marks went with
+		// the process; the selection, the date and the times are back.
+		if (rollIsEmpty()) {
+			rollTouched = false;
+			onGroupChosen();
+		}
 		updateRollVisibility();
+	}
+
+	/** Whether the ViewModel holds no roll for the sheet on screen. */
+	private boolean rollIsEmpty() {
+		List<AttendanceRow> rows = viewModel.getAttendanceRows().getValue();
+		return rows == null || rows.isEmpty();
 	}
 
 	@Override

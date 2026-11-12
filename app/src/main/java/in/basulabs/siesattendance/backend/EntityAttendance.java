@@ -12,9 +12,9 @@ import androidx.room.Index;
  * sheet twice overwrites the same rows rather than doubling them up. Sheets are always written
  * whole, through {@code DaoAttendance.saveSheet}, so a partially recorded lecture cannot exist.
  * <p>
- * Attendance is present or absent and nothing else. A row is missing only because nobody has
- * written one, and both the export and the statistics count a lecture held for a student's
- * batch as an absence when it has no row for them; see {@code SqlBits.MARKS}.
+ * A mark is present or absent. A student with no row for a lecture was not on its sheet, and
+ * the lecture counts neither for nor against them: the export and the statistics are counted
+ * from these rows alone, never from batch membership; see {@code SqlBits.MARKS}.
  */
 @Entity(tableName = EntityAttendance.TABLE_NAME,
 		primaryKeys = {"lectureID", "studentID"},

@@ -148,10 +148,13 @@ public final class OdsWriter {
 		return candidate;
 	}
 
-	/** Whether a sheet of this name has already been started. */
+	/**
+	 * Whether a sheet of this name has already been started. Without regard to case, because
+	 * spreadsheet readers hold "Labs" and "labs" to be the same sheet name.
+	 */
 	private boolean nameTaken(@NonNull String name) {
 		for (Sheet sheet : sheets) {
-			if (sheet.name.equals(name)) {
+			if (sheet.name.equalsIgnoreCase(name)) {
 				return true;
 			}
 		}

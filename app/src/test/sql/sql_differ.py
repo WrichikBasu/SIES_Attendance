@@ -315,6 +315,11 @@ FIXTURE = Fixture(
         # check_the_zone_difference_is_real.
         Lecture(12, 1, None, (2025, 10, 1, 1, 0), (2025, 10, 1, 2, 0),
                 why="just after midnight: a different month in UTC"),
+        # Sneha sat this with the Physics batch and has since been taken out of it, so she
+        # is in none of PH201's batches. Her mark is still hers, and the export has to give
+        # her a row for PH201 on the strength of it alone.
+        Lecture(13, 7, 7, (2025, 8, 20, 9, 0), (2025, 8, 20, 10, 0),
+                why="marked for a student who is in none of the course's batches"),
     ],
     marks=[
         Mark(1, 1, True), Mark(1, 2, True), Mark(1, 3, False),
@@ -333,6 +338,7 @@ FIXTURE = Fixture(
         Mark(10, 1, False), Mark(10, 2, True),
         Mark(11, 1, True), Mark(11, 3, True),
         Mark(12, 1, True), Mark(12, 2, False),
+        Mark(13, 2, True), Mark(13, 4, False),
     ],
 )
 

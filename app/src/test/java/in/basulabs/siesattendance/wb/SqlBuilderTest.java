@@ -105,10 +105,10 @@ public class SqlBuilderTest {
 
 		assertEquals("argument count must match placeholder count",
 				placeholders(query.getSql()), argsOf(query).size());
-		// Five for held (the session of the student's batches, then the date window), four for
-		// attended (the window), two for the session joins, and one for the roll: the student's
-		// membership, that session, of the course's batches.
-		assertEquals(12, argsOf(query).size());
+		// Four for held (the date window), four for attended (the same window), two for the
+		// session joins, and one for the roll: the student's membership, that session, of the
+		// course's batches.
+		assertEquals(11, argsOf(query).size());
 	}
 
 	@Test
@@ -159,24 +159,23 @@ public class SqlBuilderTest {
 		ExportFilter unbounded = new ExportFilter();
 		List<Object> args = argsOf(ExportQueryBuilder.build(2025, unbounded));
 
-		// held block: academicYear, fromFlag, fromValue, toFlag, toValue
-		assertEquals(2025L, ((Number) args.get(0)).longValue());
+		// held block: fromFlag, fromValue, toFlag, toValue
+		assertEquals(0L, ((Number) args.get(0)).longValue());
 		assertEquals(0L, ((Number) args.get(1)).longValue());
 		assertEquals(0L, ((Number) args.get(2)).longValue());
 		assertEquals(0L, ((Number) args.get(3)).longValue());
-		assertEquals(0L, ((Number) args.get(4)).longValue());
 
 		ExportFilter bounded = new ExportFilter();
 		bounded.from = LocalDate.of(2025, 7, 1);
 		bounded.to = LocalDate.of(2025, 7, 31);
 		List<Object> boundedArgs = argsOf(ExportQueryBuilder.build(2025, bounded));
 
-		assertEquals(1L, ((Number) boundedArgs.get(1)).longValue());
-		assertTrue(((Number) boundedArgs.get(2)).longValue() > 0);
-		assertEquals(1L, ((Number) boundedArgs.get(3)).longValue());
+		assertEquals(1L, ((Number) boundedArgs.get(0)).longValue());
+		assertTrue(((Number) boundedArgs.get(1)).longValue() > 0);
+		assertEquals(1L, ((Number) boundedArgs.get(2)).longValue());
 		assertTrue("the upper bound must cover the whole of the final day",
-				((Number) boundedArgs.get(4)).longValue()
-						> ((Number) boundedArgs.get(2)).longValue());
+				((Number) boundedArgs.get(3)).longValue()
+						> ((Number) boundedArgs.get(1)).longValue());
 	}
 
 	@Test
@@ -189,29 +188,34 @@ public class SqlBuilderTest {
 
 		List<Object> args = argsOf(ExportQueryBuilder.build(2025, filter));
 
-		// Arguments 1-4 are the window of "held", 5-8 that of "attended"; they must be
+		// Arguments 0-3 are the window of "held", 4-7 that of "attended"; they must be
 		// identical.
-		assertEquals(args.subList(1, 5).toString(), args.subList(5, 9).toString());
+		assertEquals(args.subList(0, 4).toString(), args.subList(4, 8).toString());
 	}
 
 	@Test
-	public void heldCountsLecturesHeldAndAttendedTheStudentsOwnMarks() {
-		// Attendance is present or absent: a lecture of the student's batch with no mark for
-		// them is held and not attended. A lecture they have a mark for is held whatever
-		// batch they are in today, so a change of batch does not lose their history.
+	public void heldAndAttendedAreCountedFromTheStudentsOwnMarksAndNeverFromBatches() {
+		// Batch membership is only what is true today, and students change batch during the
+		// year. Counting the lectures of a student's current batch charged somebody who moved
+		// in October with every lecture the new batch had held since June.
 		String sql = ExportQueryBuilder.build(2025, new ExportFilter()).getSql();
 
 		String held = sql.substring(0, sql.indexOf("AS held"));
 		String attended = sql.substring(sql.indexOf("AS held"), sql.indexOf("AS attended"));
+		String rows = sql.substring(sql.indexOf("AS attended"));
 
-		assertTrue("held must be counted from the lectures, not from attendance rows",
-				held.contains("COUNT(*) FROM lectures l"));
-		assertTrue("held must take in the lectures of the student's batches",
+		assertTrue("held must be counted from the student's marks",
+				held.contains("COUNT(*) FROM attendance a"));
+		assertFalse("held must not depend on the batches the student is in today",
 				held.contains("batch_student_map"));
-		assertTrue("held must take in a lecture the student has a mark for",
-				held.contains("EXISTS (SELECT 1 FROM attendance h"));
 		assertFalse("attended must not depend on the batches the student is in today",
 				attended.contains("batch_student_map"));
+		assertTrue("attended is the marks of present", attended.contains("a.present = 1"));
+
+		assertTrue("a student on the roll now has a row, with nothing marked yet",
+				rows.contains("course_batch_map"));
+		assertTrue("and so has one who holds a mark and is in none of the course's batches",
+				rows.contains("OR EXISTS (SELECT 1 FROM attendance a"));
 	}
 
 	@Test

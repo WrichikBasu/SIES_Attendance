@@ -332,22 +332,199 @@ def test_export_denominator_counts_lectures_held(conn):
           rows[("2025CS02", "CS202")]["held"] == 1)
 
     # The load-bearing case: Rahul was absent at L1, never on L2's sheet at all, and present
-    # at L5. Attendance is present or absent and nothing else, so L2 is an absence: 1 of 3.
-    # Counting his own attendance rows would make it 1 of 2.
+    # at L5. Held is counted from his own marks, so L2 is not his: 1 of 2. Counting every
+    # lecture of the course, or of the batch he is in today, would make it 1 of 3.
     rahul = rows[("2025CS03", "CS201")]
     own_rows = conn.execute(
         "SELECT COUNT(*) FROM attendance a JOIN lectures l ON l.lectureID = a.lectureID "
         "WHERE a.studentID = 3 AND l.courseID = 1 AND l.lectureID != 6").fetchone()[0]
-    check("export: a lecture with no mark for a student is an absence",
-          rahul["held"] == 3 and rahul["attended"] == 1 and own_rows == 2,
+    check("export: held is the lectures the student has a mark for",
+          rahul["held"] == 2 and rahul["attended"] == 1 and own_rows == 2,
           f"held={rahul['held']} attended={rahul['attended']} ownRows={own_rows}")
+
+
+def lecture_for(conn, lecture_id, course_id, batch_id, day, marks):
+    """Adds a July 2025 lecture and a mark for each (student, present) given."""
+    conn.execute("INSERT INTO lectures VALUES (?,?,?,?,?,?)",
+                 (lecture_id, course_id, batch_id, ts(2025, 7, day, 9, 0),
+                  ts(2025, 7, day, 10, 0), None))
+    conn.executemany("INSERT INTO attendance (lectureID, studentID, present) VALUES (?,?,?)",
+                     [(lecture_id, student, present) for student, present in marks])
+
+
+def export_rows(conn):
+    return {(r["rollNo"], r["courseCode"]): r for r in run(conn, "export_unrestricted")}
+
+
+def stats_by_student(conn):
+    return {r["primaryLabel"]: (r["total"], r["attended"])
+            for r in run(conn, "stats_grouped_STUDENT")}
+
+
+def test_export_follows_the_marks_when_a_student_changes_batch():
+    """
+    Students change batch during the year, and batch membership is only what is true today.
+    The figures are counted from the marks, so a move changes nothing that was already
+    recorded: the student keeps the lectures they were marked at with the old batch, owes
+    none of the lectures the new batch held before they arrived, and collects the new
+    batch's lectures from the first one they are marked at.
+    """
+    conn = build_fixture()
+
+    # Batch B (Sneha alone) holds three more CS202 lectures while Aarav is still in Batch A.
+    for i, day in enumerate((1, 2, 3)):
+        lecture_for(conn, 100 + i, 2, 2, day, [(2, 1)])
+    before = export_rows(conn)[("2025CS01", "CS202")]
+    stats_before = stats_by_student(conn)["2025CS01"]
+
+    conn.execute("UPDATE batch_student_map SET batchID = 2 WHERE batchID = 1 AND studentID = 1")
+    conn.commit()
+    moved = export_rows(conn)[("2025CS01", "CS202")]
+
+    check("export: moving batch changes nothing already recorded",
+          (moved["held"], moved["attended"]) == (before["held"], before["attended"]) == (1, 1),
+          f"before={dict(before)} after={dict(moved)}")
+    check("stats: moving batch changes nothing already recorded",
+          stats_by_student(conn)["2025CS01"] == stats_before,
+          f"before={stats_before} after={stats_by_student(conn)['2025CS01']}")
+
+    # The first lecture of Batch B he is on the sheet for, and absent from.
+    lecture_for(conn, 110, 2, 2, 20, [(1, 0), (2, 1)])
+    after = export_rows(conn)[("2025CS01", "CS202")]
+    check("export: the new batch's lectures count from the first one they are marked at",
+          after["held"] == 2 and after["attended"] == 1, f"{dict(after)}")
+
+    # Batch A carries on without him, and he owes it nothing.
+    lecture_for(conn, 111, 2, 1, 21, [(3, 1)])
+    still = export_rows(conn)[("2025CS01", "CS202")]
+    check("export: the old batch's later lectures are not held against them",
+          still["held"] == 2 and still["attended"] == 1, f"{dict(still)}")
+
+    conn.close()
+
+
+def test_export_keeps_a_student_who_is_in_none_of_the_courses_batches():
+    """
+    Taking a student out of every batch of a course deletes none of their marks, and the
+    register must go on showing them: they have a row for the course for as long as they hold
+    a mark in it this session, with the figures those marks give.
+    """
+    conn = build_fixture()
+
+    marks_before = conn.execute("SELECT COUNT(*) FROM attendance WHERE studentID = 1").fetchone()[0]
+    before = export_rows(conn)
+    stats_before = stats_by_student(conn)["2025CS01"]
+
+    # Aarav leaves Batch A, the only batch of CS202 he was in.
+    conn.execute("DELETE FROM batch_student_map WHERE studentID = 1 AND batchID = 1")
+    conn.commit()
+
+    marks_after = conn.execute("SELECT COUNT(*) FROM attendance WHERE studentID = 1").fetchone()[0]
+    check("dropping a student from a batch deletes none of their marks",
+          marks_after == marks_before, f"before={marks_before} after={marks_after}")
+
+    after = export_rows(conn)
+    row = after.get(("2025CS01", "CS202"))
+    check("export: a student in none of a course's batches keeps their row for it",
+          row is not None and (row["held"], row["attended"]) == (1, 1),
+          f"{dict(row) if row else None}")
+    check("export: and every other figure of theirs is unchanged",
+          {k: (v["held"], v["attended"]) for k, v in after.items() if k[0] == "2025CS01"}
+          == {k: (v["held"], v["attended"]) for k, v in before.items() if k[0] == "2025CS01"})
+    check("stats: a student in none of a course's batches keeps their figures",
+          stats_by_student(conn)["2025CS01"] == stats_before)
+
+    # Out of every batch altogether: still listed, for every course they were marked in.
+    conn.execute("DELETE FROM batch_student_map WHERE studentID = 1")
+    conn.commit()
+    codes = {code for roll, code in export_rows(conn) if roll == "2025CS01"}
+    check("export: a student in no batch at all keeps every course they hold a mark in",
+          codes == {"CS201", "CS202"}, f"{sorted(codes)}")
+
+    conn.close()
+
+
+def test_export_lists_the_roll_before_anything_is_marked():
+    """
+    The other way onto the sheet: a student put on a course's roll today has a row for it at
+    once, with nought held, and is charged nothing for what the course held before.
+    """
+    conn = build_fixture()
+
+    # Meera (Physics, 2025PH01) joins Batch B of CS202, which has already had a lecture.
+    conn.execute("INSERT INTO batch_student_map VALUES (2, 4, 2025)")
+    conn.commit()
+
+    row = export_rows(conn).get(("2025PH01", "CS202"))
+    check("export: a student new to the roll is listed with nothing held",
+          row is not None and (row["held"], row["attended"]) == (0, 0),
+          f"{dict(row) if row else None}")
+    check("stats: and has no figures until they are marked",
+          "2025PH01" not in stats_by_student(conn))
+
+    conn.close()
+
+
+def test_export_counts_from_the_join_date_or_the_session_start():
+    """
+    A student's figures start on the day they joined, or at the start of the session when no
+    join date is recorded. The same bound applies to held and to attended, so a mark from
+    before it can neither count for nor against them.
+
+    Aarav in CS201: present at L1 (10 July), L2 (11 July) and L5 (15 August).
+    """
+    import datetime
+
+    def day(y: int, m: int, d: int) -> int:
+        return (datetime.date(y, m, d) - datetime.date(1970, 1, 1)).days
+
+    def aarav(conn) -> tuple[int, int]:
+        r = export_rows(conn)[("2025CS01", "CS201")]
+        return r["held"], r["attended"]
+
+    def joined(conn, value) -> None:
+        conn.execute("UPDATE student_year SET joinDate = ? "
+                     "WHERE studentID = 1 AND academicYear = 2025", (value,))
+        conn.commit()
+
+    conn = build_fixture()
+
+    # A mark he holds from before the session began: the orphan lecture of February 2024.
+    conn.execute("INSERT INTO attendance (lectureID, studentID, present) VALUES (6, 1, 1)")
+    joined(conn, None)
+    check("export: with no join date, attended counts from the start of the session",
+          aarav(conn) == (3, 3), f"{aarav(conn)}")
+
+    joined(conn, day(2025, 7, 11))
+    check("export: attended counts from the join date, the day itself included",
+          aarav(conn) == (2, 2), f"{aarav(conn)}")
+
+    joined(conn, day(2025, 7, 12))
+    check("export: a mark from before the join date counts neither as held nor attended",
+          aarav(conn) == (1, 1), f"{aarav(conn)}")
+
+    joined(conn, day(2023, 1, 1))
+    check("export: a join date before the session still counts from the session start",
+          aarav(conn) == (3, 3), f"{aarav(conn)}")
+
+    joined(conn, day(2025, 9, 1))
+    after = export_rows(conn)
+    check("export: joined after every lecture, nothing is held or attended",
+          ("2025CS01", "CS201") in after and aarav(conn) == (0, 0), f"{aarav(conn)}")
+
+    stats = stats_by_student(conn).get("2025CS01", (0, 0))
+    total = [sum(v[k] for key, v in after.items() if key[0] == "2025CS01") for k in ("held", "attended")]
+    check("export and statistics agree on a late joiner",
+          stats == (total[0], total[1]), f"stats={stats} export={total}")
+
+    conn.close()
 
 
 def test_export_keeps_history_and_never_exceeds_held():
     """
-    Held is the lectures of the student's batches and any other the student has a mark for,
-    so a change of batch keeps what was sat before, a lecture with no marks is still held,
-    and attended can never be more than held.
+    Held is the lectures the student has a mark for, so a change of batch keeps exactly what
+    was recorded, a lecture whose marks were cleared counts for nobody until it is marked
+    again, and attended can never be more than held.
     """
     conn = build_fixture()
 
@@ -355,22 +532,22 @@ def test_export_keeps_history_and_never_exceeds_held():
         return {(r["rollNo"], r["courseCode"]): r for r in run(conn, "export_unrestricted")}
 
     # A student who moves to the course's other batch keeps the lecture they sat in the
-    # first, and now owes the other batch's lecture too. Aarav sat L3 with Batch A and has
-    # no mark at L4, Batch B's: two held, one attended.
+    # first, and owes nothing for the other batch's lecture, L4, which they were never
+    # marked at: one held, one attended.
     conn.execute("UPDATE batch_student_map SET batchID = 2 WHERE batchID = 1 AND studentID = 1")
     conn.commit()
     aarav = rows()[("2025CS01", "CS202")]
     check("export: a student who changed batch keeps the lectures they sat before",
-          aarav["held"] == 2 and aarav["attended"] == 1,
+          aarav["held"] == 1 and aarav["attended"] == 1,
           f"held={aarav['held']} attended={aarav['attended']}")
 
-    # A lecture whose marks were cleared was still held, and is an absence for everybody.
+    # A lecture whose marks were cleared is waiting to be marked again, and counts for nobody.
     before = rows()[("2025CS02", "CS201")]
     conn.execute("DELETE FROM attendance WHERE lectureID = 5")
     conn.commit()
     cleared = rows()[("2025CS02", "CS201")]
-    check("export: a lecture with its marks cleared is still held",
-          cleared["held"] == before["held"] and cleared["attended"] <= before["attended"],
+    check("export: a lecture with its marks cleared counts for nobody",
+          cleared["held"] == before["held"] - 1 and cleared["attended"] == before["attended"] - 1,
           f"before={dict(before)} after={dict(cleared)}")
 
     check("export: nobody attends more than was held",
@@ -381,9 +558,9 @@ def test_export_keeps_history_and_never_exceeds_held():
 
 def test_export_agrees_with_the_statistics():
     """
-    The register export and the statistics have to give one figure for one student. Both count
-    a lecture held for a student with no mark for them as an absence; three ways a mark goes
-    missing, and the two reports must still agree after each.
+    The register export and the statistics have to give one figure for one student. Both are
+    counted from the marks alone; three ways the tables change under them, and the two
+    reports must still agree after each.
     """
     conn = build_fixture()
 
@@ -416,6 +593,10 @@ def test_export_agrees_with_the_statistics():
     conn.execute("DELETE FROM attendance WHERE lectureID = 5")
     conn.commit()
     agree("after a lecture's marks are cleared")
+
+    conn.execute("DELETE FROM batch_student_map WHERE studentID = 3")
+    conn.commit()
+    agree("after a student is taken out of every batch")
 
     conn.close()
 
@@ -483,9 +664,9 @@ def test_export_date_window(conn):
           f"held={rows[('2025CS01','CS201')]['held']} expected 2")
     check("export: the date window narrows the attended count in step",
           rows[("2025CS01", "CS201")]["attended"] == 2)
-    # Rahul in July: absent at L1 and no mark at L2, so two lectures held and none attended.
+    # Rahul in July: absent at L1 and not on L2's sheet, so one lecture held and none attended.
     check("export: a windowed percentage stays over one denominator",
-          rows[("2025CS03", "CS201")]["held"] == 2
+          rows[("2025CS03", "CS201")]["held"] == 1
           and rows[("2025CS03", "CS201")]["attended"] == 0,
           f"{rows[('2025CS03','CS201')]}")
 
@@ -532,9 +713,9 @@ def test_stats_grouped_by_student(conn):
           all(r["students"] == 1 for r in rows.values()))
 
     rahul = rows["2025CS03"]
-    # Rahul has no mark at L2, which is an absence here as it is in the export.
-    check("stats: a lecture with no mark for a student is an absence",
-          rahul["total"] == 4 and rahul["attended"] == 2,
+    # Rahul has no mark at L2, so it is not counted for him, here as in the export.
+    check("stats: a lecture with no mark for a student is not counted for them",
+          rahul["total"] == 3 and rahul["attended"] == 2,
           f"total={rahul['total']} attended={rahul['attended']}")
 
 
@@ -778,8 +959,7 @@ def test_stats_batch_filter_reaches_subset_batches():
     check("stats: whole-class lectures count towards a batch's students",
           rows["2025CS01"]["lectures"] == 4, f"{rows['2025CS01']}")
 
-    # Batch A itself: Aarav's four rows plus Rahul's four, one of them the absence at L2
-    # that nobody marked.
+    # Batch A itself: Aarav's four marks plus Rahul's three.
     parent = {r["primaryLabel"]: r for r in run(conn, "stats_batch_only", [2025, 1])}
     check("stats: the parent batch returns both its students",
           set(parent) == {"2025CS01", "2025CS03"}, f"{sorted(parent)}")
@@ -788,7 +968,7 @@ def test_stats_batch_filter_reaches_subset_batches():
 
     total = sum(r["total"] for r in parent.values())
     check("stats: the parent's rows are its members' rows, not one lecture's sheet",
-          total == 8, f"total={total}")
+          total == 7, f"total={total}")
 
     conn.close()
 
@@ -821,12 +1001,11 @@ def test_stats_lecture_counts_are_distinct(conn):
     rows = {r["primaryLabel"]: r for r in run(conn, "stats_grouped_COURSE")}
 
     cs201 = rows["CS201"]
-    # 3 lectures inside the session, held for 3 students each: 8 marks, and Rahul's absence
-    # at L2 that nobody marked.
+    # 3 lectures inside the session: 8 marks, Rahul having none at L2.
     check("stats: lectures are counted DISTINCT, not once per marked student",
           cs201["lectures"] == 3, f"lectures={cs201['lectures']}")
-    check("stats: total counts each student at each lecture held for them",
-          cs201["total"] == 9, f"total={cs201['total']}")
+    check("stats: total counts each student at each lecture they have a mark for",
+          cs201["total"] == 8, f"total={cs201['total']}")
     check("stats: distinct students across a course",
           cs201["students"] == 3, f"students={cs201['students']}")
 
@@ -838,9 +1017,9 @@ def test_stats_excludes_orphan_lectures(conn):
     check("stats: the session join excludes lectures outside every session",
           summary["lectures"] == 5,
           f"lectures={summary['lectures']} of 6 recorded")
-    # Every mark, and the one absence nobody marked: Rahul at L2.
-    check("stats: the summary total is every in-session mark and every missing one",
-          summary["total"] == total_rows + 1,
+    # Every mark, and nothing derived from who is in which batch.
+    check("stats: the summary total is every in-session mark and nothing else",
+          summary["total"] == total_rows,
           f"summary={summary['total']} table={total_rows}")
 
     orphans = conn.execute(
@@ -922,12 +1101,11 @@ def test_stats_sort_orders(conn):
     desc = [r["primaryLabel"] for r in run(conn, "stats_sort_PERCENT_DESC")]
     label = [r["primaryLabel"] for r in run(conn, "stats_sort_LABEL_ASC")]
 
-    # Sneha 2/4 = 50%, Rahul 2/4 = 50% with his unmarked L2 an absence, Aarav 4/4 = 100%.
-    # The two at 50% are in register order whichever way the percentage is sorted.
+    # Sneha 2/4 = 50%, Rahul 2/3 = 67%, Aarav 4/4 = 100%.
     check("stats: lowest-percentage-first puts the worst attenders at the top",
           asc == ["2025CS02", "2025CS03", "2025CS01"], f"{asc}")
-    check("stats: highest-first puts the best attender at the top, ties in register order",
-          desc == ["2025CS01", "2025CS02", "2025CS03"], f"{desc}")
+    check("stats: highest-first puts the best attender at the top",
+          desc == ["2025CS01", "2025CS03", "2025CS02"], f"{desc}")
     check("stats: label order is register order",
           label == sorted(label), f"{label}")
 
@@ -1364,6 +1542,10 @@ def main():
     test_a_null_argument_round_trips(conn)
     test_export_denominator_counts_lectures_held(conn)
     test_export_keeps_history_and_never_exceeds_held()
+    test_export_counts_from_the_join_date_or_the_session_start()
+    test_export_follows_the_marks_when_a_student_changes_batch()
+    test_export_keeps_a_student_who_is_in_none_of_the_courses_batches()
+    test_export_lists_the_roll_before_anything_is_marked()
     test_export_agrees_with_the_statistics()
     test_export_roster_is_the_courses_batches(conn)
     test_export_excludes_other_sessions_and_orphans(conn)

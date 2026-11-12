@@ -33,11 +33,10 @@ public class ExportRow {
 	public String courseTopic = "";
 
 	/**
-	 * Lectures of this course that this student was supposed to be at: whole-class lectures,
-	 * lectures for batches they belong to, and any other lecture they have a mark for.
+	 * Lectures of this course the student has a mark for, present or absent.
 	 * <p>
-	 * Counted from the lectures held, not from the student's attendance rows, so a lecture
-	 * with no row for them is an absence.
+	 * Counted from the student's own marks and never from batch membership, so changing
+	 * batch during the year changes nothing here; see {@code ExportQueryBuilder}.
 	 */
 	public int held;
 

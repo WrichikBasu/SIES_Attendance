@@ -331,8 +331,14 @@ public interface AttendanceRepository {
 	@NonNull
 	LiveData<List<LectureDetails>> observeLecturesBetween(long fromEpoch, long toEpoch);
 
+	/**
+	 * Changes a lecture's course, batch, times or notes and, unless {@code keep} is null, drops
+	 * the marks of every student not in it, in one transaction.
+	 *
+	 * @param keep the students whose marks stay, or null to drop none; empty drops every mark
+	 */
 	void updateLecture(long lectureID, long courseID, Long batchID, ZonedDateTime start,
-	                   ZonedDateTime end, String notes);
+	                   ZonedDateTime end, String notes, @Nullable List<Long> keep);
 
 
 	// ── Attendance ───────────────────────────────────────────────────────
@@ -361,7 +367,7 @@ public interface AttendanceRepository {
 	LiveData<List<CourseAttendanceStat>> observeCourseStats();
 
 	@NonNull
-	LiveData<Double> observeOverallPercentage();
+	LiveData<Double> observeOverallPercentage(int academicYear);
 
 	/** Per-student attendance for a session, for the report. Switch-mapped; see above. */
 	@NonNull
@@ -419,8 +425,8 @@ public interface AttendanceRepository {
 	 * <p>
 	 * One unit because a lecture with no sheet shows up as permanently unmarked, and a sheet
 	 * with no lecture cannot be shown at all. Re-recording the same course, batch and time span
-	 * replaces the earlier sheet rather than failing on the unique index, which is what somebody
-	 * correcting a mistake expects.
+	 * corrects the earlier register rather than failing on the unique index: each mark on the
+	 * sheet replaces that student's, and the marks of anyone not on the sheet are kept.
 	 * <p>
 	 * This and {@link #duplicateLecture} are the only methods here that are not a single DAO
 	 * call, and that is why they are on this interface rather than assembled by the caller: a
@@ -428,7 +434,7 @@ public interface AttendanceRepository {
 	 * two calls is a caller that can send half of one.
 	 *
 	 * @param marks the sheet as the screen holds it; only the student and the presence are read
-	 * @return the lecture's id, whether it was created or replaced
+	 * @return the lecture's id, whether it was created or corrected
 	 */
 	long recordLectureWithMarks(long courseID, @Nullable Long batchID,
 	                            @NonNull ZonedDateTime start, @NonNull ZonedDateTime end,
