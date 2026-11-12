@@ -163,19 +163,10 @@ public final class CsvImporter {
 	private static boolean write(@NonNull MainDatabase db, @NonNull RosterCsv.Row row,
 	                             int academicYear) {
 
-		EntityStudent student = new EntityStudent(row.name(), row.pronouns(), row.email());
-		student.apaarId = row.apaarId();
-
-		// Checked before the upsert so the summary can distinguish new entries from edits,
-		// which is what tells the user whether a re-import did what they expected.
-		boolean existed = db.daoStudent().findStudentIdByRollNo(row.rollNo(), academicYear)
-				!= null;
-
-		db.daoStudent().upsertStudentWithYear(student, academicYear, row.rollNo(), row.year(),
-				row.stream(), row.majorDept(), row.minorDept(), row.oeDept(), row.semester(),
-				row.division(), row.joinDate(), row.leaveDate());
-
-		return existed;
+		// Updated or created as the import itself decided, however the student was matched.
+		// Asking only whether the roll number was already there counted a student recognised by
+		// their APAAR ID or email as a new one (R20).
+		return db.daoStudent().importRosterRow(row, academicYear);
 	}
 
 	/**

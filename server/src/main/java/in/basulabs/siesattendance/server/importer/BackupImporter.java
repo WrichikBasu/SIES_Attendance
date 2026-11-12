@@ -158,8 +158,17 @@ public final class BackupImporter {
 					// every policy would then see a null actor and match nothing.
 					setActor(server, request.actorAccount(), runId, request.sourceLabel());
 
+					// When the backup was made, which is what decides whether a row the server
+					// has changed since is newer than it (R19). Unknown for a backup that does
+					// not say, which then writes as before.
+					long madeAt = backup.info().createdAt;
+					java.time.OffsetDateTime asOf = madeAt > 0
+							? java.time.Instant.ofEpochMilli(madeAt)
+									.atOffset(java.time.ZoneOffset.UTC)
+							: null;
+
 					new ImportSession(backup.connection(), server, ids, request.sourceNode(),
-							report, progress).importAll();
+							report, progress, asOf).importAll();
 
 					progress.stage(request.dryRun() ? "Undoing the preview" : "Saving");
 

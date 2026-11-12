@@ -130,14 +130,20 @@ apaarId,joinDate,leaveDate
   them: which of the two holds the value is not something to guess at.
 - `apaarId` is the 12-digit APAAR number, `email` has to look like an address, and a name is
   stored up to 200 characters. These are refused by the file and by the app's own form alike.
-- Dates can be written as `2026-06-15`, `15/06/2026` or `15-06-2026`.
+- Dates can be written as `2026-06-15`, `15/06/2026` or `15-06-2026`, and have to fall in the
+  years 2000 to 2099: `0025-06-15` is refused rather than stored as the year 25. The same holds
+  for the dates on an attendance sheet.
 - Departments, streams and years accept either the stored name or the display label, so
   `Computer Science` and `COMPUTER_SCIENCE` both work.
 - A bad row is reported and skipped; the rest of the file is still imported.
-- Importing again updates the students whose roll numbers already exist. A blank APAAR ID or
-  date keeps the one already stored.
+- Importing again updates the students whose roll numbers already exist. A column the file
+  does not have keeps what is stored for it. A blank email, APAAR ID or date keeps the one
+  already stored; a blank minor, open elective, semester or division in a column the file does
+  have clears it.
 - A student is matched by roll number in that session, then by APAAR ID, then by email. The
-  APAAR ID is what recognises the same person in a new session under a new roll number.
+  APAAR ID is what recognises the same person in a new session under a new roll number. A row
+  whose APAAR ID or email belongs to a student already enrolled that session under a different
+  roll number is refused rather than filed against them: two students cannot share either.
 
 ### Attendance sheets
 

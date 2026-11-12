@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import in.basulabs.siesattendance.backend.AcademicRules;
@@ -115,14 +116,35 @@ public final class RosterCsv {
 	private static final Pattern EMAIL =
 			Pattern.compile("[^@\\s,;]+@[^@\\s,;.]+(\\.[^@\\s,;.]+)+");
 
-	/** What a row says, once every cell has been resolved and the combination checked. */
+	/**
+	 * What a row says, once every cell has been resolved and the combination checked.
+	 *
+	 * @param columns the file's columns, by normalised name ({@link #parseHeader}). A column the
+	 *                file does not have says nothing about the student, so an importer keeps
+	 *                what is on record for it rather than writing the empty value the row
+	 *                carries in its place (R18); see {@link #has}
+	 */
 	public record Row(int line, @NonNull String rollNo, @NonNull String name,
 	                  @NonNull String pronouns, @Nullable String email, @NonNull Year year,
 	                  @NonNull Stream stream, @NonNull Department majorDept,
 	                  @Nullable Department minorDept, @Nullable Department oeDept,
 	                  @Nullable Integer semester, @Nullable Division division,
 	                  @Nullable Long apaarId, @Nullable LocalDate joinDate,
-	                  @Nullable LocalDate leaveDate) {
+	                  @Nullable LocalDate leaveDate, @NonNull Set<String> columns) {
+
+		/**
+		 * Whether the file had that column, by its normalised name: {@code email},
+		 * {@code pronouns}, {@code minordept}, {@code oedept}, {@code semester},
+		 * {@code division}.
+		 * <p>
+		 * A file without a column leaves the value on record alone. A blank cell in a column the
+		 * file does have is the file saying "none", and clears a minor, an open elective, a
+		 * semester or a division -- except the email, the APAAR ID and the dates, which identify a
+		 * person or bound their record and are never erased by an import.
+		 */
+		public boolean has(@NonNull String column) {
+			return columns.contains(column);
+		}
 	}
 
 	/**
@@ -292,7 +314,8 @@ public final class RosterCsv {
 		}
 
 		return new Row(line, rollNo, name, pronouns, email, year, stream, majorDept, minorDept,
-				oeDept, semester, division, apaarId, joinDate, leaveDate);
+				oeDept, semester, division, apaarId, joinDate, leaveDate,
+				java.util.Set.copyOf(columns.keySet()));
 	}
 
 	/**
@@ -366,11 +389,20 @@ public final class RosterCsv {
 		String value = raw.trim();
 
 		for (DateTimeFormatter format : DATE_FORMATS) {
+
+			LocalDate date;
+
 			try {
-				return LocalDate.parse(value, format);
+				date = LocalDate.parse(value, format);
 			} catch (DateTimeParseException tryTheNext) {
-				// Next.
+				continue;
 			}
+
+			// A date java.time can hold and nobody joined on: 0025 for 2025 (R21).
+			if (!PlausibleDates.plausible(date)) {
+				throw new IllegalArgumentException(PlausibleDates.refusal(what, value));
+			}
+			return date;
 		}
 		throw new IllegalArgumentException("the " + what + " \"" + value + "\" is not a date; "
 				+ "write it as 2026-06-15 or 15/06/2026");

@@ -390,6 +390,11 @@ public final class AttendanceCsvParser {
 			if (date == null) {
 				problem(parsed, headingLines.get(roles[ROLE_DATE]),
 						dateText.isEmpty() ? "no date" : "unrecognised date \"" + dateText + "\"");
+
+			} else if (!PlausibleDates.plausible(date)) {
+				// A date java.time can hold and no class was held on: 0025 for 2025 (R21).
+				problem(parsed, headingLines.get(roles[ROLE_DATE]),
+						PlausibleDates.refusal("date", dateText));
 			}
 			if (start == null) {
 				problem(parsed, headingLines.get(roles[ROLE_START]), startText.isEmpty()

@@ -138,6 +138,96 @@ public abstract class DaoStudent {
 	public abstract Long findStudentIdByRollNo(String rollNo, int academicYear);
 
 	/**
+	 * Files one row of a roster, as the server's {@code RosterImporter} does.
+	 * <p>
+	 * The same person by the same three things as {@link #upsertStudentWithYear} -- this
+	 * session's roll number, then the APAAR ID, then the email -- with two differences that are
+	 * the reason a roster has a method of its own:
+	 * <ul>
+	 *     <li>An APAAR ID or email that matches a student already enrolled <em>this</em> session
+	 *     under another roll number is not that row's student being promoted. It is somebody
+	 *     else with the same address -- a sibling, most often -- and filing the row against them
+	 *     renamed them and took their roll number (R17). The row is refused.</li>
+	 *     <li>A column the file does not have leaves the value on record alone, and a blank email
+	 *     never erases one (R18); see {@code RosterCsv.Row.has}.</li>
+	 * </ul>
+	 *
+	 * @return true when an existing student was updated, false when one was created -- however
+	 * they were matched, which is what the import's summary counts (R20)
+	 * @throws IllegalStateException saying why, when the row is refused
+	 */
+	@Transaction
+	public boolean importRosterRow(@NonNull in.basulabs.siesattendance.backend.util.RosterCsv.Row row,
+	                               int academicYear) {
+
+		String rollNo = canonicalRollNo(row.rollNo());
+		Long existing = findStudentIdByRollNo(rollNo, academicYear);
+		String matchedBy = "roll number";
+
+		if (existing == null && row.apaarId() != null) {
+			existing = findStudentIdByApaarId(row.apaarId());
+			matchedBy = "APAAR ID";
+		}
+
+		if (existing == null && row.email() != null) {
+			existing = findStudentIdByEmail(row.email());
+			matchedBy = "email";
+		}
+
+		if (existing != null && !"roll number".equals(matchedBy)) {
+
+			EntityStudentYear held = getEnrolmentSync(existing, academicYear);
+
+			if (held != null && !held.rollNo.equals(rollNo)) {
+				throw new IllegalStateException("its " + matchedBy + " belongs to the student "
+						+ "enrolled this session as " + held.rollNo + ", so the row was not "
+						+ "imported. Two students cannot share an " + matchedBy
+						+ "; check the file.");
+			}
+		}
+
+		long studentID;
+
+		if (existing != null) {
+
+			studentID = existing;
+			EntityStudent stored = getStudentSync(studentID);
+			EntityStudent student = new EntityStudent(row.name(),
+					row.has("pronouns") || stored == null ? row.pronouns() : stored.pronouns,
+					row.email() != null || stored == null ? row.email() : stored.email);
+			student.studentID = studentID;
+			student.apaarId = row.apaarId() != null || stored == null
+					? row.apaarId() : stored.apaarId;
+
+			checkApaarIdIsFree(student.apaarId, studentID);
+			updateStudent(student);
+
+		} else {
+			EntityStudent student = new EntityStudent(row.name(), row.pronouns(), row.email());
+			student.apaarId = row.apaarId();
+			checkApaarIdIsFree(student.apaarId, 0L);
+			studentID = insertStudent(student);
+		}
+
+		EntityStudentYear before = getEnrolmentSync(studentID, academicYear);
+		boolean kept = before != null;
+
+		EntityStudentYear enrolment = new EntityStudentYear(studentID, academicYear, rollNo,
+				row.year(), row.stream(), row.majorDept(),
+				row.has("minordept") || !kept ? row.minorDept() : before.minorDept,
+				row.has("oedept") || !kept ? row.oeDept() : before.oeDept,
+				row.has("semester") || !kept ? row.semester() : before.semester,
+				row.has("division") || !kept ? row.division() : before.division);
+		enrolment.joinDate = row.joinDate() != null ? row.joinDate()
+				: kept ? before.joinDate : null;
+		enrolment.leaveDate = row.leaveDate() != null ? row.leaveDate()
+				: kept ? before.leaveDate : null;
+
+		insertStudentYear(enrolment);
+		return existing != null;
+	}
+
+	/**
 	 * Adds a student entered by hand, refusing anybody already on record.
 	 * <p>
 	 * The same three things {@link #upsertStudentWithYear} recognises a person by -- this

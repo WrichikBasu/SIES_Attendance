@@ -41,6 +41,20 @@ import in.basulabs.siesattendance.server.sql.DatabaseRefusal;
  * neither is a new student, and gets a key minted under {@link ServerIds} — the server's node,
  * so that a student the office typed in is distinguishable for ever from one a phone created.
  *
+ * <p>
+ * An APAAR ID or an email recognises a student carried into a new session under a new roll
+ * number. It does not recognise one who is already enrolled <em>this</em> session under another:
+ * that is two people sharing an address, siblings most often, and filing the row against the
+ * match renamed one of them and gave them the other's roll number (R17). Such a row is refused
+ * with its line, and the student on record is left alone.
+ *
+ * <h3>What a file does not say is kept</h3>
+ * A column the file does not have leaves the value on record alone: a file without an email
+ * column used to erase every email, and one without a minor column every minor (R18). A blank
+ * email never erases one either, as a blank APAAR ID and blank dates already did not. A blank
+ * minor, open elective, semester or division in a column the file has is the file saying
+ * "none", and is written.
+ *
  * <h3>A bad row costs only that row</h3>
  * Each row runs inside a savepoint. A row PostgreSQL refuses — a minor department equal to the
  * major one, an email already held by somebody else — is rolled back on its own and reported with
@@ -173,6 +187,20 @@ public final class RosterImporter {
 		boolean updated = existing != null;
 		long studentId;
 
+		if (updated && !"roll number".equals(matchedBy)) {
+
+			String held = rollNoIn(connection, existing, academicYear);
+
+			if (held != null && !held.equals(row.rollNo())) {
+				// The match is enrolled this session under another roll number, so it is not
+				// this row's student being promoted: it is somebody else with that address.
+				throw new RowRefused("its " + matchedBy + " belongs to the student enrolled in "
+						+ SessionYears.labelFor(academicYear) + " as " + held + ", so the row was "
+						+ "not imported. Two students cannot share an " + matchedBy + "; check "
+						+ "the file.");
+			}
+		}
+
 		if (updated) {
 			studentId = existing;
 
@@ -196,6 +224,23 @@ public final class RosterImporter {
 
 		upsertStudentYear(connection, studentId, academicYear, row);
 		return updated;
+	}
+
+	/** The roll number that student holds in that session, or null when not enrolled. */
+	@Nullable
+	private static String rollNoIn(@NonNull Connection connection, long studentId,
+	                               int academicYear) throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT roll_no FROM student_year WHERE student_id = ? AND academic_year = ?")) {
+
+			statement.setLong(1, studentId);
+			statement.setInt(2, academicYear);
+
+			try (ResultSet results = statement.executeQuery()) {
+				return results.next() ? results.getString(1) : null;
+			}
+		}
 	}
 
 	private static boolean mayEnrolIn(@NonNull Connection connection,
@@ -297,16 +342,24 @@ public final class RosterImporter {
 	private static int updateStudent(@NonNull Connection connection, long studentId,
 	                                 @NonNull RosterCsv.Row row) throws SQLException {
 
+		// The email and the APAAR ID are kept when the file gives none, and the pronouns when it
+		// has no such column: see the class notes.
+		String pronouns = row.has("pronouns") ? "?" : "pronouns";
+
 		try (PreparedStatement statement = connection.prepareStatement(
-				"UPDATE students SET name = ?, pronouns = ?, email = ?, "
+				"UPDATE students SET name = ?, pronouns = " + pronouns + ", "
+						+ "email = COALESCE(?, email), "
 						+ "apaar_id = COALESCE(?, apaar_id), updated_at = now(), "
 						+ "row_version = row_version + 1 WHERE student_id = ?")) {
 
-			statement.setString(1, row.name());
-			statement.setString(2, row.pronouns());
-			statement.setString(3, row.email());
-			setNullableLong(statement, 4, row.apaarId());
-			statement.setLong(5, studentId);
+			int at = 1;
+			statement.setString(at++, row.name());
+			if (row.has("pronouns")) {
+				statement.setString(at++, row.pronouns());
+			}
+			statement.setString(at++, row.email());
+			setNullableLong(statement, at++, row.apaarId());
+			statement.setLong(at, studentId);
 			return statement.executeUpdate();
 		}
 	}
@@ -339,10 +392,10 @@ public final class RosterImporter {
 						+ "  year       = EXCLUDED.year,"
 						+ "  stream     = EXCLUDED.stream,"
 						+ "  major_dept = EXCLUDED.major_dept,"
-						+ "  minor_dept = EXCLUDED.minor_dept,"
-						+ "  oe_dept    = EXCLUDED.oe_dept,"
-						+ "  semester   = EXCLUDED.semester,"
-						+ "  division   = EXCLUDED.division,"
+						+ "  minor_dept = " + keptUnless(row, "minordept", "minor_dept") + ","
+						+ "  oe_dept    = " + keptUnless(row, "oedept", "oe_dept") + ","
+						+ "  semester   = " + keptUnless(row, "semester", "semester") + ","
+						+ "  division   = " + keptUnless(row, "division", "division") + ","
 						+ "  join_date  = COALESCE(EXCLUDED.join_date, student_year.join_date),"
 						+ "  leave_date = COALESCE(EXCLUDED.leave_date, student_year.leave_date),"
 						+ "  updated_at = now(),"
@@ -368,6 +421,16 @@ public final class RosterImporter {
 			setNullableDate(statement, 12, row.leaveDate());
 			statement.executeUpdate();
 		}
+	}
+
+	/**
+	 * The new value when the file has that column, or the one on record when it does not: a
+	 * column the file does not have says nothing about the student (R18).
+	 */
+	@NonNull
+	private static String keptUnless(@NonNull RosterCsv.Row row, @NonNull String column,
+	                                 @NonNull String postgres) {
+		return row.has(column) ? "EXCLUDED." + postgres : "student_year." + postgres;
 	}
 
 	@Nullable
