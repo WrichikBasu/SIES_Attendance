@@ -498,4 +498,32 @@ public class StatsAndExportFilterTest {
 		assertTrue(CourseGroup.none().isEmpty());
 		assertNotNull(CourseGroup.none());
 	}
+
+	@Test
+	public void aRollingRangeIsWorkedOutAgainForTheDayTheReportRuns() {
+
+		// Picked on the last day of October, and the report run again on the first of November.
+		StatsFilter filter = new StatsFilter(2025);
+		filter.applyDateRange(StatsFilter.DateRange.LAST_30_DAYS, null, null,
+				java.time.LocalDate.of(2025, 10, 31));
+		org.junit.Assert.assertEquals(java.time.LocalDate.of(2025, 10, 31), filter.to);
+
+		filter.refreshForToday(java.time.LocalDate.of(2025, 11, 1));
+		org.junit.Assert.assertEquals("the thirty days end today, not the day it was picked",
+				java.time.LocalDate.of(2025, 11, 1), filter.to);
+		org.junit.Assert.assertEquals(java.time.LocalDate.of(2025, 10, 3), filter.from);
+
+		filter.applyDateRange(StatsFilter.DateRange.THIS_MONTH, null, null,
+				java.time.LocalDate.of(2025, 10, 15));
+		filter.refreshForToday(java.time.LocalDate.of(2025, 11, 2));
+		org.junit.Assert.assertEquals("this month is November now",
+				java.time.LocalDate.of(2025, 11, 1), filter.from);
+
+		// A custom range is the user's, and stays put.
+		filter.from = java.time.LocalDate.of(2025, 7, 1);
+		filter.to = java.time.LocalDate.of(2025, 7, 31);
+		filter.dateRange = StatsFilter.DateRange.CUSTOM;
+		filter.refreshForToday(java.time.LocalDate.of(2026, 1, 1));
+		org.junit.Assert.assertEquals(java.time.LocalDate.of(2025, 7, 31), filter.to);
+	}
 }

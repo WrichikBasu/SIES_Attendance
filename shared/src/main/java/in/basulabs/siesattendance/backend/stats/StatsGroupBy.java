@@ -62,8 +62,14 @@ public enum StatsGroupBy {
 	 */
 	CLASS("Class"),
 
-	/** One row per department offering the course. */
-	DEPARTMENT("Department"),
+	/**
+	 * One row per department offering the course.
+	 * <p>
+	 * Called "Offering department" rather than "Department", because the report's department
+	 * filter is the other one -- the students' own major department -- and with both called
+	 * the same a reader could not tell which they were looking at (R12).
+	 */
+	DEPARTMENT("Offering department"),
 
 	/**
 	 * One row per batch, with the whole-class lectures gathered into a row of their own.

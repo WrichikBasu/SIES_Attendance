@@ -647,6 +647,59 @@ public abstract class DaoStudent {
 			"ORDER BY y.rollNo ASC")
 	public abstract List<StudentWithYear> getRollForBatchSync(long batchID, int academicYear);
 
+	/**
+	 * The course's roll as it stood on one day: everybody in one of its batches who had joined
+	 * by then and had not yet left.
+	 * <p>
+	 * The rolls above are today's, and leave out anybody with a leave date, whenever it is. For
+	 * a lecture in July that is wrong about a student who left in August: they were in the room,
+	 * and "drop stranded marks" deleted their mark as though they had never been on the roll
+	 * (R16). A register is about its own day, so its roll is that day's.
+	 */
+	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
+			"FROM student_year y " +
+			"INNER JOIN students s ON s.studentID = y.studentID " +
+			"WHERE y.academicYear = :academicYear " +
+			"AND (y.joinDate IS NULL OR y.joinDate <= :day) " +
+			"AND (y.leaveDate IS NULL OR y.leaveDate >= :day) " +
+			"AND EXISTS (SELECT 1 FROM course_batch_map cb " +
+			"            INNER JOIN batch_student_map m ON m.batchID = cb.batchID " +
+			"            WHERE cb.courseID = :courseID " +
+			"              AND m.studentID = y.studentID " +
+			"              AND m.academicYear = :academicYear) " +
+			"ORDER BY y.rollNo ASC")
+	public abstract List<StudentWithYear> getRollForCourseOnSync(long courseID, int academicYear,
+	                                                             java.time.LocalDate day);
+
+	/**
+	 * A roll as it stood on one day: one batch's, or the course's whole roll when the batch is
+	 * null. See {@link #getRollForCourseOnSync}.
+	 */
+	@NonNull
+	public List<StudentWithYear> getRollOnSync(long courseID, @Nullable Long batchID,
+	                                           int academicYear, java.time.LocalDate day) {
+		return batchID == null
+				? getRollForCourseOnSync(courseID, academicYear, day)
+				: getRollForBatchOnSync(batchID, academicYear, day);
+	}
+
+	/** One batch's roll as it stood on one day; see {@link #getRollForCourseOnSync}. */
+	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
+			"FROM students s " +
+			"INNER JOIN batch_student_map m ON m.studentID = s.studentID " +
+			"INNER JOIN student_year y ON y.studentID = s.studentID " +
+			"   AND y.academicYear = m.academicYear " +
+			"WHERE m.batchID = :batchID AND m.academicYear = :academicYear " +
+			"AND (y.joinDate IS NULL OR y.joinDate <= :day) " +
+			"AND (y.leaveDate IS NULL OR y.leaveDate >= :day) " +
+			"ORDER BY y.rollNo ASC")
+	public abstract List<StudentWithYear> getRollForBatchOnSync(long batchID, int academicYear,
+	                                                            java.time.LocalDate day);
+
 	// ── Per-course breakdown for one student ─────────────────────────────
 
 	/*

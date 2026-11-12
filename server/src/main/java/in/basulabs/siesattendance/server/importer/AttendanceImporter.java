@@ -45,7 +45,7 @@ import in.basulabs.siesattendance.backend.util.CanonicalCode;
 public final class AttendanceImporter {
 
 	/** The zone a sheet's dates and times are read in. */
-	static final ZoneId COLLEGE = ZoneId.of("Asia/Kolkata");
+	static final ZoneId COLLEGE = in.basulabs.siesattendance.backend.College.ZONE;
 
 	/** One column of the sheet, as it will be filed. */
 	public static final class Lecture {

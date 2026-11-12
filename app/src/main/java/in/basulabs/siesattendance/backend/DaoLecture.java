@@ -180,17 +180,23 @@ public abstract class DaoLecture {
 	}
 
 	/**
-	 * Finds a lecture already recorded for the same course, batch and time span.
+	 * Finds a lecture already recorded for the same course and batch, starting at the same
+	 * moment.
 	 * <p>
 	 * SQLite treats NULLs as distinct in a unique index, so a whole-class lecture would not be
 	 * caught by the index constraint. Matching the null case explicitly is what stops the same
 	 * session being recorded twice.
+	 * <p>
+	 * The start, not the whole span: a class that starts at the same moment is the same class,
+	 * whatever its end time says, as the server has held since V67 (R15). And the moment, not
+	 * the stored text: the text carries the zone it was written in, so the same instant under
+	 * another zone's name was not found, and collided on the server instead (R14).
 	 */
 	@Query("SELECT lectureID FROM lectures WHERE courseID = :courseID " +
 			"AND ((:batchID IS NULL AND batchID IS NULL) OR batchID = :batchID) " +
-			"AND startDateTime = :start AND endDateTime = :end LIMIT 1")
-	public abstract Long findExisting(long courseID, Long batchID, ZonedDateTime start,
-	                                  ZonedDateTime end);
+			"AND CAST(SUBSTR(startDateTime, 1, INSTR(startDateTime, '|') - 1) AS INTEGER) = " +
+			"CAST(SUBSTR(:start, 1, INSTR(:start, '|') - 1) AS INTEGER) LIMIT 1")
+	public abstract Long findExisting(long courseID, Long batchID, ZonedDateTime start);
 
 	@Query("DELETE FROM attendance WHERE lectureID = :lectureID")
 	public abstract void deleteAttendanceFor(long lectureID);

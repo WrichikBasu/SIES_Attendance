@@ -1103,7 +1103,8 @@ public class FragmentStats extends Fragment {
 			parts.add(filter.stream.toString());
 		}
 		if (filter.department != null) {
-			parts.add(filter.department.toString());
+			// Said as the students', since the grouping by department is the course's (R12).
+			parts.add(getString(R.string.filter_students_of, filter.department.toString()));
 		}
 
 		tvActiveFilters.setText(String.join(" · ", parts));

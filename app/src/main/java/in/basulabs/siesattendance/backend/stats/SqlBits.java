@@ -34,13 +34,16 @@ public final class SqlBits {
 					+ "AS INTEGER)";
 
 	/**
-	 * Whether a lecture counts for the enrolment {@code y}: on or after the day the student
-	 * joined, or any lecture when no join date is recorded. A late joiner's attendance is
-	 * counted from the day they joined, so a defaulter list does not hold the weeks before
-	 * against them. {@code PgSqlBits.COUNTS_FOR_ENROLMENT} is the same rule.
+	 * Whether a lecture counts for the enrolment {@code y}: between the day the student joined
+	 * and the day they left, both included, with a missing date leaving that end open. A late
+	 * joiner's attendance is counted from the day they joined, so a defaulter list does not hold
+	 * the weeks before against them; and a leaver's stops on the day they left, which it did
+	 * not until R10 -- a mark recorded against them afterwards still counted.
+	 * {@code PgSqlBits.COUNTS_FOR_ENROLMENT} is the same rule.
 	 */
 	public static final String COUNTS_FOR_ENROLMENT =
-			"(y.joinDate IS NULL OR " + LECTURE_LOCAL_DAY + " >= y.joinDate)";
+			"((y.joinDate IS NULL OR " + LECTURE_LOCAL_DAY + " >= y.joinDate)"
+					+ " AND (y.leaveDate IS NULL OR " + LECTURE_LOCAL_DAY + " <= y.leaveDate))";
 
 	/** The session a lecture falls in: the latest one whose bounds contain its start. */
 	private static final String SESSION_OF_LECTURE =

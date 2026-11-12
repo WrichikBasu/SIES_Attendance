@@ -50,6 +50,9 @@
     <string name="hint_minor_department">Minor department (optional)</string>
     <string name="hint_oe_department">Open elective department (optional)</string>
     <string name="hint_department">Department</string>
+    <!-- The statistics filter: the students' major department, not the course's (R12). -->
+    <string name="hint_students_department">Students\' department</string>
+    <string name="filter_students_of">%1$s students</string>
     <string name="hint_designation">Designation</string>
     <string name="hint_course_code">Course code</string>
     <string name="hint_course_topic">Course topic</string>

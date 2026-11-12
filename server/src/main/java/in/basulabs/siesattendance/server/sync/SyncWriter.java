@@ -155,7 +155,8 @@ public final class SyncWriter {
 	 * holds the code, which would quietly drop it. See the class notes.
 	 */
 	private static final Map<String, List<String>> FOLDABLE = Map.of(
-			"lectures", List.of("course_id", "batch_id", "start_at", "end_at"),
+			// The slot is the start, not the span, since V67 (R15).
+			"lectures", List.of("course_id", "batch_id", "start_at"),
 			"courses", List.of("course_code", "stream", "offering_department", "year",
 					"semester", "course_type"));
 

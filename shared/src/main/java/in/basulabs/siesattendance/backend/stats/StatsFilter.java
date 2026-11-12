@@ -111,6 +111,11 @@ public class StatsFilter {
 	@Nullable
 	public Stream stream;
 
+	/**
+	 * The students' major department, like the year and stream beside it: which students are
+	 * reported on. Not the department offering the course, which is what grouping by
+	 * {@link StatsGroupBy#DEPARTMENT} shows; the screen labels the two apart (R12).
+	 */
 	@Nullable
 	public Department department;
 
@@ -185,9 +190,36 @@ public class StatsFilter {
 	public void applyDateRange(@NonNull DateRange range,
 	                           @Nullable LocalDate sessionStart,
 	                           @Nullable LocalDate sessionEnd) {
+		applyDateRange(range, sessionStart, sessionEnd, LocalDate.now());
+	}
+
+	/**
+	 * Works the rolling presets out again for today: "This month", "Last month" and "Last 30
+	 * days" mean the month and the days as of when the report runs, not as of when the preset
+	 * was picked. Stored as dates and never recomputed, a filter left on overnight showed
+	 * yesterday's thirty days, and one left from October showed October in November (R13).
+	 * Called before every run; the other presets are left as they are.
+	 */
+	public void refreshForToday(@NonNull LocalDate today) {
+
+		switch (dateRange) {
+			case THIS_MONTH:
+			case LAST_MONTH:
+			case LAST_30_DAYS:
+				applyDateRange(dateRange, null, null, today);
+				break;
+			default:
+				break;
+		}
+	}
+
+	/** As {@link #applyDateRange(DateRange, LocalDate, LocalDate)}, as of {@code today}. */
+	public void applyDateRange(@NonNull DateRange range,
+	                           @Nullable LocalDate sessionStart,
+	                           @Nullable LocalDate sessionEnd,
+	                           @NonNull LocalDate today) {
 
 		dateRange = range;
-		LocalDate today = LocalDate.now();
 
 		switch (range) {
 			case ALL_TIME:

@@ -277,6 +277,19 @@ public final class StatsQueryBuilder {
 	 * than a value; they need none anyway, since their label <em>is</em> the group key and
 	 * cannot repeat.
 	 */
+	/**
+	 * What "oldest first" sorts on: the week's day from Monday for the weekday grouping, whose
+	 * groups are not points in time, and the group's earliest lecture for every other.
+	 * {@code PgStatsQueryBuilder} sorts the same way.
+	 */
+	@NonNull
+	private static String oldest(@NonNull StatsFilter filter,
+	                             @NonNull SqliteStatsDialect.Fragments group) {
+		return filter.groupBy == StatsGroupBy.WEEKDAY
+				? "((" + group.idExpr + ") + 6) % 7"
+				: "MIN(" + SqlBits.EPOCH_START + ")";
+	}
+
 	@NonNull
 	private static String orderByClause(@NonNull StatsFilter filter,
 	                                    @NonNull SqliteStatsDialect.Fragments group) {
@@ -292,8 +305,11 @@ public final class StatsQueryBuilder {
 			case LABEL_ASC -> "primaryLabel ASC" + tiebreak;
 			case TOTAL_DESC -> "COUNT(*) DESC, primaryLabel ASC" + tiebreak;
 			case CHRONOLOGICAL ->
-				// Time-based groupings read wrong worst-first; they want oldest to newest.
-					"primaryLabel ASC" + tiebreak;
+				// Oldest first means by time, not by label (R11). The label of a lecture is
+				// "CS202 · 12 07 2025", which sorted by course and then by day of the month;
+				// weekday names sorted alphabetically. So each group is placed by its earliest
+				// lecture, and the weekdays run Monday to Sunday.
+					oldest(filter, group) + " ASC, primaryLabel ASC" + tiebreak;
 			default -> percent + " ASC, primaryLabel ASC" + tiebreak;
 		};
 	}

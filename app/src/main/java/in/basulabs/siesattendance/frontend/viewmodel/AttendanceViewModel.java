@@ -2034,10 +2034,11 @@ public class AttendanceViewModel extends AndroidViewModel {
 		}
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
+			// The roll as it stands on the register's own day: who had joined by then and had
+			// not yet left (R16, R30).
 			int acadYear = sessionYearOn(date);
-			List<StudentWithYear> students = batchID == null
-					? repository.rollForCourseSync(courseID, acadYear)
-					: repository.rollForBatchSync(batchID, acadYear);
+			List<StudentWithYear> students = repository.rollOnSync(courseID, batchID, acadYear,
+					date);
 
 			List<AttendanceRow> rows = new ArrayList<>();
 			for (StudentWithYear student : students) {
@@ -2862,7 +2863,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			List<Long> marked = repository.markedStudentIdsSync(lectureID);
-			Set<Long> onRoll = rollIds(courseID, batchID, sessionYearFor(start));
+			Set<Long> onRoll = rollIds(courseID, batchID, sessionYearFor(start), start);
 
 			int stranded = 0;
 			for (Long id : marked) {
@@ -2874,12 +2875,16 @@ public class AttendanceViewModel extends AndroidViewModel {
 		});
 	}
 
+	/**
+	 * Who was on the roll on the lecture's own day: a student who left after it was in the room,
+	 * and their mark is not stranded (R16).
+	 */
 	@NonNull
-	private Set<Long> rollIds(long courseID, @Nullable Long batchID, int acadYear) {
+	private Set<Long> rollIds(long courseID, @Nullable Long batchID, int acadYear,
+	                          @NonNull ZonedDateTime when) {
 
-		List<StudentWithYear> roll = batchID == null
-				? repository.rollForCourseSync(courseID, acadYear)
-				: repository.rollForBatchSync(batchID, acadYear);
+		List<StudentWithYear> roll = repository.rollOnSync(courseID, batchID, acadYear,
+				when.toLocalDate());
 
 		Set<Long> ids = new HashSet<>();
 		for (StudentWithYear student : roll) {
@@ -2928,7 +2933,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 				// put in front of the user. Taking the current session instead would find none
 				// of a past lecture's students on the roll and delete every mark it has.
 				List<Long> keep = dropStranded
-						? new ArrayList<>(rollIds(courseID, batchID, sessionYearFor(start)))
+						? new ArrayList<>(rollIds(courseID, batchID, sessionYearFor(start), start))
 						: null;
 
 				// The change and the drop together, in one transaction (R32).
@@ -3484,6 +3489,9 @@ public class AttendanceViewModel extends AndroidViewModel {
 	 * result that matches neither the old filter nor the new one.
 	 */
 	public void runStatsQuery() {
+
+		// "This month" and "Last 30 days" are as of now, not as of when they were picked (R13).
+		statsFilter().refreshForToday(LocalDate.now());
 
 		final StatsFilter snapshot = statsFilter().copy();
 		final int generation = ++statsGeneration;

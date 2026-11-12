@@ -170,9 +170,11 @@ public class ReadingConfirmDeviceTest {
 						+ " WHERE studentID = " + bob);
 
 		// What "Edit lecture" does with "drop stranded marks": keep the marks of whoever is
-		// on the roll of the batch, delete the rest. The batch has not changed.
+		// on the roll of the batch on the lecture's day, delete the rest. The batch has not
+		// changed.
 		List<Long> keep = new ArrayList<>();
-		for (StudentWithYear student : repository.rollForBatchSync(batch, SESSION)) {
+		for (StudentWithYear student : repository.rollOnSync(course, batch, SESSION,
+				start.toLocalDate())) {
 			keep.add(student.studentID);
 		}
 		repository.deleteAttendanceExcept(lecture, keep);

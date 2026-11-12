@@ -262,6 +262,16 @@ public interface AttendanceRepository {
 	@NonNull
 	List<StudentWithYear> rollForBatchSync(long batchID, int academicYear);
 
+	/**
+	 * A roll as it stood on one day: who had joined by then and not yet left. What a register
+	 * for that day is measured against (R16).
+	 *
+	 * @param batchID the batch, or null for the course's whole roll
+	 */
+	@NonNull
+	List<StudentWithYear> rollOnSync(long courseID, @Nullable Long batchID, int academicYear,
+	                                 @NonNull java.time.LocalDate day);
+
 	@NonNull
 	List<StudentWithYear> rollForCourseSync(long courseID, int academicYear);
 
@@ -306,6 +316,10 @@ public interface AttendanceRepository {
 	void deleteLectureCascade(@NonNull EntityLecture lecture);
 
 	@Nullable
+	/**
+	 * The lecture of that course and batch starting at that moment, or null. The end is not
+	 * part of the slot (R15); it is taken so callers need not say which of the two they mean.
+	 */
 	Long findLecture(long courseID, Long batchID, ZonedDateTime start, ZonedDateTime end);
 
 	long insertLecture(@NonNull EntityLecture lecture);

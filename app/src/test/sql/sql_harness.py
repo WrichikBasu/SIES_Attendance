@@ -1096,6 +1096,50 @@ def test_stats_summary_agrees_with_the_grouped_rows(conn):
           summary["students"] == 3, f"students={summary['students']}")
 
 
+def test_stats_leave_date_ends_what_counts():
+    """
+    A student's figures stop on the day they left, as they start on the day they joined (R10).
+    Rahul is marked at L1 (10 July), L3 (12 July) and L5 (15 August).
+    """
+    conn = build_fixture()
+
+    def rahul():
+        return {r["primaryLabel"]: (r["total"], r["attended"])
+                for r in run(conn, "stats_grouped_STUDENT")}.get("2025CS03")
+
+    before = rahul()
+    leave = (datetime(2025, 8, 1).date() - datetime(1970, 1, 1).date()).days
+    conn.execute("UPDATE student_year SET leaveDate = ? WHERE studentID = 3", (leave,))
+    conn.commit()
+
+    check("stats: a mark after the day a student left does not count",
+          rahul() == (before[0] - 1, before[1] - 1), f"before={before} after={rahul()}")
+
+    conn.execute("UPDATE student_year SET leaveDate = ? WHERE studentID = 3", (leave + 14,))
+    conn.commit()
+    check("stats: a mark on or before the leave date still counts",
+          rahul() == before, f"before={before} after={rahul()}")
+    conn.close()
+
+
+def test_stats_oldest_first_is_by_time(conn):
+    """
+    Oldest first sorts by when, not by the label (R11): lectures by their date, not by the
+    course and the day of the month; weekdays Monday to Sunday, not alphabetically.
+    """
+    lectures = run(conn, "stats_oldest_first_LECTURE")
+    starts = [conn.execute("SELECT CAST(SUBSTR(startDateTime, 1, INSTR(startDateTime, '|') - 1)"
+                           " AS INTEGER) FROM lectures WHERE lectureID = ?",
+                           (r["rowId"],)).fetchone()[0] for r in lectures]
+    check("stats: oldest-first lectures run in date order", starts == sorted(starts),
+          f"{[r['primaryLabel'] for r in lectures]}")
+
+    order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    days = [r["primaryLabel"] for r in run(conn, "stats_oldest_first_WEEKDAY")]
+    check("stats: oldest-first weekdays run Monday to Sunday",
+          days == sorted(days, key=order.index), f"{days}")
+
+
 def test_stats_sort_orders(conn):
     asc = [r["primaryLabel"] for r in run(conn, "stats_sort_PERCENT_ASC")]
     desc = [r["primaryLabel"] for r in run(conn, "stats_sort_PERCENT_DESC")]
@@ -1307,22 +1351,32 @@ def test_lecture_detail_projection(conn):
 
 
 def test_find_existing_catches_whole_class_duplicates(conn):
+    # DaoLecture.findExisting: the course, the batch, and the start as an instant (R14, R15).
     find = ("SELECT lectureID FROM lectures WHERE courseID = ? "
             "AND ((? IS NULL AND batchID IS NULL) OR batchID = ?) "
-            "AND startDateTime = ? AND endDateTime = ? LIMIT 1")
+            "AND CAST(SUBSTR(startDateTime, 1, INSTR(startDateTime, '|') - 1) AS INTEGER) = "
+            "CAST(SUBSTR(?, 1, INSTR(?, '|') - 1) AS INTEGER) LIMIT 1")
 
-    start, end = ts(2025, 7, 10, 10, 0), ts(2025, 7, 10, 11, 0)
-    hit = conn.execute(find, (1, None, None, start, end)).fetchone()
+    def at(start):
+        return (start, start)
+
+    start = ts(2025, 7, 10, 10, 0)
+    hit = conn.execute(find, (1, None, None) + at(start)).fetchone()
     check("duplicate check: a whole-class repeat is found despite the NULL batch",
           hit is not None and hit[0] == 1, f"{hit}")
 
-    miss = conn.execute(find, (1, 1, 1, start, end)).fetchone()
+    miss = conn.execute(find, (1, 1, 1) + at(start)).fetchone()
     check("duplicate check: the same slot for a batch is a different lecture",
           miss is None)
 
-    batch_hit = conn.execute(
-        find, (2, 1, 1, ts(2025, 7, 12, 14, 0), ts(2025, 7, 12, 16, 0))).fetchone()
+    batch_hit = conn.execute(find, (2, 1, 1) + at(ts(2025, 7, 12, 14, 0))).fetchone()
     check("duplicate check: a batch repeat is found", batch_hit[0] == 3)
+
+    # The same instant written under another zone's name is the same start (R14).
+    same_instant = start.split("|")[0] + "|0|UTC"
+    zoned = conn.execute(find, (1, None, None) + at(same_instant)).fetchone()
+    check("duplicate check: the same moment under another zone is found",
+          zoned is not None and zoned[0] == 1, f"{zoned}")
 
 
 def test_unique_index_does_not_catch_whole_class_duplicates(conn):
@@ -1568,6 +1622,8 @@ def main():
     test_stats_all_sessions_spans_both(conn)
     test_stats_summary_agrees_with_the_grouped_rows(conn)
     test_stats_sort_orders(conn)
+    test_stats_leave_date_ends_what_counts()
+    test_stats_oldest_first_is_by_time(conn)
     test_stats_full_filter_returns_a_consistent_slice(conn)
     test_stats_professor_filter_takes_every_course_they_teach(conn)
     test_dao_roster_query_agrees_with_the_export(conn)

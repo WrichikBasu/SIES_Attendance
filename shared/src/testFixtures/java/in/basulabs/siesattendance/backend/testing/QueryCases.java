@@ -127,6 +127,15 @@ public final class QueryCases {
 			cases.add(new StatsCase("stats_sort_" + order.name(), filter, false));
 		}
 
+		// Oldest first, for the two groupings whose labels used to sort it wrongly (R11): a
+		// lecture's label leads with the course and the day of the month, a weekday's is a name.
+		for (StatsGroupBy groupBy : List.of(StatsGroupBy.LECTURE, StatsGroupBy.WEEKDAY)) {
+			StatsFilter filter = new StatsFilter(SESSION);
+			filter.groupBy = groupBy;
+			filter.sortOrder = StatsFilter.SortOrder.CHRONOLOGICAL;
+			cases.add(new StatsCase("stats_oldest_first_" + groupBy.name(), filter, false));
+		}
+
 		return Collections.unmodifiableList(cases);
 	}
 

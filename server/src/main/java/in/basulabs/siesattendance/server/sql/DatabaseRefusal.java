@@ -58,6 +58,11 @@ public final class DatabaseRefusal {
 					"that course already has a lecture for that batch at that time"),
 			Map.entry("lectures_whole_class_slot_uq",
 					"that course already has a whole-class lecture at that time"),
+			// Since V67 a class is identified by when it starts, not by its whole span.
+			Map.entry("lectures_start_uq",
+					"that course already has a lecture for that batch starting at that time"),
+			Map.entry("lectures_whole_class_start_uq",
+					"that course already has a whole-class lecture starting at that time"),
 			Map.entry("lectures_ends_after_start",
 					"the lecture ends before it starts"),
 			Map.entry("student_year_academic_year_fkey",

@@ -392,6 +392,13 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 	@Override
 	@NonNull
+	public List<StudentWithYear> rollOnSync(long courseID, @Nullable Long batchID,
+	                                        int academicYear, @NonNull java.time.LocalDate day) {
+		return db.daoStudent().getRollOnSync(courseID, batchID, academicYear, day);
+	}
+
+	@Override
+	@NonNull
 	public List<StudentWithYear> rollForCourseSync(long courseID, int academicYear) {
 		return db.daoStudent().getRollForCourseSync(courseID, academicYear);
 	}
@@ -459,7 +466,8 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	@Override
 	@Nullable
 	public Long findLecture(long courseID, Long batchID, ZonedDateTime start, ZonedDateTime end) {
-		return db.daoLecture().findExisting(courseID, batchID, start, end);
+		// By the start alone: see DaoLecture.findExisting.
+		return db.daoLecture().findExisting(courseID, batchID, start);
 	}
 
 	@Override
@@ -668,7 +676,7 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 		db.runInTransaction(() -> {
 
-			Long existing = db.daoLecture().findExisting(courseID, batchID, start, end);
+			Long existing = db.daoLecture().findExisting(courseID, batchID, start);
 
 			// The same slot again corrects its register: each mark on the sheet replaces that
 			// student's, and every other mark stays. Clearing first dropped the marks of

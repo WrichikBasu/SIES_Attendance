@@ -295,8 +295,12 @@ public final class PgStatsQueryBuilder {
 			case LABEL_ASC -> label + " ASC" + tiebreak;
 			case TOTAL_DESC -> "COUNT(*) DESC, " + label + " ASC" + tiebreak;
 			case CHRONOLOGICAL ->
-				// Time-based groupings read wrong worst-first; they want oldest to newest.
-					label + " ASC" + tiebreak;
+				// By time, not by label (R11): each group by its earliest lecture, and the
+				// weekdays Monday to Sunday. The app's StatsQueryBuilder says why.
+					(filter.groupBy == in.basulabs.siesattendance.backend.stats.StatsGroupBy.WEEKDAY
+							? "((" + group.idExpr + ") + 6) % 7"
+							: "MIN(l.start_at)")
+							+ " ASC, " + label + " ASC" + tiebreak;
 			default -> percent + " ASC, " + label + " ASC" + tiebreak;
 		};
 	}

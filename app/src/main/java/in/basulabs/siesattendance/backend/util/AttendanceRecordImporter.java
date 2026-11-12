@@ -333,7 +333,8 @@ public final class AttendanceRecordImporter {
 			return lecture;
 		}
 
-		ZoneId zone = ZoneId.systemDefault();
+		// The college's zone, as the server reads the same sheet, not the phone's (R14).
+		ZoneId zone = in.basulabs.siesattendance.backend.College.ZONE;
 		lecture.start = column.date.atTime(column.start).atZone(zone);
 		lecture.end = column.date.atTime(column.end).atZone(zone);
 		lecture.label = course.courseCode + " · " + column.date + " "
@@ -404,7 +405,7 @@ public final class AttendanceRecordImporter {
 		}
 
 		lecture.replacesExisting = lookups.db().daoLecture().findExisting(lecture.courseID,
-				lecture.batchID, lecture.start, lecture.end) != null;
+				lecture.batchID, lecture.start) != null;
 
 		return lecture;
 	}
@@ -557,7 +558,7 @@ public final class AttendanceRecordImporter {
 					}
 
 					Long existing = db.daoLecture().findExisting(lecture.courseID,
-							lecture.batchID, lecture.start, lecture.end);
+							lecture.batchID, lecture.start);
 
 					long lectureID;
 
