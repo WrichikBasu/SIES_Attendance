@@ -439,7 +439,15 @@ public class FragmentStudents extends Fragment {
 				csvPicker.launch(new String[]{"text/csv", "text/comma-separated-values",
 						"text/plain", "application/vnd.ms-excel"}));
 
-		view.findViewById(R.id.btnCsvFormat).setOnClickListener(v -> showFormatHelp());
+		// The format help is for whoever can import; a class representative cannot, and was
+		// shown how to write a file they had no way to use.
+		View csvFormat = view.findViewById(R.id.btnCsvFormat);
+
+		if (viewModel.may(Permissions.Capability.IMPORT_STUDENTS)) {
+			csvFormat.setOnClickListener(v -> showFormatHelp());
+		} else {
+			csvFormat.setVisibility(View.GONE);
+		}
 
 		// Making a batch is a professor's, whoever else may read the roll.
 		View makeBatch = view.findViewById(R.id.btnMakeBatch);
