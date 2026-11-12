@@ -102,6 +102,13 @@ public class FragmentAcademicYears extends Fragment {
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
 		recyclerView.setAdapter(adapter);
 
+		// "Tap to edit, long-press to remove" is a promise only those who may change sessions
+		// can collect on; everybody else is told whose list this is instead.
+		if (!viewModel.may(Permissions.Capability.SESSIONS)) {
+			view.<TextView>findViewById(R.id.tvSessionsExplainer)
+					.setText(R.string.hint_sessions_read_only);
+		}
+
 		// Adding a session is an administrator's alone; everybody else reads the list.
 		FloatingActionButton fab = view.findViewById(R.id.fabAddYear);
 

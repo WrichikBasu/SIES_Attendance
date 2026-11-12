@@ -41,6 +41,7 @@ import in.basulabs.siesattendance.backend.pojo.AttendanceRow;
 import in.basulabs.siesattendance.frontend.adapter.AdapterAttendance;
 import in.basulabs.siesattendance.frontend.util.SignInGuard;
 import in.basulabs.siesattendance.frontend.util.Ui;
+import in.basulabs.siesattendance.frontend.util.UnsavedMarksGuard;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -247,6 +248,10 @@ public class FragmentTakeAttendance extends Fragment {
 		loadCourses();
 		observe();
 		updateRollVisibility();
+
+		// Back used to drop a sheet already marked without a word. Asked only once the roll
+		// has been touched, for the reason given at rollTouched.
+		UnsavedMarksGuard.install(this, () -> rollTouched);
 	}
 
 	// ── Course and batch selection ───────────────────────────────────────
@@ -780,6 +785,10 @@ public class FragmentTakeAttendance extends Fragment {
 
 		startTime = previousEnd;
 		endTime = previousEnd.plusMinutes(minutes);
+
+		// What was marked is saved now. The marks carried forward are the last period's, not
+		// new work, so leaving or switching from here has nothing of its own to lose.
+		rollTouched = false;
 
 		etStart.setText(startTime.format(TIME_LABEL));
 		etEnd.setText(endTime.format(TIME_LABEL));

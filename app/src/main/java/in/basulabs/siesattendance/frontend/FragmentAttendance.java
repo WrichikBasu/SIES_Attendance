@@ -42,6 +42,7 @@ import in.basulabs.siesattendance.backend.util.MarkSheetExporter;
 import in.basulabs.siesattendance.frontend.adapter.AdapterAttendance;
 import in.basulabs.siesattendance.frontend.util.MarkExportFlow;
 import in.basulabs.siesattendance.frontend.util.Ui;
+import in.basulabs.siesattendance.frontend.util.UnsavedMarksGuard;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -136,6 +137,9 @@ public class FragmentAttendance extends Fragment {
 					sheetRequested || savedInstanceState != null);
 			sheetRequested = true;
 		}
+
+		// Back used to drop marks changed and not saved without a word.
+		UnsavedMarksGuard.install(this, () -> viewModel.hasUnsavedSheetEdits(lectureID));
 
 		setupMenu();
 	}

@@ -2290,6 +2290,14 @@ public class AttendanceViewModel extends AndroidViewModel {
 	}
 
 	/**
+	 * Whether the register open for {@code lectureID} holds marks changed on screen and not yet
+	 * saved, which leaving the screen would lose. Main thread only.
+	 */
+	public boolean hasUnsavedSheetEdits(long lectureID) {
+		return holdsSheetOf(lectureID) && !unsavedEdits().isEmpty();
+	}
+
+	/**
 	 * The marks on screen that differ from the register as last read, by student. Main thread
 	 * only.
 	 */

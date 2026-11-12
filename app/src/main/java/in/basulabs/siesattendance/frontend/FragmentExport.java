@@ -472,7 +472,12 @@ public class FragmentExport extends Fragment {
 			new MaterialAlertDialogBuilder(requireContext())
 					.setTitle(R.string.dialog_data_export_done_title)
 					.setMessage(getString(R.string.message_ods_export_done,
-							summary.students, summary.courses, summary.defaulters))
+							getResources().getQuantityString(R.plurals.export_done_students,
+									summary.students, summary.students),
+							getResources().getQuantityString(R.plurals.export_done_courses,
+									summary.courses, summary.courses),
+							getResources().getQuantityString(R.plurals.export_done_defaulters,
+									summary.defaulters, summary.defaulters)))
 					.setPositiveButton(android.R.string.ok, null)
 					.show();
 		});

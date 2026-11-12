@@ -63,6 +63,8 @@
     <string name="hint_division">Division</string>
     <string name="hint_course_type">Course type</string>
     <string name="hint_professor">Coordinator</string>
+    <!-- The statistics filter, which matches any instructor of a course, not only its coordinator -->
+    <string name="hint_taught_by">Taught by</string>
     <string name="hint_other_instructors">Other instructors</string>
     <string name="hint_other_instructors_none">None</string>
     <string name="dialog_other_instructors_title">Who else teaches this course?</string>
@@ -192,8 +194,10 @@
     <string name="dialog_delete_lecture_title">Delete this lecture?</string>
     <string name="dialog_delete_lecture_message">This lecture will be removed. It cannot be
         undone.</string>
-    <string name="dialog_delete_lecture_marked">This lecture has attendance marked for %1$d
-        student(s). Deleting it discards those records too.</string>
+    <plurals name="dialog_delete_lecture_marked">
+        <item quantity="one">This lecture has attendance marked for 1 student. Deleting it discards that mark too.</item>
+        <item quantity="other">This lecture has attendance marked for %1$d students. Deleting it discards those marks too.</item>
+    </plurals>
     <string name="dialog_delete_generic_message">%1$s will be permanently removed.</string>
 
     <string name="dialog_no_professors_title">Add a professor first</string>
@@ -390,6 +394,8 @@
     <string name="hint_starting_year">Starting year</string>
     <string name="helper_starting_year">2025 means the 2025-26 session</string>
     <string name="hint_sessions_explainer">Tap a session to edit it, long-press to remove it.</string>
+    <!-- For an account that may not change sessions, where the line above promised what a tap would not do -->
+    <string name="hint_sessions_read_only">The college\'s academic sessions. Only the office or an administrator can change them.</string>
     <string name="dialog_delete_session_title">Remove this session?</string>
     <string name="dialog_delete_session_message">%1$s will be removed.</string>
     <string name="dialog_delete_session_empty">Nothing is filed under it yet, so removing it
@@ -483,8 +489,19 @@
     <string name="action_export">Export</string>
     <string name="hint_group_name">Group name</string>
     <string name="label_threshold_option">Below %1$d%%</string>
-    <string name="message_ods_export_done">%1$d students across %2$d courses. %3$d are below
-        the threshold and are shaded in the sheet.</string>
+    <string name="message_ods_export_done">%1$s across %2$s. %3$s</string>
+    <plurals name="export_done_students">
+        <item quantity="one">1 student</item>
+        <item quantity="other">%1$d students</item>
+    </plurals>
+    <plurals name="export_done_courses">
+        <item quantity="one">1 course</item>
+        <item quantity="other">%1$d courses</item>
+    </plurals>
+    <plurals name="export_done_defaulters">
+        <item quantity="one">1 is below the threshold and is shaded in the sheet.</item>
+        <item quantity="other">%1$d are below the threshold and are shaded in the sheet.</item>
+    </plurals>
 
     <!-- Editing a recorded lecture -->
     <string name="title_edit_lecture">Edit lecture</string>
@@ -497,13 +514,13 @@
 
     <string name="dialog_stranded_title">The roll is changing</string>
     <plurals name="dialog_stranded_message">
-        <item quantity="one">1 student marked on this lecture is not on the new roll. Their mark would count towards a course they don\'t take.</item>
-        <item quantity="other">%1$d students marked on this lecture are not on the new roll. Their marks would count towards a course they don\'t take.</item>
+        <item quantity="one">1 student marked on this lecture is not on the new roll. Kept, their mark would count on a lecture they weren\'t on the roll for.</item>
+        <item quantity="other">%1$d students marked on this lecture are not on the new roll. Kept, their marks would count on a lecture they weren\'t on the roll for.</item>
     </plurals>
     <!-- The same, for a class representative, who cannot remove marks -->
     <plurals name="dialog_stranded_message_keep_only">
-        <item quantity="one">1 student marked on this lecture is not on the new roll. Their mark would count towards a course they don\'t take, and only a professor can remove it.</item>
-        <item quantity="other">%1$d students marked on this lecture are not on the new roll. Their marks would count towards a course they don\'t take, and only a professor can remove them.</item>
+        <item quantity="one">1 student marked on this lecture is not on the new roll. Kept, their mark would count on a lecture they weren\'t on the roll for, and only a professor can remove it.</item>
+        <item quantity="other">%1$d students marked on this lecture are not on the new roll. Kept, their marks would count on a lecture they weren\'t on the roll for, and only a professor can remove them.</item>
     </plurals>
     <string name="option_drop_stranded">Remove those marks</string>
     <string name="option_keep_stranded">Keep them anyway</string>
@@ -512,6 +529,9 @@
     <string name="dialog_discard_roll_title">Discard the marks you have made?</string>
     <string name="dialog_discard_roll_message">Switching courses discards the marks you haven\'t saved.</string>
     <string name="action_keep_marking">Keep marking</string>
+    <string name="action_discard_marks">Discard</string>
+    <string name="dialog_leave_unsaved_title">Leave without saving?</string>
+    <string name="dialog_leave_unsaved_message">The marks you have made on this register haven\'t been saved. Leaving discards them.</string>
     <string name="action_discard_and_switch">Discard and switch</string>
     <string name="dialog_batch_not_linked_message">%1$s isn\'t linked to %2$s, so its roll can\'t be kept. Switching discards the marks you haven\'t saved.</string>
     <string name="error_batch_not_linked">%1$s isn\'t linked to this course. Choose one of its batches.</string>

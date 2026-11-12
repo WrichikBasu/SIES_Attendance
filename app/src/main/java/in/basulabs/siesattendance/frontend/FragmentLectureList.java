@@ -582,7 +582,8 @@ public class FragmentLectureList extends Fragment {
 	private void confirmDelete(@NonNull LectureDetails lecture) {
 
 		String message = lecture.isMarked()
-				? getString(R.string.dialog_delete_lecture_marked, lecture.markedCount)
+				? getResources().getQuantityString(R.plurals.dialog_delete_lecture_marked,
+						lecture.markedCount, lecture.markedCount)
 				: getString(R.string.dialog_delete_lecture_message);
 
 		new MaterialAlertDialogBuilder(requireContext())

@@ -11,6 +11,7 @@ import static in.basulabs.siesattendance.device.support.Fixture.COURSE_PHYS;
 import static in.basulabs.siesattendance.device.support.Fixture.IST;
 import static in.basulabs.siesattendance.device.support.Fixture.LECTURE_CHEM;
 import static in.basulabs.siesattendance.device.support.Fixture.LECTURE_PHYS;
+import static in.basulabs.siesattendance.device.support.Fixture.SESSION;
 import static in.basulabs.siesattendance.device.support.Fixture.STUDENT_CHEM;
 import static in.basulabs.siesattendance.device.support.Fixture.STUDENT_PHYS;
 import static in.basulabs.siesattendance.device.support.ServerSync.pullAll;
@@ -26,7 +27,16 @@ import java.io.IOException;
 import java.time.ZonedDateTime;
 import java.util.List;
 
+import androidx.annotation.NonNull;
+
 import in.basulabs.siesattendance.backend.AccountKind;
+import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.Division;
+import in.basulabs.siesattendance.backend.EntityStudentYear;
+import in.basulabs.siesattendance.backend.MainDatabase;
+import in.basulabs.siesattendance.backend.Stream;
+import in.basulabs.siesattendance.backend.Year;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 import in.basulabs.siesattendance.backend.EntityAttendance;
 import in.basulabs.siesattendance.backend.EntityLecture;
 import in.basulabs.siesattendance.backend.EntityOutbox;
@@ -148,21 +158,65 @@ public class ProfessorSyncTest extends TwoPhones {
 		assertNotNull("with the reason against it", left.get(0).lastError);
 	}
 
+	/**
+	 * A professor adds a student to their own department from the phone, and it lands.
+	 * <p>
+	 * V27 lets a professor add their department's students, and V60 lets them see the student
+	 * they are adding, which the sync's upsert needs before the enrolment that follows can land.
+	 * Until V60 every such student was refused as not theirs, and this test said the roll was
+	 * the office's alone; that is no longer the rule.
+	 */
 	@Test
-	public void theRollIsTheOfficesAndAProfessorsStudentIsRefusedForGood() throws IOException {
+	public void aProfessorAddsAStudentToTheirOwnDepartment() throws IOException {
 
-		long student = phoneA.daoStudent().insertStudent(
-				new EntityStudent("NOT ON THE ROLL " + tag, "they/them", null));
+		String roll = "PA-" + tag;
+		long student = enrol(phoneA, "PROF ADDS " + tag, roll, Department.PHYSICS);
 
 		Totals pushed = pushAll(phoneA);
 
-		assertEquals(0, pushed.sent);
-		assertEquals("refused for good: retrying would never empty the queue",
-				1, pushed.dropped);
+		assertEquals(pushed.toString(), 0, pushed.refused());
+		assertEquals("the student and their enrolment", 2, pushed.sent);
+		assertEquals(0, phoneA.daoOutbox().countPendingSync());
+
+		pullAll(phoneB);
+		assertNotNull("their other phone has the student",
+				phoneB.daoStudent().getStudentSync(student));
+		assertEquals("as the server stores the roll number (V57)", CanonicalCode.of(roll),
+				phoneB.daoStudent().getEnrolmentSync(student, SESSION).rollNo);
+	}
+
+	/**
+	 * The other half of V27: a professor enrols in their own department and no other. The
+	 * enrolment in Chemistry is refused for good, with a sentence, and stays off the server;
+	 * the student row before it is allowed on its own, since a student with no enrolment is
+	 * one being added (V60).
+	 */
+	@Test
+	public void aProfessorCannotEnrolAStudentInAnotherDepartment() throws IOException {
+
+		long student = enrol(phoneA, "PROF ENROLS ELSEWHERE " + tag, "PE-" + tag,
+				Department.CHEMISTRY);
+
+		Totals pushed = pushAll(phoneA);
+
+		assertEquals("the student row, which V60 allows on its own", 1, pushed.sent);
+		assertEquals("the Chemistry enrolment, refused for good: retrying would never empty "
+				+ "the queue", 1, pushed.dropped);
 		assertFalse("and the phone has a sentence to show", pushed.refusals.isEmpty());
 		assertEquals(0, phoneA.daoOutbox().countPendingSync());
 
 		pullAll(phoneB);
-		assertNull("the server does not have it", phoneB.daoStudent().getStudentSync(student));
+		assertNull("the server has no such enrolment",
+				phoneB.daoStudent().getEnrolmentSync(student, SESSION));
+	}
+
+	/** A student and their enrolment, written straight to the tables, as the head's test does. */
+	private static long enrol(@NonNull MainDatabase db, @NonNull String name,
+	                          @NonNull String roll, @NonNull Department major) {
+
+		long id = db.daoStudent().insertStudent(new EntityStudent(name, "they/them", null));
+		db.daoStudent().insertStudentYear(new EntityStudentYear(id, SESSION, roll, Year.FY,
+				Stream.BSc, major, null, null, 1, Division.A));
+		return id;
 	}
 }

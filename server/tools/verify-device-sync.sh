@@ -418,8 +418,13 @@ expect "no professor's lecture on Chemistry's course" 1 \
     "SELECT count(*) FROM lectures WHERE course_id = ${K_3002}" || STATUS=1
 expect "Chemistry's mark untouched" 1 \
     "SELECT count(*) FROM attendance WHERE lecture_id = ${K_4002} AND present" || STATUS=1
-expect "no student a professor made" 0 \
-    "SELECT count(*) FROM students WHERE name LIKE 'NOT ON THE ROLL %'" || STATUS=1
+# A professor adds their own department's students (V27), and sees the one being added (V60).
+expect "the student a professor added, with their Physics enrolment" 1 \
+    "SELECT count(*) FROM students s JOIN student_year y USING (student_id)
+     WHERE s.name LIKE 'PROF ADDS %' AND y.major_dept = 'PHYSICS'" || STATUS=1
+expect "no enrolment a professor made in another department" 0 \
+    "SELECT count(*) FROM students s JOIN student_year y USING (student_id)
+     WHERE s.name LIKE 'PROF ENROLS ELSEWHERE %'" || STATUS=1
 expect "their own register landed" 1 \
     "SELECT count(*) FROM lectures WHERE course_id = ${K_3001} AND lecture_id <> ${K_4001}" || STATUS=1
 expect "their lecture, its mark, and two changes to PH-101's existing mark, as theirs" 4 \

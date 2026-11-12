@@ -53,6 +53,8 @@ public class ActivityHome extends AppCompatActivity {
 
 	private NavController navController;
 
+	private AppBarConfiguration appBarConfiguration;
+
 	private AppBarLayout appBarLayout;
 
 	private BottomNavigationView bottomNav;
@@ -112,10 +114,13 @@ public class ActivityHome extends AppCompatActivity {
 		// screen the user was on rather than to the start destination chosen above.
 		navController.setGraph(graph, null);
 
-		AppBarConfiguration appBarConfiguration =
-				new AppBarConfiguration.Builder(TOP_LEVEL).build();
+		appBarConfiguration = new AppBarConfiguration.Builder(TOP_LEVEL).build();
 
-		NavigationUI.setupWithNavController(toolbar, navController, appBarConfiguration);
+		// The action-bar form, not setupWithNavController(toolbar, ...). With a support action
+		// bar set, the toolbar form's title was put there in onCreate and then overwritten by
+		// AppCompat with the activity label in onPostCreate, so after a rotation every screen
+		// was called "SIES Attendance". The action bar's own setTitle is one AppCompat keeps.
+		NavigationUI.setupActionBarWithNavController(this, navController, appBarConfiguration);
 		NavigationUI.setupWithNavController(bottomNav, navController);
 
 		navController.addOnDestinationChangedListener(this::onDestinationChanged);
@@ -315,14 +320,29 @@ public class ActivityHome extends AppCompatActivity {
 
 	@Override
 	public boolean onSupportNavigateUp() {
-		return navController.navigateUp() || super.onSupportNavigateUp();
+		return navigateUpThroughBack() || super.onSupportNavigateUp();
 	}
 
 	@Override
 	public boolean onOptionsItemSelected(@NonNull MenuItem item) {
 		if (item.getItemId() == android.R.id.home) {
-			return navController.navigateUp() || super.onOptionsItemSelected(item);
+			return navigateUpThroughBack() || super.onOptionsItemSelected(item);
 		}
 		return super.onOptionsItemSelected(item);
+	}
+
+	/**
+	 * The up arrow, sent through the Back dispatcher whenever there is a screen to go back to,
+	 * so that a screen holding unsaved work (see {@code UnsavedMarksGuard}) is asked first.
+	 * Going straight to the NavController skipped it, and the arrow lost the marks Back now
+	 * asks about.
+	 */
+	private boolean navigateUpThroughBack() {
+
+		if (navController.getPreviousBackStackEntry() != null) {
+			getOnBackPressedDispatcher().onBackPressed();
+			return true;
+		}
+		return NavigationUI.navigateUp(navController, appBarConfiguration);
 	}
 }

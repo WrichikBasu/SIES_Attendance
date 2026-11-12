@@ -83,7 +83,10 @@ public class StatsFilter {
 	@Nullable
 	public Long batchID;
 
-	/** Matched against the professor who owns the course, not who took the individual lecture. */
+	/**
+	 * Matched against every professor who teaches the course, its coordinator or any other
+	 * instructor, not against who took the individual lecture. The screen labels it "Taught by".
+	 */
 	@Nullable
 	public Long professorID;
 
