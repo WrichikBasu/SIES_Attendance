@@ -562,7 +562,7 @@ public final class MarkSheetExporter {
 
 		// Not closed: the caller owns the stream. Flushed at the end instead.
 		Writer writer = new OutputStreamWriter(out, StandardCharsets.UTF_8);
-		writer.write('﻿');
+		writer.write('\uFEFF');
 
 		List<String> header = new ArrayList<>();
 		for (String label : headerLabels(sheet)) {

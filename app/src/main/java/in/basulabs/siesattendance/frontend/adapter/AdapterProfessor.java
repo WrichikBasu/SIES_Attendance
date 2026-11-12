@@ -42,7 +42,7 @@ public class AdapterProfessor
 				public boolean areContentsTheSame(@NonNull EntityProfessor a,
 				                                  @NonNull EntityProfessor b) {
 					return a.name.equals(b.name) && a.email.equals(b.email)
-							&& a.department == b.department
+							&& java.util.Objects.equals(a.department, b.department)
 							&& a.designation.equals(b.designation);
 				}
 			};

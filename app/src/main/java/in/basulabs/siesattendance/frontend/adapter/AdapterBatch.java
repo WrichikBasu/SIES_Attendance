@@ -43,7 +43,7 @@ public class AdapterBatch extends ListAdapter<EntityBatchDesc, AdapterBatch.Hold
 				                                  @NonNull EntityBatchDesc b) {
 					return a.batchName.equals(b.batchName)
 							&& a.academicYear == b.academicYear
-							&& a.department == b.department
+							&& java.util.Objects.equals(a.department, b.department)
 							&& java.util.Objects.equals(a.batchDesc, b.batchDesc);
 				}
 			};
