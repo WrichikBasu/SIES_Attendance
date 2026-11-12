@@ -650,10 +650,13 @@ public final class OutboxDrain {
 					? "roll number" : "value"));
 			case SET_ASIDE -> Log.w(TAG, "set aside " + table.name() + change.key() + ": a "
 					+ "different row here holds the same unique value");
+			case KEPT_LOCAL -> Log.i(TAG, "kept this phone's " + table.name() + change.key()
+					+ ": a change to it is still waiting to be sent");
 			default -> {
 			}
 		}
-		return outcome != PulledRows.Outcome.SET_ASIDE;
+		return outcome == PulledRows.Outcome.WRITTEN || outcome == PulledRows.Outcome.REKEYED
+				|| outcome == PulledRows.Outcome.REPLACED;
 	}
 
 	/** The database as {@link PulledRows} reaches it. */

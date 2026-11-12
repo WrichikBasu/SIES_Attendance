@@ -255,6 +255,10 @@ public final class BackupImporter {
 	/**
 	 * Whether this exact file has been imported successfully before.
 	 * <p>
+	 * A preview does not count: it wrote nothing. Counting it, as this did until V64 recorded
+	 * which runs were previews, told the import that followed every preview that it had all
+	 * been done already (C6).
+	 * <p>
 	 * Not a reason to refuse it: a second run is harmless and is sometimes exactly what
 	 * somebody wants to see. It is here so the importer can say so, since an import that
 	 * reports nothing looks the same as one that failed to read anything.
@@ -263,7 +267,8 @@ public final class BackupImporter {
 			throws SQLException {
 
 		try (PreparedStatement statement = server.prepareStatement(
-				"SELECT 1 FROM import_run WHERE backup_digest = ? AND succeeded LIMIT 1")) {
+				"SELECT 1 FROM import_run WHERE backup_digest = ? AND succeeded "
+						+ "AND NOT dry_run LIMIT 1")) {
 
 			statement.setString(1, digest);
 
@@ -281,7 +286,8 @@ public final class BackupImporter {
 	                      @NonNull StagedBackup backup) throws SQLException {
 
 		String sql = "INSERT INTO import_run (source_label, source_node, backup_digest, "
-				+ "backup_created_at, backup_schema) VALUES (?, ?, ?, ?, ?) RETURNING run_id";
+				+ "backup_created_at, backup_schema, dry_run) VALUES (?, ?, ?, ?, ?, ?) "
+				+ "RETURNING run_id";
 
 		try (PreparedStatement statement = server.prepareStatement(sql)) {
 
@@ -298,6 +304,7 @@ public final class BackupImporter {
 			}
 
 			statement.setInt(5, backup.schemaVersionAsFound());
+			statement.setBoolean(6, request.dryRun());
 
 			try (ResultSet results = statement.executeQuery()) {
 
@@ -341,7 +348,7 @@ public final class BackupImporter {
 		List<String> rows = new ArrayList<>();
 
 		String sql = "SELECT run_id, source_label, source_node, backup_schema, started_at, "
-				+ "succeeded, inserted, updated, skipped FROM import_run "
+				+ "succeeded, dry_run, inserted, updated, skipped FROM import_run "
 				+ "ORDER BY started_at DESC, run_id DESC";
 
 		try (Connection server = dataSource.getConnection();
@@ -349,13 +356,14 @@ public final class BackupImporter {
 		     ResultSet results = statement.executeQuery()) {
 
 			while (results.next()) {
-				rows.add(String.format("#%d  %-24s node %-6d v%-3d %s  %s  +%d ~%d !%d",
+				rows.add(String.format("#%d  %-24s node %-6d v%-3d %s  %-7s  +%d ~%d !%d",
 						results.getLong("run_id"),
 						results.getString("source_label"),
 						results.getInt("source_node"),
 						results.getInt("backup_schema"),
 						results.getTimestamp("started_at"),
-						results.getBoolean("succeeded") ? "ok    " : "FAILED",
+						!results.getBoolean("succeeded") ? "FAILED"
+								: results.getBoolean("dry_run") ? "preview" : "ok",
 						results.getInt("inserted"),
 						results.getInt("updated"),
 						results.getInt("skipped")));

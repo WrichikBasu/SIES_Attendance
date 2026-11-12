@@ -191,6 +191,7 @@ public final class SyncWriter {
 			"22003",    // numeric_value_out_of_range
 			"22007",    // invalid_datetime_format
 			"22008",    // datetime_field_overflow
+			"22021",    // character_not_in_repertoire: a NUL, or bytes that are not UTF-8
 			UNIQUE_VIOLATION);
 
 	private SyncWriter() {

@@ -69,7 +69,16 @@ public final class DeviceValue {
 		switch (column.kind()) {
 
 			case TEXT -> {
-				return List.of(new Field(name, raw == null ? null : String.valueOf(raw), ""));
+				String text = raw == null ? null : String.valueOf(raw);
+
+				// PostgreSQL cannot store a NUL in text at all, and refused it with 22021, which
+				// the push did not count as final: the phone resent the row for ever (C8). A
+				// pasted or imported name is where one comes from.
+				if (text != null && text.indexOf('\u0000') >= 0) {
+					throw new Unconvertible(column.room() + " contains a NUL character, which "
+							+ "the server cannot store. Edit it on this phone and it will sync.");
+				}
+				return List.of(new Field(name, text, ""));
 			}
 
 			case INTEGER -> {
@@ -84,9 +93,22 @@ public final class DeviceValue {
 			}
 
 			case EPOCH_DAY -> {
-				return List.of(new Field(name,
-						raw == null ? null
-								: StoredTimes.parseDate(number(column, raw)), ""));
+				if (raw == null) {
+					return List.of(new Field(name, null, ""));
+				}
+
+				long day = number(column, raw);
+
+				try {
+					return List.of(new Field(name, StoredTimes.parseDate(day), ""));
+
+				} catch (java.time.DateTimeException outsideTheCalendar) {
+					// A day beyond any calendar java.time keeps. Thrown as DateTimeException,
+					// which is neither this class's refusal nor SQL's, so it failed the whole
+					// push with a 500 and the good rows in it with it (C7).
+					throw new Unconvertible(column.room() + " holds day " + day
+							+ ", which is not a date in any calendar.");
+				}
 			}
 
 			case ENUM -> {

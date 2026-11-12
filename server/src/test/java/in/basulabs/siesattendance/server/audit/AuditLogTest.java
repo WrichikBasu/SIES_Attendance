@@ -503,6 +503,33 @@ class AuditLogTest {
 		}
 	}
 
+	/**
+	 * The auditor reads who an account is and when it signed in, and not the hashes the
+	 * sign-in rests on (C9). Both tables were readable whole through the default grant, and
+	 * neither has row-level security.
+	 */
+	@Test
+	void theAuditorReadsAccountsAndSessionsButNotTheirSecrets() throws Exception {
+
+		try (Connection as = postgres.auditorConnection()) {
+
+			assertThrows(SQLException.class, () -> execute(as,
+					"SELECT password_hash FROM app_account"),
+					"the auditor must not read password hashes");
+			assertThrows(SQLException.class, () -> execute(as,
+					"SELECT token_hash FROM app_session"),
+					"the auditor must not read session token hashes");
+			assertThrows(SQLException.class, () -> execute(as, "SELECT * FROM app_account"),
+					"nor reach them through *");
+
+			// What an audit does need is still there.
+			execute(as, "SELECT account_id, kind, display_name, login_email, last_login_at, "
+					+ "disabled_at FROM app_account");
+			execute(as, "SELECT session_id, account_id, issued_at, expires_at, client_ip, "
+					+ "revoked_at FROM app_session");
+		}
+	}
+
 	@Test
 	void theAuditorCannotChangeTheDataEither() throws Exception {
 

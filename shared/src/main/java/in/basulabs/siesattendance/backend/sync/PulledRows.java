@@ -41,6 +41,13 @@ import java.util.Set;
  * A constraint failure that is not such a collision still fails, loudly: a row the server sends
  * that will not go in for some other reason is a defect to hear about.
  * <p>
+ * And a row with a change still queued here is not written at all (C5). The feed sends a phone
+ * its own push straight back, and the worker pulls right after it pushes: a mark corrected in
+ * between was overwritten by the echo of the value just sent, and since the queue holds keys and
+ * not values, the next push read the echo and sent the old mark again. The change waiting here
+ * is newer than anything the server can be sending about that row, and it goes out on the next
+ * push; until then this device's version stands, as the sweep already lets it.
+ * <p>
  * Shared, and written against {@link Device} rather than Android's database, so that the server's
  * tests run exactly what the phone runs against the phone's real schema.
  */
@@ -59,7 +66,10 @@ public final class PulledRows {
 		REPLACED,
 
 		/** Not written: it collides with a row here that is not the same thing. */
-		SET_ASIDE
+		SET_ASIDE,
+
+		/** Not written: this device has a change to that row still waiting to be sent. */
+		KEPT_LOCAL
 	}
 
 	/** The device's database, as the drain and the tests each reach it. */
@@ -130,6 +140,10 @@ public final class PulledRows {
 	@NonNull
 	public static Outcome write(@NonNull Device device, @NonNull DeviceTables.Table table,
 	                            @NonNull Map<String, Object> row) {
+
+		if (queued(device, table, keyOf(table, row))) {
+			return Outcome.KEPT_LOCAL;
+		}
 
 		String update = DeviceSql.updateRow(table);
 
@@ -299,6 +313,25 @@ public final class PulledRows {
 
 		device.change(DeviceSql.deleteRow(table), new Object[]{mine});
 		forgetQueued(device, table, List.of(mine));
+	}
+
+	/**
+	 * Whether a change to that row is waiting to be sent, under the key the outbox stores it by:
+	 * the row's key, with {@link OutboxTriggers#UNUSED_KEY} in the slots it does not use.
+	 */
+	public static boolean queued(@NonNull Device device, @NonNull DeviceTables.Table table,
+	                             @NonNull List<Long> key) {
+
+		Object[] values = new Object[4];
+		values[0] = table.name();
+
+		for (int at = 0; at < 3; at++) {
+			values[at + 1] = at < key.size() ? key.get(at) : OutboxTriggers.UNUSED_KEY;
+		}
+
+		return device.firstRow("SELECT 1 FROM `" + OutboxTriggers.OUTBOX
+				+ "` WHERE `tableName` = ? AND `key1` = ? AND `key2` = ? AND `key3` = ?",
+				values) != null;
 	}
 
 	/** Drops whatever is queued for that row: the server's row is the record now. */
