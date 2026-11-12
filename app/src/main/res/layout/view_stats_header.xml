@@ -412,7 +412,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
-                    android:hint="@string/hint_professor">
+                    android:hint="@string/hint_taught_by">
 
                     <AutoCompleteTextView
                         android:id="@+id/actvProfessor"
@@ -500,7 +500,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:hint="@string/hint_department">
+                android:hint="@string/hint_students_department">
 
                 <AutoCompleteTextView
                     android:id="@+id/actvDept"

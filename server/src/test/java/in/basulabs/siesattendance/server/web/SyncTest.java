@@ -280,6 +280,45 @@ class SyncTest {
 	// ── What a device may not do ─────────────────────────────────────────
 
 	@Test
+	void aPushCannotMarkAStudentThePhoneMayNotSee() throws Exception {
+
+		// V59, over the wire. Before it, this push was the whole attack: the lecture is the
+		// professor's own, so every attendance policy admitted the mark, and the student it
+		// named -- another department's, picked out of a key space whose values are minted in
+		// sequence -- became readable through students_marked (V21). Name, email, APAAR ID,
+		// one row at a time, from a phone.
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+		long lectureID = phone.key(700);
+
+		Reply pushed = push(phone, List.of(lectureIntent(lectureID, COURSE_CS, 14),
+				attendanceIntent(lectureID, STUDENT_CHEM, true)));
+
+		assertEquals(200, pushed.status(), pushed::toString);
+		assertEquals(1, pushed.body().get("accepted").intValue(),
+				"the lecture is the professor's own and is accepted; only the mark is not");
+		assertEquals(1, pushed.body().get("rejected").size(), pushed::toString);
+		assertEquals("attendance",
+				pushed.body().get("rejected").get(0).get("table").stringValue());
+		assertTrue(pushed.body().get("rejected").get(0).get("reason").stringValue()
+						.contains("not on this course's roll"),
+				pushed.body().get("rejected").toString());
+		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
+				"a student who is not on the roll will not be on it tomorrow either, and a "
+						+ "phone retrying this for ever is a queue that never empties");
+
+		assertEquals(0, count("SELECT count(*) FROM attendance WHERE student_id = "
+						+ STUDENT_CHEM + " AND lecture_id = " + lectureID),
+				"nothing may be written for a student the pusher cannot see");
+
+		// And the point of all of it: the student stays out of reach.
+		Reply pulled = get(phone, "/sync/pull");
+
+		assertEquals(200, pulled.status(), pulled::toString);
+		assertFalse(pulled.toString().contains("S SHAH"),
+				"the Chemistry student must not reach this phone: " + pulled);
+	}
+
+	@Test
 	void aKeyIssuedByAnotherDeviceIsRefused() throws Exception {
 
 		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
@@ -296,7 +335,7 @@ class SyncTest {
 				pushed.body().get("rejected").toString());
 		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
 				"a key from the wrong node will be the wrong node tomorrow too");
-		assertEquals("the CS-101 lecture on Mon 14 Jul 2025, 09:00",
+		assertEquals("the CS101 lecture on Mon 14 Jul 2025, 09:00",
 				pushed.body().get("rejected").get(0).get("about").stringValue(),
 				"and it says which lecture, from the row the phone sent: the server has "
 						+ "never had it");
@@ -443,26 +482,79 @@ class SyncTest {
 	}
 
 	@Test
-	void aProfessorMayNotPushTheRoll() throws Exception {
+	void aProfessorAddsAStudentToTheirDepartmentFromAPhone() throws Exception {
 
-		// V11 accepts students from a device. Who may write one is the policies' decision, and
-		// their answer is the office: a roll number is what every other session's records are
-		// matched by, so a professor rewriting their own class's roll would be rewriting
-		// history nobody asked them to.
+		// V27 lets a professor add their own department's students, and the sync path writes
+		// every row as INSERT ... ON CONFLICT DO UPDATE, which holds the new row to the SELECT
+		// policies as well. A student being added has no enrolment yet -- it is the next intent
+		// -- so until V60 the professor could not read the row they were writing, the student
+		// was refused, and the enrolment then failed its foreign key. A head never met it, and a
+		// plain INSERT in the policy test never showed it; this is the shape a phone sends.
+		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
+		long student = phone.key(600);
+
+		Reply pushed = push(phone, List.of(
+				studentIntent(student, "NEW PERSON"),
+				intent("student_year", List.of(student, (long) SESSION), "UPSERT", Map.of(
+						"studentID", student, "academicYear", SESSION,
+						"rollNo", "CS-FY-600", "year", "FY", "stream", "BSc_unaided",
+						"majorDept", "COMPUTER_SCIENCE", "semester", 1))));
+
+		assertEquals(2, pushed.body().get("accepted").intValue(), pushed::toString);
+		assertEquals(1, count("SELECT count(*) FROM student_year WHERE student_id = "
+				+ student + " AND major_dept = 'COMPUTER_SCIENCE'"));
+
+		// And the same push again, as a phone does when the response was lost: the conflict
+		// path, which needs the row readable through its enrolment.
+		Reply replayed = push(phone, List.of(studentIntent(student, "NEW PERSON")));
+
+		assertEquals(1, replayed.body().get("accepted").intValue(), replayed::toString);
+	}
+
+	@Test
+	void aProfessorMayNotCorrectAnotherDepartmentsStudent() throws Exception {
+
+		// Added by Chemistry from a phone, so the key is one a device may name; a fixture key
+		// predates the id scheme and would be refused for that before any policy is asked.
+		Phone chemistry = signInWithAPhone("b.chem@sies.edu.in");
+		long student = chemistry.key(610);
+
+		Reply added = push(chemistry, List.of(
+				studentIntent(student, "S SHAH"),
+				intent("student_year", List.of(student, (long) SESSION), "UPSERT", Map.of(
+						"studentID", student, "academicYear", SESSION,
+						"rollNo", "CH-FY-610", "year", "FY", "stream", "BSc",
+						"majorDept", "CHEMISTRY", "semester", 1))));
+
+		assertEquals(2, added.body().get("accepted").intValue(), added::toString);
+
+		// And on Computer Science's roll the next year, so the CS professor reads them -- a
+		// student they cannot read is refused earlier, as no row of theirs to amend. Read by
+		// both departments and corrected by neither (V27): this is the refusal that reaches the
+		// policies, and the one the sentence is for.
+		postgres.asSuperuser("INSERT INTO academic_years (academic_year, start_date, end_date) "
+				+ "VALUES (2026, '2026-06-01', '2027-05-31') ON CONFLICT DO NOTHING");
+		postgres.asSuperuser("INSERT INTO student_year (student_id, academic_year, roll_no, "
+				+ "year, stream, major_dept, semester) VALUES (" + student + ", 2026, "
+				+ "'CS-SY-610', 'SY', 'BSc_unaided', 'COMPUTER_SCIENCE', 3)");
+
 		Phone phone = signInWithAPhone("a.cs@sies.edu.in");
 
-		Reply pushed = push(phone, List.of(studentIntent(phone.key(600), "NEW PERSON")));
+		Reply pushed = push(phone, List.of(studentIntent(student, "RENAMED BY CS")));
 
 		assertEquals(0, pushed.body().get("accepted").intValue(), pushed::toString);
-		assertTrue(pushed.body().get("rejected").get(0).get("reason").stringValue()
-						.contains("loaded by the office"),
-				"the sentence a professor meets has to say what to do about it: "
-						+ pushed.body().get("rejected"));
+
+		String reason = pushed.body().get("rejected").get(0).get("reason").stringValue();
+
+		assertTrue(reason.contains("their own department's professors"),
+				"the sentence a professor meets has to say whose student it is, not that the "
+						+ "roll is the office's, which since V27 it is not: " + reason);
 		assertTrue(pushed.body().get("rejected").get(0).get("permanent").booleanValue(),
 				"a policy refusal is settled: a device that kept retrying it would never "
 						+ "empty its queue, and the row behind it is real attendance");
 
-		assertEquals(2, count("SELECT count(*) FROM students"));
+		assertEquals(1, count("SELECT count(*) FROM students WHERE student_id = "
+				+ student + " AND name = 'S SHAH'"));
 	}
 
 	@Test
@@ -545,6 +637,89 @@ class SyncTest {
 
 		assertEquals(1, again.body().get("accepted").intValue(), again::toString);
 		assertEquals(1, count(coordinator));
+	}
+
+	/**
+	 * A refusal by a unique index reaches the phone as what it means. It used to be
+	 * PostgreSQL's first line, index name and all.
+	 */
+	@Test
+	void aCourseCodeAlreadyInUseIsRefusedInWords() throws Exception {
+
+		Phone phone = signInWithAPhone("c.head@sies.edu.in");
+		long courseID = phone.key(642);
+
+		Map<String, Object> course = new LinkedHashMap<>();
+		course.put("courseID", courseID);
+		course.put("profID", PROF_CS);
+		course.put("courseCode", "cs 101");
+		course.put("courseTopic", "Programming, again");
+		course.put("stream", "BSc");
+		course.put("offeringDepartment", "COMPUTER_SCIENCE");
+		course.put("year", "SY");
+		course.put("semester", 3);
+		course.put("courseType", "OE");
+
+		Reply pushed = push(phone, List.of(
+				intent("courses", List.of(courseID), "UPSERT", course)));
+
+		assertEquals(0, pushed.body().get("accepted").intValue(), pushed::toString);
+
+		String reason = pushed.body().get("rejected").get(0).get("reason").stringValue();
+		assertEquals("that course code is already another course's", reason);
+	}
+
+	/**
+	 * The same course typed in on two phones offline (C2). The second is folded into the first
+	 * rather than refused on every sync for ever, and a lecture the second phone files under its
+	 * own copy lands under the course the server kept.
+	 */
+	@Test
+	void theSameCourseFromTwoPhonesIsFoldedIntoOne() throws Exception {
+
+		Phone first = signInWithAPhone("c.head@sies.edu.in");
+		Phone second = signInWithAPhone("c.head@sies.edu.in");
+
+		long kept = first.key(651);
+		long folded = second.key(652);
+
+		Reply won = push(first, List.of(intent("courses", List.of(kept), "UPSERT",
+				sameCourse(kept))));
+		assertEquals(1, won.body().get("accepted").intValue(), won::toString);
+
+		Reply lost = push(second, List.of(
+				intent("courses", List.of(folded), "UPSERT", sameCourse(folded)),
+				lectureIntent(second.key(653), folded, 11)));
+
+		assertEquals(2, lost.body().get("accepted").intValue(), lost::toString);
+		assertEquals(0, lost.body().get("rejected").size(), lost::toString);
+
+		assertEquals(0, count("SELECT count(*) FROM courses WHERE course_id = " + folded),
+				"the duplicate is not written");
+		assertEquals(1, count("SELECT count(*) FROM lectures WHERE lecture_id = "
+				+ second.key(653) + " AND course_id = " + kept),
+				"the second phone's lecture is filed under the course the server kept");
+
+		// And again, an hour later, as the phone will until its pull re-keys it: the same
+		// answer, and nothing more written.
+		Reply again = push(second, List.of(
+				intent("courses", List.of(folded), "UPSERT", sameCourse(folded))));
+		assertEquals(1, again.body().get("accepted").intValue(), again::toString);
+		assertEquals(1, count("SELECT count(*) FROM courses WHERE course_code = 'CSOE9'"));
+	}
+
+	private static Map<String, Object> sameCourse(long courseID) {
+		Map<String, Object> course = new LinkedHashMap<>();
+		course.put("courseID", courseID);
+		course.put("profID", PROF_CS);
+		course.put("courseCode", "CS-OE-9");
+		course.put("courseTopic", "Computing for all");
+		course.put("stream", "BSc");
+		course.put("offeringDepartment", "COMPUTER_SCIENCE");
+		course.put("year", "SY");
+		course.put("semester", 3);
+		course.put("courseType", "OE");
+		return course;
 	}
 
 	@Test
@@ -1116,6 +1291,53 @@ class SyncTest {
 		assertEquals(1, pushed.body().get("accepted").intValue(), pushed::toString);
 		assertEquals(2, count("SELECT semester FROM student_year WHERE student_id = "
 				+ STUDENT_CS + " AND academic_year = " + SESSION));
+	}
+
+	@Test
+	void aRollNumberArrivesAsTypedAndIsHandedBackCanonical() throws Exception {
+
+		// The one field a phone does not get back the way it sent it. V57 canonicalises every
+		// roll number written to student_year, so "cs-fy-642" is stored -- and fed to every
+		// other device -- as CSFY642. The app's own DAO canonicalises before it stores, so this
+		// is the shape a build older than V57 pushes.
+		//
+		// It is here because the instrumented tests write exactly this shape, and theirs are
+		// the only assertions on the spelling that crosses the wire. They stopped matching when
+		// V57 landed and nothing noticed for two commits: they need a phone, so a plain
+		// ./gradlew test never ran them. This one runs without one.
+		Phone phone = signInWithAPhone("office@sies.edu.in");
+		long studentID = phone.key(640);
+		String watermark = get(phone, "/sync/pull").body().get("watermark").stringValue();
+
+		Map<String, Object> enrolment = new LinkedHashMap<>();
+		enrolment.put("studentID", studentID);
+		enrolment.put("academicYear", (long) SESSION);
+		enrolment.put("rollNo", "cs-fy-642");
+		enrolment.put("year", "FY");
+		enrolment.put("stream", "BSc_unaided");
+		enrolment.put("majorDept", "COMPUTER_SCIENCE");
+		enrolment.put("minorDept", null);
+		enrolment.put("oeDept", null);
+		enrolment.put("semester", 1L);
+		enrolment.put("division", null);
+
+		Reply pushed = push(phone, List.of(studentIntent(studentID, "C CANON"),
+				intent("student_year", List.of(studentID, (long) SESSION), "UPSERT",
+						enrolment)));
+
+		assertEquals(2, pushed.body().get("accepted").intValue(),
+				"a roll number as typed is not a refusal, it is canonicalised: " + pushed);
+		assertEquals(1, count("SELECT count(*) FROM student_year WHERE student_id = "
+						+ studentID + " AND roll_no = 'CSFY642'"),
+				"the trigger, not the caller, decides the spelling");
+
+		List<JsonNode> enrolments = changesFor(
+				get(phone, "/sync/pull?since=" + urlEncode(watermark)).body(), "student_year");
+
+		assertEquals(1, enrolments.size(), enrolments::toString);
+		assertEquals("CSFY642", enrolments.get(0).get("row").get("rollNo").stringValue(),
+				"the feed hands back what is stored, which is how the other phones come to "
+						+ "hold the canonical spelling: " + enrolments);
 	}
 
 	@Test

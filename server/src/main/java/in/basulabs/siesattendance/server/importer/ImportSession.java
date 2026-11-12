@@ -21,6 +21,7 @@ import in.basulabs.siesattendance.backend.PostgresEnumTypes;
 import in.basulabs.siesattendance.backend.StoredTimes;
 import in.basulabs.siesattendance.backend.StructuredId;
 import in.basulabs.siesattendance.backend.sync.DeviceTables;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 import in.basulabs.siesattendance.server.sync.DeviceValue;
 import in.basulabs.siesattendance.server.sync.DeviceValue.Field;
 
@@ -107,15 +108,61 @@ final class ImportSession {
 	/** Table name to device key to server key, built as each table is resolved. */
 	private final Map<String, Map<Long, Long>> maps = new HashMap<>();
 
+	/**
+	 * When the backup was made, or null when it does not say. What the server holds that changed
+	 * after this is newer than the backup, and is kept (R19).
+	 */
+	@Nullable
+	private final java.time.OffsetDateTime asOf;
+
+	/** The tables that carry updated_at, read once from the catalogue. */
+	@Nullable
+	private Set<String> stamped;
+
 	ImportSession(@NonNull Connection device, @NonNull Connection server,
 	              @NonNull ServerIds ids, int sourceNode, @NonNull ImportReport report,
-	              @NonNull Progress progress) {
+	              @NonNull Progress progress, @Nullable java.time.OffsetDateTime asOf) {
 		this.device = device;
 		this.server = server;
 		this.ids = ids;
 		this.sourceNode = sourceNode;
 		this.report = report;
 		this.progress = progress;
+		this.asOf = asOf;
+	}
+
+	/**
+	 * Whether writes to this table are stamped with the backup's date and held back from a row
+	 * the server has changed since: a table with updated_at, from a backup that says when it was
+	 * made.
+	 * <p>
+	 * A backup used to win every time, so one made on Monday and imported on Wednesday put
+	 * Monday's values back over a correction made on the server on Tuesday (R19). Since V66 a row
+	 * says when it last changed, however it was changed, and a backup only writes over a row
+	 * that has not changed since the backup was made. A row this import writes is stamped with
+	 * the backup's date, not the time of the import: that is when its values were true.
+	 */
+	private boolean datedAgainst(@NonNull DeviceTables.Table table) throws SQLException {
+
+		if (asOf == null) {
+			return false;
+		}
+
+		if (stamped == null) {
+			stamped = new HashSet<>();
+
+			try (Statement statement = server.createStatement();
+			     ResultSet results = statement.executeQuery(
+					     "SELECT table_name FROM information_schema.columns "
+							     + "WHERE table_schema = current_schema() "
+							     + "AND column_name = 'updated_at'")) {
+
+				while (results.next()) {
+					stamped.add(results.getString(1));
+				}
+			}
+		}
+		return stamped.contains(table.name());
 	}
 
 	/** Every table, in dependency order. */
@@ -169,6 +216,8 @@ final class ImportSession {
 
 			long deviceId = ((Number) row.get("studentID")).longValue();
 			String email = (String) row.get("email");
+			Long apaarId = row.get("apaarId") instanceof Number number
+					? number.longValue() : null;
 
 			try {
 				Map<String, List<Field>> fields = convertRow(table, row);
@@ -198,6 +247,16 @@ final class ImportSession {
 								+ serverId + "; the backup's address is already in use.");
 					}
 
+					// The same for the APAAR ID, whose index is unique too. It used to fail
+					// the statement, and the statement failing failed the whole import (R19).
+					if (apaarId != null && !apaarIdIsFree(apaarId, serverId)) {
+
+						fields.remove("apaarId");
+						report.skip("students: kept the existing APAAR ID for student "
+								+ serverId + "; the backup's APAAR ID " + apaarId
+								+ " is another student's.");
+					}
+
 					update(table, serverId, fields);
 
 				} else {
@@ -208,6 +267,13 @@ final class ImportSession {
 						fields.remove("email");
 						report.skip("students: added a student without their email; "
 								+ "the address is already in use.");
+					}
+
+					if (apaarId != null && !apaarIdIsFree(apaarId, null)) {
+
+						fields.remove("apaarId");
+						report.skip("students: added a student without their APAAR ID; "
+								+ apaarId + " is another student's.");
 					}
 
 					serverId = insertWithKey(table, deviceId, fields);
@@ -240,7 +306,10 @@ final class ImportSession {
 
 			try (ResultSet results = statement.executeQuery()) {
 				while (results.next()) {
-					rolls.add(new Object[]{results.getString(1), results.getLong(2)});
+					// Canonical, as the server stores it (V57): a backup from before then
+					// holds the roll number as it was typed.
+					rolls.add(new Object[]{CanonicalCode.of(results.getString(1)),
+							results.getLong(2)});
 				}
 			}
 		}
@@ -699,9 +768,27 @@ final class ImportSession {
 				continue;
 			}
 
-			fields.put(column.room(), convert(table, column, row.get(column.room())));
+			fields.put(column.room(), convert(table, column,
+					canonicalIfCode(table, column, row.get(column.room()))));
 		}
 		return fields;
+	}
+
+	/**
+	 * A roll number or a course code in the spelling the server stores (V57), so that the
+	 * natural-key lookup below finds the row a backup from before then spelled differently,
+	 * rather than inserting a second one that the unique index refuses. Every other value is
+	 * passed through.
+	 */
+	@Nullable
+	private static Object canonicalIfCode(@NonNull DeviceTables.Table table,
+	                                      @NonNull DeviceTables.Column column,
+	                                      @Nullable Object raw) {
+
+		boolean code = (table.name().equals("student_year") && column.room().equals("rollNo"))
+				|| (table.name().equals("courses") && column.room().equals("courseCode"));
+
+		return code && raw instanceof String text ? CanonicalCode.of(text) : raw;
 	}
 
 	/**
@@ -777,6 +864,11 @@ final class ImportSession {
 
 		List<Field> flat = flatten(fields);
 
+		if (datedAgainst(table)) {
+			// As of the backup, not as of this import; see datedAgainst.
+			flat.add(new Field("updated_at", asOf, ""));
+		}
+
 		StringBuilder sql = new StringBuilder("INSERT INTO ").append(table.name()).append(" (");
 		StringBuilder values = new StringBuilder(") VALUES (");
 
@@ -806,23 +898,77 @@ final class ImportSession {
 			return;
 		}
 
+		List<Field> key = List.of(new Field(column, serverId, ""));
+		write(table, fields, assignments, key);
+	}
+
+	/**
+	 * The UPDATE both kinds of row share: the assignments, the row the key picks out, and only
+	 * when something differs -- and, for a dated backup, only when the server has not changed the
+	 * row since the backup was made, in which case the server's version is kept and reported.
+	 */
+	private void write(@NonNull DeviceTables.Table table,
+	                   @NonNull Map<String, List<Field>> fields, @NonNull List<Field> assignments,
+	                   @NonNull List<Field> key) throws SQLException {
+
+		boolean dated = datedAgainst(table);
+
 		StringBuilder sql = new StringBuilder("UPDATE ").append(table.name()).append(" SET ");
+		List<Field> bound = new ArrayList<>();
 
 		for (int i = 0; i < assignments.size(); i++) {
 			sql.append(i == 0 ? "" : ", ").append(assignments.get(i).column())
 					.append(" = ").append(assignments.get(i).placeholder());
 		}
-		sql.append(" WHERE ").append(column).append(" = ?");
+		bound.addAll(assignments);
 
-		List<Field> bound = new ArrayList<>(assignments);
-		bound.add(new Field(column, serverId, ""));
+		if (dated) {
+			sql.append(", updated_at = ?");
+			bound.add(new Field("updated_at", asOf, ""));
+		}
+
+		sql.append(" WHERE ").append(keyPredicate(key));
+		bound.addAll(key);
+
+		if (dated) {
+			sql.append(" AND (updated_at IS NULL OR updated_at <= ?)");
+			bound.add(new Field("updated_at", asOf, ""));
+		}
 
 		appendUnchangedGuard(sql, bound, assignments);
 
-		if (run(table, fields, sql.toString(), bound) == 0) {
-			report.unchanged(table.name());
-		} else {
+		if (run(table, fields, sql.toString(), bound) > 0) {
 			report.updated(table.name());
+			return;
+		}
+
+		if (dated && changedSince(table, key)) {
+			report.skip(table.name() + ": kept the server's version of "
+					+ naturalKeyDescription(table, fields) + "; it changed after this backup "
+					+ "was made.");
+			return;
+		}
+
+		report.unchanged(table.name());
+	}
+
+	/** Whether the row the key picks out has changed on the server since the backup was made. */
+	private boolean changedSince(@NonNull DeviceTables.Table table, @NonNull List<Field> key)
+			throws SQLException {
+
+		String sql = "SELECT 1 FROM " + table.name() + " WHERE " + keyPredicate(key)
+				+ " AND updated_at > ?";
+
+		try (PreparedStatement statement = server.prepareStatement(sql)) {
+
+			for (int i = 0; i < key.size(); i++) {
+				statement.setObject(i + 1, key.get(i).value());
+			}
+			statement.setObject(key.size() + 1, asOf);
+
+			try (ResultSet results = statement.executeQuery()) {
+				return results.next();
+			}
 		}
 	}
 
@@ -839,26 +985,7 @@ final class ImportSession {
 			return;
 		}
 
-		StringBuilder sql = new StringBuilder("UPDATE ").append(table.name()).append(" SET ");
-
-		for (int i = 0; i < assignments.size(); i++) {
-			sql.append(i == 0 ? "" : ", ").append(assignments.get(i).column())
-					.append(" = ").append(assignments.get(i).placeholder());
-		}
-
-		List<Field> key = keyFields(table, fields, keyColumns);
-		sql.append(" WHERE ").append(keyPredicate(key));
-
-		List<Field> bound = new ArrayList<>(assignments);
-		bound.addAll(key);
-
-		appendUnchangedGuard(sql, bound, assignments);
-
-		if (run(table, fields, sql.toString(), bound) == 0) {
-			report.unchanged(table.name());
-		} else {
-			report.updated(table.name());
-		}
+		write(table, fields, assignments, keyFields(table, fields, keyColumns));
 	}
 
 	/**
@@ -1066,6 +1193,15 @@ final class ImportSession {
 			}
 		}
 		return flat;
+	}
+
+	/** Whether an APAAR ID can be given to a student without colliding with its unique index. */
+	private boolean apaarIdIsFree(long apaarId, @Nullable Long exceptId) throws SQLException {
+
+		Long holder = queryLong("SELECT student_id FROM students WHERE apaar_id = ? LIMIT 1",
+				apaarId);
+
+		return holder == null || holder.equals(exceptId);
 	}
 
 	/** Whether an address can be given to a row without colliding with its unique index. */

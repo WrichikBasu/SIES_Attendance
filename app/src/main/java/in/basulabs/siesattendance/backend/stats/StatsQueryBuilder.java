@@ -19,7 +19,9 @@ import in.basulabs.siesattendance.backend.CourseType;
 public final class StatsQueryBuilder {
 
 	/**
-	 * Attendance is the grain of the whole report: one row per student per lecture.
+	 * Attendance is the grain of the whole report: one row per student per lecture they have
+	 * a mark for. {@link SqlBits#MARKS} supplies the rows, which are the marks on record and
+	 * nothing derived from batch membership.
 	 * <p>
 	 * The join to {@code academic_years} is the important one. A lecture carries no session
 	 * column, only a timestamp, so the session is decided by matching that timestamp against
@@ -45,7 +47,7 @@ public final class StatsQueryBuilder {
 	 * consistently.
 	 */
 	private static final String FROM_CLAUSE =
-			" FROM attendance a"
+			" FROM " + SqlBits.MARKS + " a"
 					+ " INNER JOIN lectures l ON l.lectureID = a.lectureID"
 					+ " INNER JOIN courses c ON c.courseID = l.courseID"
 					+ " INNER JOIN students s ON s.studentID = a.studentID"
@@ -185,8 +187,13 @@ public final class StatsQueryBuilder {
 			args.add(filter.batchID);
 		}
 
+		// Every course the professor teaches, not only the ones they coordinate (R37). The
+		// coordinator is named as well as looked up, so a course whose coordinator row in
+		// course_instructor is missing is still theirs.
 		if (filter.professorID != null) {
-			where.append(" AND c.profID = ?");
+			where.append(" AND (c.profID = ? OR EXISTS (SELECT 1 FROM course_instructor ci")
+					.append("   WHERE ci.courseID = c.courseID AND ci.profID = ?))");
+			args.add(filter.professorID);
 			args.add(filter.professorID);
 		}
 
@@ -270,6 +277,19 @@ public final class StatsQueryBuilder {
 	 * than a value; they need none anyway, since their label <em>is</em> the group key and
 	 * cannot repeat.
 	 */
+	/**
+	 * What "oldest first" sorts on: the week's day from Monday for the weekday grouping, whose
+	 * groups are not points in time, and the group's earliest lecture for every other.
+	 * {@code PgStatsQueryBuilder} sorts the same way.
+	 */
+	@NonNull
+	private static String oldest(@NonNull StatsFilter filter,
+	                             @NonNull SqliteStatsDialect.Fragments group) {
+		return filter.groupBy == StatsGroupBy.WEEKDAY
+				? "((" + group.idExpr + ") + 6) % 7"
+				: "MIN(" + SqlBits.EPOCH_START + ")";
+	}
+
 	@NonNull
 	private static String orderByClause(@NonNull StatsFilter filter,
 	                                    @NonNull SqliteStatsDialect.Fragments group) {
@@ -285,8 +305,11 @@ public final class StatsQueryBuilder {
 			case LABEL_ASC -> "primaryLabel ASC" + tiebreak;
 			case TOTAL_DESC -> "COUNT(*) DESC, primaryLabel ASC" + tiebreak;
 			case CHRONOLOGICAL ->
-				// Time-based groupings read wrong worst-first; they want oldest to newest.
-					"primaryLabel ASC" + tiebreak;
+				// Oldest first means by time, not by label (R11). The label of a lecture is
+				// "CS202 · 12 07 2025", which sorted by course and then by day of the month;
+				// weekday names sorted alphabetically. So each group is placed by its earliest
+				// lecture, and the weekdays run Monday to Sunday.
+					oldest(filter, group) + " ASC, primaryLabel ASC" + tiebreak;
 			default -> percent + " ASC, primaryLabel ASC" + tiebreak;
 		};
 	}

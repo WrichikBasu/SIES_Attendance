@@ -27,6 +27,7 @@ import in.basulabs.siesattendance.backend.pojo.ClassKey;
 import in.basulabs.siesattendance.backend.pojo.CourseAttendanceStat;
 import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
+import in.basulabs.siesattendance.backend.pojo.LectureMark;
 import in.basulabs.siesattendance.backend.pojo.SessionImpact;
 import in.basulabs.siesattendance.backend.pojo.StatRow;
 import in.basulabs.siesattendance.backend.pojo.StatsSummary;
@@ -82,6 +83,12 @@ public interface AttendanceRepository {
 	@NonNull
 	List<EntityAcademicYear> academicYearsSync();
 
+	/**
+	 * Removes a session with nothing filed under it.
+	 *
+	 * @throws IllegalStateException when students, batches or lectures are still filed under
+	 *                               it, saying so
+	 */
 	void deleteAcademicYear(@NonNull EntityAcademicYear year);
 
 	@Nullable
@@ -129,8 +136,6 @@ public interface AttendanceRepository {
 	@NonNull
 	List<EntityCourse> coursesSync();
 
-	long insertCourse(@NonNull EntityCourse course);
-
 	@NonNull
 	LiveData<Integer> observeCourseCount();
 
@@ -139,9 +144,15 @@ public interface AttendanceRepository {
 
 	void setCourseDiscontinued(long courseID, ZonedDateTime discontinuedOn);
 
-	void setCourseInstructors(long courseID, @NonNull List<Long> profIDs);
-
-	void updateCourse(@NonNull EntityCourse course);
+	/**
+	 * Saves a course from the course form, with its instructors and, unless null, its batch
+	 * links, in one transaction. An edit keeps the stored introduced and discontinued dates,
+	 * which the form does not show.
+	 *
+	 * @param creating whether this is a new course rather than an edit
+	 */
+	void saveCourse(@NonNull EntityCourse course, boolean creating,
+	                @NonNull List<Long> profIDs, @Nullable List<Long> batchIDs);
 
 
 	// ── Batches ──────────────────────────────────────────────────────────
@@ -251,6 +262,16 @@ public interface AttendanceRepository {
 	@NonNull
 	List<StudentWithYear> rollForBatchSync(long batchID, int academicYear);
 
+	/**
+	 * A roll as it stood on one day: who had joined by then and not yet left. What a register
+	 * for that day is measured against (R16).
+	 *
+	 * @param batchID the batch, or null for the course's whole roll
+	 */
+	@NonNull
+	List<StudentWithYear> rollOnSync(long courseID, @Nullable Long batchID, int academicYear,
+	                                 @NonNull java.time.LocalDate day);
+
 	@NonNull
 	List<StudentWithYear> rollForCourseSync(long courseID, int academicYear);
 
@@ -272,6 +293,19 @@ public interface AttendanceRepository {
 	                           @Nullable java.time.LocalDate joinDate,
 	                           @Nullable java.time.LocalDate leaveDate);
 
+	/**
+	 * Adds a student entered by hand. Unlike {@link #upsertStudentWithYear}, a student already
+	 * on record under the same roll number this session, APAAR ID or email is refused rather
+	 * than updated.
+	 *
+	 * @throws in.basulabs.siesattendance.backend.StudentAlreadyExists naming who is there
+	 */
+	long addStudentWithYear(@NonNull EntityStudent student, int academicYear, String rollNo,
+	                        Year year, Stream stream, Department majorDept, Department minorDept,
+	                        Department oeDept, Integer semester, Division division,
+	                        @Nullable java.time.LocalDate joinDate,
+	                        @Nullable java.time.LocalDate leaveDate);
+
 	void withdrawFromSession(long studentID, int academicYear);
 
 	@NonNull
@@ -282,6 +316,10 @@ public interface AttendanceRepository {
 	void deleteLectureCascade(@NonNull EntityLecture lecture);
 
 	@Nullable
+	/**
+	 * The lecture of that course and batch starting at that moment, or null. The end is not
+	 * part of the slot (R15); it is taken so callers need not say which of the two they mean.
+	 */
 	Long findLecture(long courseID, Long batchID, ZonedDateTime start, ZonedDateTime end);
 
 	long insertLecture(@NonNull EntityLecture lecture);
@@ -307,8 +345,14 @@ public interface AttendanceRepository {
 	@NonNull
 	LiveData<List<LectureDetails>> observeLecturesBetween(long fromEpoch, long toEpoch);
 
+	/**
+	 * Changes a lecture's course, batch, times or notes and, unless {@code keep} is null, drops
+	 * the marks of every student not in it, in one transaction.
+	 *
+	 * @param keep the students whose marks stay, or null to drop none; empty drops every mark
+	 */
 	void updateLecture(long lectureID, long courseID, Long batchID, ZonedDateTime start,
-	                   ZonedDateTime end, String notes);
+	                   ZonedDateTime end, String notes, @Nullable List<Long> keep);
 
 
 	// ── Attendance ───────────────────────────────────────────────────────
@@ -326,11 +370,18 @@ public interface AttendanceRepository {
 	@NonNull
 	List<Long> markedStudentIdsSync(long lectureID);
 
+	/**
+	 * Every mark stored for a lecture, whoever holds it, named and with the roll number of the
+	 * given session. For reopening a register; see {@code RegisterSheet}.
+	 */
+	@NonNull
+	List<LectureMark> sheetMarksSync(long lectureID, int academicYear);
+
 	@NonNull
 	LiveData<List<CourseAttendanceStat>> observeCourseStats();
 
 	@NonNull
-	LiveData<Double> observeOverallPercentage();
+	LiveData<Double> observeOverallPercentage(int academicYear);
 
 	/** Per-student attendance for a session, for the report. Switch-mapped; see above. */
 	@NonNull
@@ -348,6 +399,13 @@ public interface AttendanceRepository {
 
 	@NonNull
 	StatsSummary statsSummarySync(@NonNull SupportSQLiteQuery query);
+
+	/**
+	 * Changes whenever anything the report reads is written. Carries no rows; observe it to
+	 * know when to run the report again.
+	 */
+	@NonNull
+	LiveData<List<Integer>> observeReportInputs();
 
 	// ── Sync, as far as a screen needs to know ──────────────────────
 
@@ -381,8 +439,8 @@ public interface AttendanceRepository {
 	 * <p>
 	 * One unit because a lecture with no sheet shows up as permanently unmarked, and a sheet
 	 * with no lecture cannot be shown at all. Re-recording the same course, batch and time span
-	 * replaces the earlier sheet rather than failing on the unique index, which is what somebody
-	 * correcting a mistake expects.
+	 * corrects the earlier register rather than failing on the unique index: each mark on the
+	 * sheet replaces that student's, and the marks of anyone not on the sheet are kept.
 	 * <p>
 	 * This and {@link #duplicateLecture} are the only methods here that are not a single DAO
 	 * call, and that is why they are on this interface rather than assembled by the caller: a
@@ -390,7 +448,7 @@ public interface AttendanceRepository {
 	 * two calls is a caller that can send half of one.
 	 *
 	 * @param marks the sheet as the screen holds it; only the student and the presence are read
-	 * @return the lecture's id, whether it was created or replaced
+	 * @return the lecture's id, whether it was created or corrected
 	 */
 	long recordLectureWithMarks(long courseID, @Nullable Long batchID,
 	                            @NonNull ZonedDateTime start, @NonNull ZonedDateTime end,

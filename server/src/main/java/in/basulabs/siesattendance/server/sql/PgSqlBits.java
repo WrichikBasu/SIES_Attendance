@@ -56,15 +56,28 @@ public final class PgSqlBits {
 	public static final String LECTURE_LOCAL_TIMESTAMP = "(l.start_at AT TIME ZONE l.start_zone)";
 
 	/**
-	 * Whether a lecture counts for the enrolment {@code y}: on or after the day the student
-	 * joined, or any lecture when no join date is recorded. The app's
-	 * {@code SqlBits.COUNTS_FOR_ENROLMENT} is the same rule.
+	 * Whether a lecture counts for the enrolment {@code y}: between the day the student joined
+	 * and the day they left, both included, with a missing date leaving that end open (R10).
+	 * The app's {@code SqlBits.COUNTS_FOR_ENROLMENT} is the same rule.
 	 */
 	public static final String COUNTS_FOR_ENROLMENT =
-			"(y.join_date IS NULL OR " + LECTURE_LOCAL_DATE + " >= y.join_date)";
+			"((y.join_date IS NULL OR " + LECTURE_LOCAL_DATE + " >= y.join_date)"
+					+ " AND (y.leave_date IS NULL OR " + LECTURE_LOCAL_DATE + " <= y.leave_date))";
 
 	/** Pinned collation for every ordering that compares text. See the class comment. */
 	public static final String BYTE_ORDER = "COLLATE \"C\"";
+
+	/**
+	 * The marks on record, as {@code (lecture_id, student_id, present)}: what every report
+	 * counts.
+	 * <p>
+	 * Attendance is computed from the marks alone, never from batch membership, which is only
+	 * what is true today. The app's {@code SqlBits.MARKS} is the same rule and says why.
+	 * <p>
+	 * A parenthesised subquery, to be given an alias by the query using it.
+	 */
+	public static final String MARKS =
+			"(SELECT m.lecture_id, m.student_id, m.present FROM attendance m)";
 
 	private PgSqlBits() {
 	}

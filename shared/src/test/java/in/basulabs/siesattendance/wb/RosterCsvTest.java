@@ -277,7 +277,7 @@ public class RosterCsvTest {
 		RosterCsv.Reading reading = read(HEADER + ",apaarId,joinDate,leaveDate\n"
 				+ "2024CS032,Aarav,he/him,,SY,BSc,COMPUTER_SCIENCE,,,3,,12AB,,\n"
 				+ "2024CS033,Sneha,she/her,,SY,BSc,COMPUTER_SCIENCE,,,3,,,2025-03-01,2025-01-01\n"
-				+ "2024CS034,Rahul,he/him,,SY,BSc,COMPUTER_SCIENCE,,,3,,987654321,,\n");
+				+ "2024CS034,Rahul,he/him,,SY,BSc,COMPUTER_SCIENCE,,,3,,987654321012,,\n");
 
 		assertEquals(1, reading.rows().size());
 		assertEquals(2, reading.errors().size());

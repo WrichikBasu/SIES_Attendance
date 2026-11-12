@@ -11,12 +11,14 @@ import org.springframework.web.bind.annotation.RestController;
 import java.io.IOException;
 import java.io.StringReader;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 
 import in.basulabs.siesattendance.backend.AuditAction;
+import in.basulabs.siesattendance.backend.SessionYears;
 import in.basulabs.siesattendance.backend.util.RosterCsv;
 import in.basulabs.siesattendance.server.importer.RosterImporter;
 import in.basulabs.siesattendance.server.security.AuditLog;
@@ -103,6 +105,14 @@ public final class RosterController {
 								+ "and administrators.");
 			}
 
+			// Said once, before any row: without it every row fails on its own, on the
+			// student_year foreign key, and four hundred lines say the same thing.
+			if (!sessionExists(connection, academicYear)) {
+				throw new ApiException(400, "no_such_session", "The session "
+						+ SessionYears.labelFor(academicYear) + " is not set up on the server. "
+						+ "An administrator sets a session up before its roster can be loaded.");
+			}
+
 			RosterImporter.Result result;
 
 			try {
@@ -128,6 +138,20 @@ public final class RosterController {
 			return new RosterResponse(academicYear, result.created(), result.updated(),
 					result.failed(), result.errors());
 		});
+	}
+
+	private static boolean sessionExists(@NonNull Connection connection, int academicYear)
+			throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement(
+				"SELECT 1 FROM academic_years WHERE academic_year = ?")) {
+
+			statement.setInt(1, academicYear);
+
+			try (ResultSet results = statement.executeQuery()) {
+				return results.next();
+			}
+		}
 	}
 
 	/** V27: the office, an administrator, a head or a professor. Each row is still checked. */

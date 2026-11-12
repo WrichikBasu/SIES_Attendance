@@ -24,6 +24,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -729,7 +730,7 @@ class WireTest {
 				tokenFor("office@sies.edu.in", "STAFF"), null).status());
 
 		assertEquals(0, count("SELECT count(*) FROM audit_log WHERE action = 'EXPORT' "
-				+ "AND detail::text LIKE '%CS-FY-001%'"),
+				+ "AND detail::text LIKE '%CSFY001%'"),
 				"an audit log holding a copy of every export would be the most valuable thing "
 						+ "in the database to steal");
 	}
@@ -887,11 +888,95 @@ class WireTest {
 
 		assertEquals(200, refused.status(), refused::toString);
 		assertFalse(refused.body().get("canImport").booleanValue());
-		assertTrue(refused.raw().contains("No course you can see has the code CS-101"),
+		assertTrue(refused.raw().contains("No course you can see has the code CS101"),
 				refused.raw());
 
 		assertEquals(400, postCsv("/attendance/import?dryRun=false", sheet,
 				tokenFor("b.chem@sies.edu.in", "STAFF")).status());
+	}
+
+	@Test
+	void importingASheetAgainCorrectsTheLectureAndKeepsTheMarksItDoesNotMention()
+			throws Exception {
+
+		// Three more in FY CS, so there is somebody to correct, somebody whose cell is
+		// emptied, and somebody the sheet never lists.
+		postgres.asSuperuser("""
+				INSERT INTO students (student_id, name, pronouns, email) VALUES
+				    (2003, 'T THREE', 'they/them', NULL),
+				    (2004, 'F FOUR',  'they/them', NULL),
+				    (2005, 'F FIVE',  'they/them', NULL);
+				INSERT INTO student_year
+				    (student_id, academic_year, roll_no, year, stream, major_dept, semester) VALUES
+				    (2003, 2025, 'CS-FY-003', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 1),
+				    (2004, 2025, 'CS-FY-004', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 1),
+				    (2005, 2025, 'CS-FY-005', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 1);
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year) VALUES
+				    (5901, 2003, 2025), (5901, 2004, 2025), (5901, 2005, 2025);
+				""");
+
+		String professor = tokenFor("a.cs@sies.edu.in", "STAFF");
+
+		Reply first = postCsv("/attendance/import?dryRun=false", """
+				Course code,CS-101
+				Date,22/07/2025
+				Start time,09:00
+				End time,10:00
+				CS-FY-001,P
+				CS-FY-003,P
+				CS-FY-004,AB
+				""", professor);
+
+		assertEquals(200, first.status(), first::toString);
+		assertEquals(1, first.body().get("written").get("created").intValue());
+
+		String theLecture = "(SELECT lecture_id FROM lectures WHERE course_id = 3001 "
+				+ "AND (start_at AT TIME ZONE 'Asia/Kolkata')::date = '2025-07-22')";
+
+		// Somebody marks the fourth student on the register afterwards. The sheet never
+		// lists them, so nothing it says is about them.
+		postgres.asSuperuser("INSERT INTO attendance (lecture_id, student_id, present) "
+				+ "VALUES (" + theLecture + ", 2005, true)");
+
+		String corrected = """
+				Course code,CS-101
+				Date,22/07/2025
+				Start time,09:00
+				End time,10:00
+				CS-FY-001,AB
+				CS-FY-003,
+				CS-FY-004,AB
+				""";
+
+		Reply second = postCsv("/attendance/import?dryRun=false", corrected, professor);
+
+		assertEquals(200, second.status(), second::toString);
+		assertEquals(0, second.body().get("written").get("created").intValue());
+		assertEquals(1, second.body().get("written").get("replaced").intValue());
+
+		assertEquals(1, count("SELECT count(*) FROM attendance WHERE lecture_id = " + theLecture
+				+ " AND student_id = 2001 AND NOT present"), "a P changed to AB is corrected");
+		assertEquals(1, count("SELECT count(*) FROM attendance WHERE lecture_id = " + theLecture
+				+ " AND student_id = 2003 AND present"),
+				"an emptied cell leaves the mark as it was");
+		assertEquals(1, count("SELECT count(*) FROM attendance WHERE lecture_id = " + theLecture
+				+ " AND student_id = 2004 AND NOT present"));
+		assertEquals(1, count("SELECT count(*) FROM attendance WHERE lecture_id = " + theLecture
+				+ " AND student_id = 2005 AND present"),
+				"a mark the sheet does not mention is still there");
+
+		// The same sheet a third time changes no mark, and so records none: only the entry
+		// that says a sheet was imported.
+		String markChanges = "SELECT count(*) FROM audit_log WHERE table_name = 'attendance' "
+				+ "AND action <> 'CSV_IMPORT'";
+		long audited = count(markChanges);
+
+		assertEquals(200, postCsv("/attendance/import?dryRun=false", corrected, professor)
+				.status());
+		assertEquals(audited, count(markChanges),
+				"importing an unchanged sheet again writes no marks");
+		assertEquals(4, count("SELECT count(*) FROM attendance WHERE lecture_id = "
+				+ theLecture));
 	}
 
 	@Test
@@ -910,7 +995,7 @@ class WireTest {
 		assertEquals(0, reply.body().get("failed").intValue(), reply::toString);
 
 		assertEquals(1, count("SELECT count(*) FROM student_year "
-				+ "WHERE roll_no = 'CS-FY-010' AND academic_year = " + SESSION));
+				+ "WHERE roll_no = 'CSFY010' AND academic_year = " + SESSION));
 		assertEquals(1, count("SELECT count(*) FROM students WHERE name = 'R RAO RENAMED'"));
 
 		// A new student gets a key under the server's node, so a student the office typed in
@@ -918,7 +1003,7 @@ class WireTest {
 		assertEquals(StructuredId.SERVER_NODE, count("SELECT s.student_id & "
 				+ StructuredId.MAX_NODE_ID + " FROM students s "
 				+ "JOIN student_year y ON y.student_id = s.student_id "
-				+ "WHERE y.roll_no = 'CS-FY-010'"));
+				+ "WHERE y.roll_no = 'CSFY010'"));
 
 		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'CSV_IMPORT' "
 				+ "AND (detail ->> 'created')::int = 1 AND (detail ->> 'updated')::int = 1 "
@@ -940,7 +1025,7 @@ class WireTest {
 		assertEquals(1, refused.body().get("failed").intValue());
 
 		assertEquals(0, count("SELECT count(*) FROM student_year "
-				+ "WHERE roll_no = 'CS-FY-010'"), "and nothing was written");
+				+ "WHERE roll_no = 'CSFY010'"), "and nothing was written");
 
 		// A student account never may, CR or not.
 		Reply student = postCsv("/roster?year=" + SESSION, """
@@ -975,7 +1060,7 @@ class WireTest {
 				reply.body().get("errors").toString());
 
 		assertEquals(1, count("SELECT count(*) FROM student_year "
-				+ "WHERE roll_no = 'CS-FY-010' AND academic_year = " + SESSION),
+				+ "WHERE roll_no = 'CSFY010' AND academic_year = " + SESSION),
 				"the good row still landed");
 	}
 
@@ -996,27 +1081,34 @@ class WireTest {
 		assertEquals(1, reply.body().get("failed").intValue(), reply::toString);
 
 		assertEquals(1, count("SELECT count(*) FROM student_year "
-				+ "WHERE roll_no = 'CS-FY-010' AND academic_year = " + SESSION));
+				+ "WHERE roll_no = 'CSFY010' AND academic_year = " + SESSION));
 		assertEquals(1, count("SELECT count(*) FROM students "
 				+ "WHERE email = 'r.rao@sies.edu.in' AND name = 'R RAO'"),
 				"the refused row must have changed nothing at all");
 	}
 
+	/**
+	 * Refused once, before any row. It used to fail every row on its own, each with the
+	 * student_year foreign key's wording; the savepoint that rolled each one back is still
+	 * tested, by the rows the unique indexes refuse.
+	 */
 	@Test
-	void aRosterForASessionThatDoesNotExistFailsEveryRowAndWritesNothing() throws Exception {
+	void aRosterForASessionThatDoesNotExistIsRefusedWholeAndWritesNothing() throws Exception {
 
 		Reply reply = postCsv("/roster?year=2099", """
 				rollNo,name,year,stream,majorDept
 				CS-FY-010,Good Row,FY,BSc_unaided,COMPUTER_SCIENCE
+				CS-FY-011,Other Row,FY,BSc_unaided,COMPUTER_SCIENCE
 				""", tokenFor("office@sies.edu.in", "STAFF"));
 
-		assertEquals(200, reply.status(), reply::toString);
-		assertEquals(0, reply.body().get("created").intValue());
-		assertEquals(1, reply.body().get("failed").intValue());
-
-		// The students row is inserted before the student_year row that fails, so this is the
-		// savepoint being rolled back rather than the row never having been attempted.
-		assertEquals(0, count("SELECT count(*) FROM students WHERE name = 'Good Row'"));
+		assertEquals(400, reply.status(), reply::toString);
+		assertEquals("no_such_session", reply.body().get("code").stringValue());
+		assertEquals("The session 2099-00 is not set up on the server. An administrator sets "
+				+ "a session up before its roster can be loaded.",
+				reply.body().get("message").stringValue());
+		assertEquals(0, count("SELECT count(*) FROM students WHERE name LIKE '% Row'"));
+		assertEquals(0, count("SELECT count(*) FROM audit_log WHERE action = 'CSV_IMPORT'"),
+				"nothing was imported, so nothing says it was");
 	}
 
 	@Test
@@ -1712,7 +1804,7 @@ class WireTest {
 
 		assertEquals(200, students.status(), students::toString);
 		assertEquals(2, students.body().size(), students::toString);
-		assertTrue(students.raw().contains("CS-FY-001"),
+		assertTrue(students.raw().contains("CSFY001"),
 				"the roll number is how a person is told from another of the same name");
 
 		assertEquals(400, get("/accounts/people?kind=STAFF", token, null).status(),
@@ -2020,7 +2112,7 @@ class WireTest {
 
 		assertEquals(200, reply.status(), reply::toString);
 		assertEquals("STUDENT", reply.body().get("kind").stringValue());
-		assertEquals("CS-101",
+		assertEquals("CS101",
 				reply.body().get("represents").get(0).get("courseCode").stringValue());
 		assertFalse(reply.body().get("mayManageAccounts").booleanValue());
 	}
@@ -2081,7 +2173,7 @@ class WireTest {
 			String summary = entry.get("summary").stringValue();
 			assertFalse(summary.isBlank(), "an entry with no sentence: " + entry);
 
-			sawTheMark |= summary.startsWith("Marked R RAO ") && summary.contains(" in CS-101 on ");
+			sawTheMark |= summary.startsWith("Marked R RAO ") && summary.contains(" in CS101 on ");
 		}
 
 		assertTrue(sawTheMark, "the fixture's mark, by name: " + mine.raw());
@@ -2099,7 +2191,7 @@ class WireTest {
 		// C HEAD teaches nothing in the fixture, so everything they can read here they can
 		// read as the head of Computer Science: the CS lecture and its marks.
 		assertTrue(theirs.body().get("entries").size() > 0, theirs::toString);
-		assertFalse(theirs.raw().contains("\"CH-101\""),
+		assertFalse(theirs.raw().contains("\"CH101\""),
 				"the head of Computer Science does not read Chemistry's");
 	}
 
@@ -2264,7 +2356,7 @@ class WireTest {
 				"reason", "class representative"), admin, null);
 
 		assertEquals(200, appointed.status(), appointed::toString);
-		assertEquals("CH-101", appointed.body().get("courseCode").stringValue());
+		assertEquals("CH101", appointed.body().get("courseCode").stringValue());
 		assertEquals("ADMIN", appointed.body().get("grantedAs").stringValue(),
 				"stamped with the capacity it was made in, not recomputed later");
 
@@ -2338,7 +2430,7 @@ class WireTest {
 
 		assertEquals(200, roll.status(), roll::toString);
 		assertEquals(1, roll.body().size(), "the one Computer Science student");
-		assertEquals("CS-FY-001", roll.body().get(0).get("rollNo").stringValue());
+		assertEquals("CSFY001", roll.body().get(0).get("rollNo").stringValue());
 		assertTrue(roll.body().get(0).get("hasAccount").booleanValue(),
 				"and the form says whether an appointment would be usable");
 		assertTrue(roll.body().get(0).get("represents").booleanValue(),
@@ -2387,7 +2479,7 @@ class WireTest {
 		List<SyncJson.OnTheRoll> roll = SyncJson.parseRoll(get("/courses/" + COURSE_CS
 				+ "/roll?academicYear=" + SESSION, instructor, null).raw());
 
-		assertEquals(List.of(new SyncJson.OnTheRoll(STUDENT_CR, "R RAO", "CS-FY-001", true,
+		assertEquals(List.of(new SyncJson.OnTheRoll(STUDENT_CR, "R RAO", "CSFY001", true,
 				true)), roll);
 	}
 
@@ -2555,20 +2647,20 @@ class WireTest {
 
 		assertEquals(200, all.status(), all::toString);
 		assertEquals(2, all.body().size(), "both courses, for an administrator");
-		assertTrue(all.raw().contains("CS-101"), all.raw());
+		assertTrue(all.raw().contains("CS101"), all.raw());
 		assertTrue(all.raw().contains("\"value\":\"" + COURSE_CS + "\""), all.raw());
 
 		// A professor sees the one they teach, because this reads under their own actor.
 		Reply mine = get("/accounts/courses", tokenFor("b.chem@sies.edu.in", "STAFF"), null);
 
 		assertEquals(1, mine.body().size(), mine::toString);
-		assertTrue(mine.raw().contains("CH-101"), mine.raw());
+		assertTrue(mine.raw().contains("CH101"), mine.raw());
 
 		// The head, their department's.
 		Reply heads = get("/accounts/courses", tokenFor("c.head@sies.edu.in", "STAFF"), null);
 
 		assertEquals(1, heads.body().size(), heads::toString);
-		assertTrue(heads.raw().contains("CS-101"), heads.raw());
+		assertTrue(heads.raw().contains("CS101"), heads.raw());
 
 		// And the office none: it reads every course and appoints for none, and a course
 		// offered here is a roll that refuses it.
@@ -2996,7 +3088,169 @@ class WireTest {
 		assertEquals("unauthenticated", refused.body().get("code").stringValue());
 	}
 
+	@Test
+	void aPathSpelledToLookLikeSomethingElseIsStillAnApiCall() throws Exception {
+
+		// The filter used to decide what was an API call by reading getRequestURI() -- the URI
+		// as written -- and letting anything that did not begin with /api/v1 through. The
+		// container matches a filter, and Spring matches a handler, on the decoded path, so
+		// one %61 was enough to walk past the token check and still reach the controller.
+		Reply refused = raw("GET", "/%61pi/v1/import/formats", null);
+
+		assertEquals(401, refused.status(), refused::toString);
+		assertEquals("unauthenticated", refused.body().get("code").stringValue());
+
+		// Whose 401 it is, asserted on the words, because the two are what tell them apart and
+		// only one of them is a gate. RequestActor.of answers "carried no verified session"
+		// from inside a controller the request should never have reached; this has to be the
+		// filter turning it away at the door.
+		assertTrue(refused.body().get("message").stringValue().contains("needs a bearer token"),
+				"the filter must be the one refusing this, not a controller: " + refused);
+
+		// And the same path with a token answers, which is what makes the line above mean
+		// something: the encoded spelling really does reach the controller, so the 401 is the
+		// filter refusing it rather than the route not existing.
+		Reply allowed = raw("GET", "/%61pi/v1/import/formats",
+				tokenFor("admin@sies.edu.in", "STAFF"));
+
+		assertEquals(200, allowed.status(), allowed::toString);
+	}
+
+	@Test
+	void anEncodedLoginPathIsNotTheLoginPath() throws Exception {
+
+		// The open path is matched exactly, so a spelling of it that is not it needs a token
+		// like everything else. What that costs is a 401 on a request no client makes.
+		Reply refused = raw("POST", "/%61pi/v1/auth/login", null);
+
+		assertEquals(401, refused.status(), refused::toString);
+		assertTrue(refused.body().get("message").stringValue().contains("needs a bearer token"),
+				refused::toString);
+	}
+
+	@Test
+	void anythingUnderTheApiNeedsATokenEvenWhenItIsNotAnEndpoint() throws Exception {
+
+		// Deny by default, and this is the shape that shows it: /api/v2 is inside the filter's
+		// registration and outside the version it used to test for, so the old filter let it
+		// through to a 404 and this one refuses it without having to know what it is.
+		Reply refused = raw("GET", "/api/v2/me", null);
+
+		assertEquals(401, refused.status(), refused::toString);
+		assertTrue(refused.body().get("message").stringValue().contains("needs a bearer token"),
+				refused::toString);
+
+		// With a session it is an honest 404, which is also the only way to tell them apart.
+		assertEquals(404, raw("GET", "/api/v2/me",
+				tokenFor("admin@sies.edu.in", "STAFF")).status());
+	}
+
+	@Test
+	void theCsvFormatsNeedASessionLikeEverythingElse() throws Exception {
+
+		assertEquals(401, get("/import/formats", null, null).status(),
+				"the one endpoint that used to answer with no actor at all");
+		assertEquals(200, get("/import/formats", tokenFor("admin@sies.edu.in", "STAFF"), null)
+				.status());
+	}
+
 	// ── The shape of the thing ───────────────────────────────────────────
+
+	@Test
+	void aRefusalTheFrameworkMakesIsStillTheOneShape() throws Exception {
+
+		// A wrong method and a body in a type nothing reads are both refused before any
+		// handler is chosen, so ApiAdvice never sees them. They used to leave as Spring Boot's
+		// own error body -- timestamp, status, error, path -- which has no "code" in it, so a
+		// client that branches on the code found none exactly when something was wrong.
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply wrongMethod = raw("POST", Api.V1 + "/me", token);
+
+		assertEquals(405, wrongMethod.status(), wrongMethod::toString);
+		assertEquals("method_not_allowed", wrongMethod.body().get("code").stringValue(),
+				wrongMethod::toString);
+		assertFalse(wrongMethod.raw().contains("timestamp"),
+				"and nothing of the framework's shape left in it: " + wrongMethod);
+
+		// The header that says what it does answer is the framework's, set with the status and
+		// before the body is asked for. Replacing the body must not have cost it.
+		assertTrue(wrongMethod.header("Allow").contains("GET"),
+				"a 405 has to say what the address does take: " + wrongMethod.headers());
+
+		Reply wrongType = postCsv("/auth/login", "not json", null);
+
+		assertEquals(415, wrongType.status(), wrongType::toString);
+		assertEquals("unsupported_media_type", wrongType.body().get("code").stringValue(),
+				wrongType::toString);
+		assertFalse(wrongType.header("Accept").isEmpty(),
+				"and still says what it would have taken: " + wrongType.headers());
+	}
+
+	@Test
+	void anAddressWithNothingAtItAnswersAClientInJsonAndAPersonInAPage() throws Exception {
+
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		Reply asked = raw("GET", Api.V1 + "/nothing/here", token, "application/json");
+
+		assertEquals(404, asked.status(), asked::toString);
+		assertEquals("not_found", asked.body().get("code").stringValue(), asked::toString);
+		assertFalse(asked.raw().contains("/nothing/here"),
+				"the path came with the request; an error body that quotes it back is the "
+						+ "shape that ends up reflecting a URL into a page: " + asked);
+
+		// The page for a browser is error/404.html, and it is found by its name and the status
+		// rather than by the attributes above, which is why replacing those leaves it standing.
+		Reply browsed = raw("GET", "/nothing/here", null, "text/html");
+
+		assertEquals(404, browsed.status(), browsed::toString);
+		assertTrue(browsed.raw().contains("<!doctype html"),
+				"a person typing an address gets the page, not JSON: " + browsed);
+	}
+
+	@Test
+	void everyAnswerSaysWhatMayLoadAndNotToSniffIt() throws Exception {
+
+		// Set on the way in, by a filter ahead of every other, so that a refusal written by a
+		// filter and a page served from static/ carry them as much as a controller's answer.
+		for (Reply reply : List.of(get("/me", tokenFor("admin@sies.edu.in", "STAFF"), null),
+				get("/sync/pull", null, null),
+				raw("GET", "/console.html", null, "text/html"))) {
+
+			assertEquals("nosniff", reply.header("X-Content-Type-Options"), reply::toString);
+			assertEquals("no-referrer", reply.header("Referrer-Policy"), reply::toString);
+
+			String policy = reply.header("Content-Security-Policy");
+
+			assertTrue(policy.contains("default-src 'none'"), policy);
+			assertTrue(policy.contains("connect-src 'self'"),
+					"the console talks to this origin and nowhere else: " + policy);
+			assertTrue(policy.contains("frame-ancestors 'none'"), policy);
+		}
+	}
+
+	@Test
+	void anApiAnswerIsNotStoredAndTheConsoleIsOnlyRevalidated() throws Exception {
+
+		// Two different policies on purpose. Under /api/v1 every answer is somebody's
+		// attendance, roll or account, answered for one session's token, so no copy of it is
+		// kept anywhere. The console is a page that changes while somebody is using it, so the
+		// browser may keep it and has to ask whether it is still current -- which is what
+		// application.yml sets, and what this would catch no-store trampling.
+		String token = tokenFor("admin@sies.edu.in", "STAFF");
+
+		assertEquals("no-store", get("/me", token, null).header("Cache-Control"));
+		assertEquals("no-store", get("/data/students", token, null).header("Cache-Control"));
+		assertEquals("no-store", get("/sync/pull", null, null).header("Cache-Control"),
+				"a refusal says as much about who asked as an answer does");
+
+		String page = raw("GET", "/console.html", null, "text/html").header("Cache-Control");
+
+		assertTrue(page.contains("no-cache"), page);
+		assertFalse(page.contains("no-store"),
+				"the page may be kept, it just has to be revalidated: " + page);
+	}
 
 	@Test
 	void theHealthProbeNeedsNoToken() throws Exception {
@@ -3111,7 +3365,12 @@ class WireTest {
 	// ── HTTP ─────────────────────────────────────────────────────────────
 
 	/** A response, with its body already parsed, because every endpoint here answers in JSON. */
-	private record Reply(int status, JsonNode body, String raw) {
+	private record Reply(int status, JsonNode body, String raw, HttpHeaders headers) {
+
+		/** One header's value, or "" — so an assertion on a header nobody set reads as absent. */
+		String header(String name) {
+			return headers.firstValue(name).orElse("");
+		}
 
 		@Override
 		public String toString() {
@@ -3196,6 +3455,41 @@ class WireTest {
 		return send(request, token, install);
 	}
 
+	/**
+	 * A request to a path exactly as written, under no helper's idea of where the API lives.
+	 * <p>
+	 * {@link #get} and {@link #post} put {@link Api#V1} in front of what they are given, which
+	 * is right for every test but the ones about the filter: those are about what happens when
+	 * the path is <em>not</em> spelled the way this service expects, so they have to be able to
+	 * write it themselves. {@code URI.create} keeps the escapes it is given, and the HTTP
+	 * client sends the raw path, so {@code %61} arrives as {@code %61}.
+	 */
+	private Reply raw(String method, String rawPath, String token) throws Exception {
+		return raw(method, rawPath, token, null);
+	}
+
+	/**
+	 * The same, saying what the caller will accept.
+	 * <p>
+	 * Needed by the tests about an address with nothing at it, which is the one refusal that
+	 * answers two ways: a page for a browser, the API's own error body for anything else. With
+	 * no {@code Accept} at all a client is taken to accept anything, and which of the two it
+	 * then gets is Spring's business and not something to assert.
+	 */
+	private Reply raw(String method, String rawPath, String token, String accept)
+			throws Exception {
+
+		HttpRequest.Builder request = HttpRequest
+				.newBuilder(URI.create("http://localhost:" + port + rawPath))
+				.method(method, HttpRequest.BodyPublishers.noBody());
+
+		if (accept != null) {
+			request.header("Accept", accept);
+		}
+
+		return send(request, token, null);
+	}
+
 	private Reply postCsv(String path, String csv, String token) throws Exception {
 
 		HttpRequest.Builder request = HttpRequest
@@ -3233,7 +3527,7 @@ class WireTest {
 			body = JSON.nullNode();
 		}
 
-		return new Reply(response.statusCode(), body, raw);
+		return new Reply(response.statusCode(), body, raw, response.headers());
 	}
 
 	private static String json(Object... pairs) {

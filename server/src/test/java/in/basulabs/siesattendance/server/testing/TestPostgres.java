@@ -300,6 +300,9 @@ public final class TestPostgres implements AutoCloseable {
 			statement.execute("TRUNCATE attendance, lectures, course_instructor, "
 					+ "course_batch_map, batch_student_map, student_year, batch_desc, "
 					+ "courses, professors, students, academic_years, id_remap, import_run, "
+					// V62's folds. One surviving into the next test would send that test's
+					// marks to a lecture of the last one.
+					+ "sync_fold, "
 					// V5's identity tables. Listed explicitly rather than left to CASCADE:
 					// a grant or a role surviving into the next test would make a policy
 					// test pass for the wrong reason.

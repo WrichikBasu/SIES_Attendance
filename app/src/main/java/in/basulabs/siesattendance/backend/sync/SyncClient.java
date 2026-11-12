@@ -170,7 +170,7 @@ public final class SyncClient {
 		String query = "/sync/pull?limit=" + limit;
 
 		if (!watermark.isEmpty()) {
-			query += "&since=" + java.net.URLEncoder.encode(watermark, StandardCharsets.UTF_8);
+			query += "&since=" + urlEncode(watermark);
 		}
 
 		return SyncJson.parsePull(call("GET", query, null));
@@ -186,7 +186,7 @@ public final class SyncClient {
 			throws IOException {
 
 		StringBuilder query = new StringBuilder("/sync/keys?table=")
-				.append(java.net.URLEncoder.encode(table, StandardCharsets.UTF_8))
+				.append(urlEncode(table))
 				.append("&limit=").append(limit);
 
 		if (!after.isEmpty()) {
@@ -532,6 +532,17 @@ public final class SyncClient {
 
 				try (OutputStream out = connection.getOutputStream()) {
 					out.write(body.getBytes(StandardCharsets.UTF_8));
+
+				} catch (IOException e) {
+					// Where a push actually connects. openConnection() above does not open
+					// anything -- for a request with a body, the socket is made here, and for
+					// one without, at getResponseCode() below. So this is the line that throws
+					// when the phone has no signal and the sync is a push, and until it was
+					// wrapped the ConnectException went out of here as a plain IOException: the
+					// worker saw something it did not recognise, told the professor "Could not
+					// sync" instead of "Waiting for a connection", and logged a stack trace for
+					// the most ordinary event there is.
+					throw new Unavailable("could not send the request", e);
 				}
 			}
 
@@ -588,7 +599,27 @@ public final class SyncClient {
 				out.write(buffer, 0, count);
 			}
 
-			return out.toString(StandardCharsets.UTF_8);
+			// Not toString(Charset), which arrived in Android 13 and is not there on the
+			// Android 8 this app still runs on: decoded from the bytes instead.
+			return new String(out.toByteArray(), StandardCharsets.UTF_8);
+		}
+	}
+
+	/**
+	 * A query parameter, encoded as UTF-8.
+	 * <p>
+	 * By the charset's name, not {@code URLEncoder.encode(String, Charset)}: that overload
+	 * arrived in Android 13, and on the Android 8 to 12 phones this app supports the call threw
+	 * {@code NoSuchMethodError} the first time a pull carried a watermark -- that is, on every
+	 * pull after the first.
+	 */
+	@NonNull
+	static String urlEncode(@NonNull String value) {
+		try {
+			return java.net.URLEncoder.encode(value, "UTF-8");
+		} catch (java.io.UnsupportedEncodingException impossible) {
+			// Every Java platform has UTF-8.
+			throw new IllegalStateException(impossible);
 		}
 	}
 

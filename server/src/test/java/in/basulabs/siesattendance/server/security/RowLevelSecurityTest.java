@@ -17,6 +17,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Savepoint;
 import java.sql.Statement;
 
 import in.basulabs.siesattendance.server.testing.TestPostgres;
@@ -321,6 +322,103 @@ class RowLevelSecurityTest {
 					"UPDATE attendance SET present = true WHERE lecture_id = " + LECTURE_CS
 							+ " AND student_id = " + STUDENT_CR),
 					"a CR may mark themselves present; the audit row is the only trace");
+		}
+	}
+
+	@Test
+	void aCrCannotMarkAStudentTheyCannotSee() throws Exception {
+
+		// V59, and the hole it closed. A CR may mark their own course's register, and before
+		// V59 nothing asked who the row named -- so marking a student picked out of the key
+		// space made students_marked (V21) hand back that student's name, email and APAAR ID.
+		// One insert, and a representative of one course could read the college's roll.
+		try (Connection as = postgres.actingAs(accountCr, null, STUDENT_CR)) {
+
+			assertEquals(0, count(as,
+					"SELECT count(*) FROM students WHERE student_id = " + STUDENT_OTHER),
+					"the Chemistry student must be invisible to the CR of CS-101 to begin with");
+
+			// On a savepoint, so the refusal costs only the statement: the actor is announced
+			// with set_config(..., true) and a rollback of the whole transaction would take
+			// it away with everything else, leaving the assertion below asking as nobody.
+			Savepoint before = as.setSavepoint("the mark");
+
+			SQLException refused = assertThrows(SQLException.class, () -> execute(as,
+					"INSERT INTO attendance (lecture_id, student_id, present) VALUES ("
+							+ LECTURE_CS + ", " + STUDENT_OTHER + ", true)"),
+					"a mark naming a student the actor cannot see must be refused");
+
+			as.rollback(before);
+
+			assertTrue(String.valueOf(refused.getMessage()).contains("not on this course's roll"),
+					"the refusal has to say what is wrong in words a professor can act on, "
+							+ "because it is what the phone shows them: " + refused.getMessage());
+
+			assertEquals(0, count(as,
+					"SELECT count(*) FROM students WHERE student_id = " + STUDENT_OTHER),
+					"and the student must still be invisible afterwards");
+		}
+	}
+
+	@Test
+	void aProfessorCannotMarkAnotherDepartmentsStudent() throws Exception {
+
+		// The same hole from the other side: the mark is on the professor's own lecture, so
+		// every attendance policy in V6 admits it, and only the student it names is wrong.
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+
+			assertEquals(0, count(as,
+					"SELECT count(*) FROM students WHERE student_id = " + STUDENT_OTHER));
+
+			// Each on its own savepoint; see the test above for why not a plain rollback.
+			Savepoint beforeInsert = as.setSavepoint("the mark");
+
+			assertThrows(SQLException.class, () -> execute(as,
+					"INSERT INTO attendance (lecture_id, student_id, present) VALUES ("
+							+ LECTURE_CS + ", " + STUDENT_OTHER + ", true)"),
+					"a Computer Science professor must not mark a Chemistry student");
+
+			as.rollback(beforeInsert);
+			Savepoint beforeMove = as.setSavepoint("the move");
+
+			// The other way the key can reach a student: moving a mark that is already there.
+			assertThrows(SQLException.class, () -> execute(as,
+					"UPDATE attendance SET student_id = " + STUDENT_OTHER
+							+ " WHERE lecture_id = " + LECTURE_CS),
+					"nor move an existing mark onto one");
+
+			as.rollback(beforeMove);
+
+			assertEquals(0, count(as,
+					"SELECT count(*) FROM students WHERE student_id = " + STUDENT_OTHER));
+		}
+	}
+
+	@Test
+	void markingSomebodyOnTheRollIsUntouched() throws Exception {
+
+		// The other half of V59: the rule must cost an ordinary register nothing. Taking one,
+		// correcting it, and replaying the same row -- which is what every push does, since
+		// the sync path writes INSERT ... ON CONFLICT DO UPDATE -- all name a student the
+		// actor can see, and all still work.
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+
+			assertEquals(1, update(as, "DELETE FROM attendance WHERE lecture_id = " + LECTURE_CS
+					+ " AND student_id = " + STUDENT_CR));
+
+			execute(as, "INSERT INTO attendance (lecture_id, student_id, present) VALUES ("
+					+ LECTURE_CS + ", " + STUDENT_CR + ", false)");
+
+			assertEquals(1, update(as, "UPDATE attendance SET present = true "
+					+ "WHERE lecture_id = " + LECTURE_CS + " AND student_id = " + STUDENT_CR),
+					"correcting a register must still work");
+
+			execute(as, "INSERT INTO attendance (lecture_id, student_id, present) VALUES ("
+					+ LECTURE_CS + ", " + STUDENT_CR + ", true) "
+					+ "ON CONFLICT (lecture_id, student_id) DO UPDATE SET present = true");
+
+			assertEquals(1, count(as, "SELECT count(*) FROM attendance WHERE lecture_id = "
+					+ LECTURE_CS + " AND student_id = " + STUDENT_CR + " AND present"));
 		}
 	}
 
@@ -1239,6 +1337,53 @@ class RowLevelSecurityTest {
 			assertEquals(1, count(as, "SELECT count(*) FROM students WHERE student_id = 2010"));
 			assertEquals(0, update(as, "UPDATE students SET name = 'NO' WHERE student_id = 2010"),
 					"Chemistry's as much as Computer Science's now");
+		}
+	}
+
+	@Test
+	void aProfessorAddsAStudentTheWayAPhoneWritesIt() throws Exception {
+
+		// The test above adds a student with a plain INSERT, and no phone sends one. The sync
+		// path upserts, and INSERT ... ON CONFLICT DO UPDATE holds the new row to the SELECT
+		// policies too. A student being added has no enrolment yet, so before V60 a professor
+		// could not read the row they were inserting and the upsert was refused (42501).
+		String upsert = "INSERT INTO students (student_id, name, pronouns) VALUES (%d, '%s', "
+				+ "'they/them') ON CONFLICT (student_id) DO UPDATE SET name = EXCLUDED.name";
+		String enrol = "INSERT INTO student_year (student_id, academic_year, roll_no, year, "
+				+ "stream, major_dept, semester) VALUES ";
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			execute(as, upsert.formatted(2030, "UPSERTED CS"));
+			execute(as, enrol + "(2030, 2025, 'CS-FY-030', 'FY', 'BSc_unaided', "
+					+ "'COMPUTER_SCIENCE', 1)");
+			execute(as, upsert.formatted(2030, "UPSERTED CS AGAIN"));
+			as.commit();
+		}
+
+		try (Connection superuser = postgres.connection()) {
+			assertEquals(1, count(superuser,
+					"SELECT count(*) FROM students WHERE name = 'UPSERTED CS AGAIN'"),
+					"added, enrolled, and replayed over its own row");
+		}
+
+		// What V60 widens is a student with no enrolment at all, and only that. A student of
+		// Chemistry alone is still not a Computer Science professor's to read, though their
+		// enrolment is one that professor cannot see either -- the helper reads every
+		// department's, which is what keeps them from looking unenrolled.
+		postgres.asSuperuser("""
+				INSERT INTO students (student_id, name, pronouns) VALUES
+				    (2031, 'CHEM ONLY', 'they/them');
+				INSERT INTO student_year
+				    (student_id, academic_year, roll_no, year, stream, major_dept, semester)
+				    VALUES (2031, 2025, 'CH-FY-031', 'FY', 'BSc', 'CHEMISTRY', 1);
+				""");
+
+		try (Connection as = postgres.actingAs(accountProfCs, PROF_CS, null)) {
+			assertEquals(0, count(as, "SELECT count(*) FROM students WHERE student_id = 2031"),
+					"another department's student stays out of sight");
+			assertThrows(SQLException.class,
+					() -> execute(as, upsert.formatted(2031, "TAKEN OVER")),
+					"and an upsert onto them is refused, not quietly applied");
 		}
 	}
 

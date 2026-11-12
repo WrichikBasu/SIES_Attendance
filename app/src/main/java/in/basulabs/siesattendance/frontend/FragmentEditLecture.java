@@ -426,16 +426,25 @@ public class FragmentEditLecture extends Fragment {
 	                              @NonNull ZonedDateTime end, @NonNull String notes,
 	                              int stranded) {
 
-		new MaterialAlertDialogBuilder(requireContext())
+		MaterialAlertDialogBuilder dialog = new MaterialAlertDialogBuilder(requireContext())
 				.setTitle(R.string.dialog_stranded_title)
-				.setMessage(getResources().getQuantityString(
-						R.plurals.dialog_stranded_message, stranded, stranded))
 				.setNeutralButton(R.string.action_cancel, null)
 				.setNegativeButton(R.string.option_keep_stranded, (d, w) ->
-						commit(button, start, end, notes, false))
-				.setPositiveButton(R.string.option_drop_stranded, (d, w) ->
-						commit(button, start, end, notes, true))
-				.show();
+						commit(button, start, end, notes, false));
+
+		// Dropping them is a deletion, which the server refuses a class representative (R26).
+		// They are still told the marks are there, and may keep them or cancel.
+		if (viewModel.mayDeleteRegisters()) {
+			dialog.setMessage(getResources().getQuantityString(
+							R.plurals.dialog_stranded_message, stranded, stranded))
+					.setPositiveButton(R.string.option_drop_stranded, (d, w) ->
+							commit(button, start, end, notes, true));
+		} else {
+			dialog.setMessage(getResources().getQuantityString(
+					R.plurals.dialog_stranded_message_keep_only, stranded, stranded));
+		}
+
+		dialog.show();
 	}
 
 	/** Writes the edit, having settled what happens to any marks that no longer belong. */

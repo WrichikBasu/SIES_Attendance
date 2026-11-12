@@ -1,13 +1,12 @@
 package in.basulabs.siesattendance.backend.pojo;
 
 /**
- * What removing an academic session would cost.
+ * What is still filed under an academic session.
  * <p>
- * Nothing is deleted with the session — no foreign key points at {@code academic_years} — but
- * the row is what gives a lecture a session to belong to, and what the export joins against.
- * Without it, the lectures inside those dates fall out of every report and an export for that
- * year comes back with headings and no students, reporting success. The counts are gathered
- * before the confirmation so the dialog can say which of those two situations this is.
+ * A session with anything under it is not removed (R38). Enrolments and batches name it, and
+ * the server's foreign keys refuse to delete it while they do, so a phone that removed it
+ * anyway would disagree with the server from then on. Lectures carry no session column, but the
+ * session's dates are what give them one: without it they fall out of every report.
  */
 public class SessionImpact {
 
@@ -17,8 +16,11 @@ public class SessionImpact {
 	/** Students enrolled in the session. */
 	public int enrolments;
 
-	/** True when the session has nothing filed under it, so removing it costs nothing. */
+	/** Batches made for the session. */
+	public int batches;
+
+	/** True when the session has nothing filed under it, so it may be removed. */
 	public boolean isEmpty() {
-		return lectures == 0 && enrolments == 0;
+		return lectures == 0 && enrolments == 0 && batches == 0;
 	}
 }

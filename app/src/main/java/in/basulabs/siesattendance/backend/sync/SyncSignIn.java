@@ -442,7 +442,8 @@ public final class SyncSignIn {
 			while ((count = in.read(buffer)) != -1) {
 				out.write(buffer, 0, count);
 			}
-			return out.toString(StandardCharsets.UTF_8);
+			// Not toString(Charset), which arrived in Android 13; see SyncClient.urlEncode.
+			return new String(out.toByteArray(), StandardCharsets.UTF_8);
 		}
 	}
 

@@ -45,8 +45,9 @@ public class AdapterStudent
 				public boolean areContentsTheSame(@NonNull StudentWithYear a,
 				                                  @NonNull StudentWithYear b) {
 					return a.name.equals(b.name) && a.rollNo.equals(b.rollNo)
-							&& a.majorDept == b.majorDept && a.year == b.year
-							&& a.stream == b.stream;
+							&& java.util.Objects.equals(a.majorDept, b.majorDept)
+							&& java.util.Objects.equals(a.year, b.year)
+							&& java.util.Objects.equals(a.stream, b.stream);
 				}
 			};
 

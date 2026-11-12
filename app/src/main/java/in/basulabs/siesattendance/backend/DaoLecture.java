@@ -139,8 +139,7 @@ public abstract class DaoLecture {
 	 * Rewrites a lecture in place, keeping its ID and therefore its attendance sheet.
 	 * <p>
 	 * Moving a lecture to a different course or batch can leave marks against students who are
-	 * not on the new roll. {@code DaoAttendance.deleteForLectureExcept} is the other half of
-	 * that operation, and the edit path calls both.
+	 * not on the new roll; {@link #updateLectureKeeping} does both halves together.
 	 */
 	@Query("UPDATE lectures SET courseID = :courseID, batchID = :batchID, " +
 			"startDateTime = :start, endDateTime = :end, notes = :notes " +
@@ -148,18 +147,56 @@ public abstract class DaoLecture {
 	public abstract void updateLecture(long lectureID, long courseID, Long batchID,
 	                                   ZonedDateTime start, ZonedDateTime end, String notes);
 
+	@Query("DELETE FROM attendance WHERE lectureID = :lectureID")
+	protected abstract void deleteMarksOf(long lectureID);
+
+	@Query("DELETE FROM attendance WHERE lectureID = :lectureID AND studentID NOT IN (:keep)")
+	protected abstract void deleteMarksExcept(long lectureID, List<Long> keep);
+
 	/**
-	 * Finds a lecture already recorded for the same course, batch and time span.
+	 * Changes a lecture and, when asked, drops the marks of students not on its new roll, in
+	 * one transaction. As two writes, a failure between them left the lecture moved with the
+	 * marks the user had chosen to drop still on it (R32).
+	 *
+	 * @param keep the students whose marks stay, or null to drop none. Empty drops every mark:
+	 *             Room would write it as {@code NOT IN ()}, which SQLite accepts and treats as
+	 *             true for every row, so the empty case is said rather than left to that
+	 */
+	@Transaction
+	public void updateLectureKeeping(long lectureID, long courseID, Long batchID,
+	                                 ZonedDateTime start, ZonedDateTime end, String notes,
+	                                 @androidx.annotation.Nullable List<Long> keep) {
+
+		updateLecture(lectureID, courseID, batchID, start, end, notes);
+
+		if (keep == null) {
+			return;
+		}
+		if (keep.isEmpty()) {
+			deleteMarksOf(lectureID);
+		} else {
+			deleteMarksExcept(lectureID, keep);
+		}
+	}
+
+	/**
+	 * Finds a lecture already recorded for the same course and batch, starting at the same
+	 * moment.
 	 * <p>
 	 * SQLite treats NULLs as distinct in a unique index, so a whole-class lecture would not be
 	 * caught by the index constraint. Matching the null case explicitly is what stops the same
 	 * session being recorded twice.
+	 * <p>
+	 * The start, not the whole span: a class that starts at the same moment is the same class,
+	 * whatever its end time says, as the server has held since V67 (R15). And the moment, not
+	 * the stored text: the text carries the zone it was written in, so the same instant under
+	 * another zone's name was not found, and collided on the server instead (R14).
 	 */
 	@Query("SELECT lectureID FROM lectures WHERE courseID = :courseID " +
 			"AND ((:batchID IS NULL AND batchID IS NULL) OR batchID = :batchID) " +
-			"AND startDateTime = :start AND endDateTime = :end LIMIT 1")
-	public abstract Long findExisting(long courseID, Long batchID, ZonedDateTime start,
-	                                  ZonedDateTime end);
+			"AND CAST(SUBSTR(startDateTime, 1, INSTR(startDateTime, '|') - 1) AS INTEGER) = " +
+			"CAST(SUBSTR(:start, 1, INSTR(:start, '|') - 1) AS INTEGER) LIMIT 1")
+	public abstract Long findExisting(long courseID, Long batchID, ZonedDateTime start);
 
 	@Query("DELETE FROM attendance WHERE lectureID = :lectureID")
 	public abstract void deleteAttendanceFor(long lectureID);

@@ -32,6 +32,7 @@ import in.basulabs.siesattendance.backend.pojo.ClassKey;
 import in.basulabs.siesattendance.backend.pojo.CourseAttendanceStat;
 import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.LectureDetails;
+import in.basulabs.siesattendance.backend.pojo.LectureMark;
 import in.basulabs.siesattendance.backend.pojo.SessionImpact;
 import in.basulabs.siesattendance.backend.pojo.StatRow;
 import in.basulabs.siesattendance.backend.pojo.StatsSummary;
@@ -39,6 +40,7 @@ import in.basulabs.siesattendance.backend.pojo.StudentAttendanceStat;
 import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 import in.basulabs.siesattendance.backend.pojo.StudentLectureMark;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 
 /**
  * The repository as it is today: Room, and nothing else.
@@ -96,7 +98,7 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 	@Override
 	public void deleteAcademicYear(@NonNull EntityAcademicYear year) {
-		db.daoAcademicYear().delete(year);
+		db.daoAcademicYear().deleteIfEmpty(year);
 	}
 
 	@Override
@@ -188,9 +190,19 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 		return db.daoCourse().getAllSync();
 	}
 
-	@Override
-	public long insertCourse(@NonNull EntityCourse course) {
-		return db.daoCourse().insert(course);
+	/**
+	 * A course code in its stored spelling (see {@link CanonicalCode}), refused when nothing of
+	 * it is left. Every course write passes through here, so the phone stores what the server's
+	 * V57 trigger would.
+	 */
+	@NonNull
+	private static String canonicalCourseCode(@Nullable String code) {
+		String canonical = CanonicalCode.of(code);
+		if (canonical.isEmpty()) {
+			throw new IllegalArgumentException("A course code needs a letter or a digit: \""
+					+ code + "\"");
+		}
+		return canonical;
 	}
 
 	@Override
@@ -211,13 +223,10 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	}
 
 	@Override
-	public void setCourseInstructors(long courseID, @NonNull List<Long> profIDs) {
-		db.daoCourse().setInstructors(courseID, profIDs);
-	}
-
-	@Override
-	public void updateCourse(@NonNull EntityCourse course) {
-		db.daoCourse().update(course);
+	public void saveCourse(@NonNull EntityCourse course, boolean creating,
+	                       @NonNull List<Long> profIDs, @Nullable List<Long> batchIDs) {
+		course.courseCode = canonicalCourseCode(course.courseCode);
+		db.daoCourse().save(course, creating, profIDs, batchIDs);
 	}
 
 	// ── Batches ──────────────────────────────────────────────────────────
@@ -383,6 +392,13 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 	@Override
 	@NonNull
+	public List<StudentWithYear> rollOnSync(long courseID, @Nullable Long batchID,
+	                                        int academicYear, @NonNull java.time.LocalDate day) {
+		return db.daoStudent().getRollOnSync(courseID, batchID, academicYear, day);
+	}
+
+	@Override
+	@NonNull
 	public List<StudentWithYear> rollForCourseSync(long courseID, int academicYear) {
 		return db.daoStudent().getRollForCourseSync(courseID, academicYear);
 	}
@@ -407,6 +423,16 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	                                  @Nullable java.time.LocalDate leaveDate) {
 		db.daoStudent().updateStudentWithYear(student, academicYear, rollNo, year, stream,
 		              majorDept, minorDept, oeDept, semester, division, joinDate, leaveDate);
+	}
+
+	@Override
+	public long addStudentWithYear(@NonNull EntityStudent student, int academicYear,
+	                               String rollNo, Year year, Stream stream, Department majorDept,
+	                               Department minorDept, Department oeDept, Integer semester,
+	                               Division division, @Nullable java.time.LocalDate joinDate,
+	                               @Nullable java.time.LocalDate leaveDate) {
+		return db.daoStudent().addStudentWithYear(student, academicYear, rollNo, year, stream,
+				majorDept, minorDept, oeDept, semester, division, joinDate, leaveDate);
 	}
 
 	@Override
@@ -440,7 +466,8 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	@Override
 	@Nullable
 	public Long findLecture(long courseID, Long batchID, ZonedDateTime start, ZonedDateTime end) {
-		return db.daoLecture().findExisting(courseID, batchID, start, end);
+		// By the start alone: see DaoLecture.findExisting.
+		return db.daoLecture().findExisting(courseID, batchID, start);
 	}
 
 	@Override
@@ -491,8 +518,9 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 	@Override
 	public void updateLecture(long lectureID, long courseID, Long batchID, ZonedDateTime start,
-	                          ZonedDateTime end, String notes) {
-		db.daoLecture().updateLecture(lectureID, courseID, batchID, start, end, notes);
+	                          ZonedDateTime end, String notes, @Nullable List<Long> keep) {
+		db.daoLecture().updateLectureKeeping(lectureID, courseID, batchID, start, end, notes,
+				keep);
 	}
 
 	// ── Attendance ───────────────────────────────────────────────────────
@@ -530,14 +558,20 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 	@Override
 	@NonNull
+	public List<LectureMark> sheetMarksSync(long lectureID, int academicYear) {
+		return db.daoAttendance().getSheetMarksSync(lectureID, academicYear);
+	}
+
+	@Override
+	@NonNull
 	public LiveData<List<CourseAttendanceStat>> observeCourseStats() {
 		return db.daoAttendance().getCourseStats();
 	}
 
 	@Override
 	@NonNull
-	public LiveData<Double> observeOverallPercentage() {
-		return db.daoAttendance().getOverallPercentage();
+	public LiveData<Double> observeOverallPercentage(int academicYear) {
+		return db.daoAttendance().getOverallPercentage(academicYear);
 	}
 
 	@Override
@@ -562,6 +596,12 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	@NonNull
 	public StatsSummary statsSummarySync(@NonNull SupportSQLiteQuery query) {
 		return db.daoStats().runSummary(query);
+	}
+
+	@Override
+	@NonNull
+	public LiveData<List<Integer>> observeReportInputs() {
+		return db.daoStats().observeReportInputs();
 	}
 
 	// ── Observers taken by method reference ──────────────────────────────
@@ -636,11 +676,13 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 		db.runInTransaction(() -> {
 
-			Long existing = db.daoLecture().findExisting(courseID, batchID, start, end);
+			Long existing = db.daoLecture().findExisting(courseID, batchID, start);
 
+			// The same slot again corrects its register: each mark on the sheet replaces that
+			// student's, and every other mark stays. Clearing first dropped the marks of
+			// students no longer on the roll, which F4 fixed for sheet imports (R29).
 			if (existing != null) {
 				lectureID[0] = existing;
-				db.daoAttendance().clearForLecture(lectureID[0]);
 			} else {
 				lectureID[0] = db.daoLecture().insert(
 						new EntityLecture(courseID, batchID, start, end, notes));

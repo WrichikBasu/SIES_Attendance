@@ -50,6 +50,9 @@
     <string name="hint_minor_department">Minor department (optional)</string>
     <string name="hint_oe_department">Open elective department (optional)</string>
     <string name="hint_department">Department</string>
+    <!-- The statistics filter: the students' major department, not the course's (R12). -->
+    <string name="hint_students_department">Students\' department</string>
+    <string name="filter_students_of">%1$s students</string>
     <string name="hint_designation">Designation</string>
     <string name="hint_course_code">Course code</string>
     <string name="hint_course_topic">Course topic</string>
@@ -60,6 +63,8 @@
     <string name="hint_division">Division</string>
     <string name="hint_course_type">Course type</string>
     <string name="hint_professor">Coordinator</string>
+    <!-- The statistics filter, which matches any instructor of a course, not only its coordinator -->
+    <string name="hint_taught_by">Taught by</string>
     <string name="hint_other_instructors">Other instructors</string>
     <string name="hint_other_instructors_none">None</string>
     <string name="dialog_other_instructors_title">Who else teaches this course?</string>
@@ -140,6 +145,7 @@
 
     <!-- Warnings and errors -->
     <string name="error_required">Required</string>
+    <string name="error_letters_and_digits">Needs at least one letter or digit</string>
     <string name="error_end_before_start">Must be after the start time</string>
     <string name="import_more_errors">…and %1$d more</string>
 
@@ -177,10 +183,10 @@
     <string name="section_lecture_by_lecture">Lecture by lecture</string>
     <string name="label_present">Present</string>
     <string name="label_absent">Absent</string>
-    <!-- 1: lectures attended, 2: lectures marked, 3: lectures missed -->
+    <!-- 1: lectures attended, 2: lectures held for the student, 3: lectures missed -->
     <string name="label_present_absent_summary">Present at %1$d of %2$d · absent %3$d</string>
-    <string name="empty_lecture_marks">This student has no marks recorded for this course
-        yet.</string>
+    <string name="empty_lecture_marks">No lectures of this course have been held for this
+        student yet.</string>
 
                 <string name="dialog_delete_batch_title">Delete this batch?</string>
     <string name="dialog_delete_batch_message">%1$s will be removed along with its student
@@ -188,8 +194,10 @@
     <string name="dialog_delete_lecture_title">Delete this lecture?</string>
     <string name="dialog_delete_lecture_message">This lecture will be removed. It cannot be
         undone.</string>
-    <string name="dialog_delete_lecture_marked">This lecture has attendance marked for %1$d
-        student(s). Deleting it discards those records too.</string>
+    <plurals name="dialog_delete_lecture_marked">
+        <item quantity="one">This lecture has attendance marked for 1 student. Deleting it discards that mark too.</item>
+        <item quantity="other">This lecture has attendance marked for %1$d students. Deleting it discards those marks too.</item>
+    </plurals>
     <string name="dialog_delete_generic_message">%1$s will be permanently removed.</string>
 
     <string name="dialog_no_professors_title">Add a professor first</string>
@@ -202,7 +210,7 @@
     <string name="label_whole_class">Whole class</string>
 
 
-    <string name="helper_no_batches_for_session">No batches in this session yet. Create one first.</string>
+    <string name="helper_no_batches_linked_to_course">No batch in this session is linked to this course. Link one from the course first.</string>
 
 
     <string name="title_edit_batch">Edit batch</string>
@@ -211,7 +219,9 @@
     <string name="section_course_instructors">Taught by</string>
     <string name="label_no_linked_batches">No batch linked yet</string>
     <string name="hint_apaar_id">APAAR ID (optional)</string>
-    <string name="error_apaar_id">Digits only</string>
+    <string name="error_apaar_id">A %1$d-digit number</string>
+    <string name="error_email">Not an email address</string>
+    <string name="error_too_long">At most %1$d characters</string>
     <string name="section_enrolment">Enrolment</string>
     <string name="label_join_default">Joined at the start of the session</string>
     <string name="label_join_date">Joined %1$s</string>
@@ -384,11 +394,20 @@
     <string name="hint_starting_year">Starting year</string>
     <string name="helper_starting_year">2025 means the 2025-26 session</string>
     <string name="hint_sessions_explainer">Tap a session to edit it, long-press to remove it.</string>
+    <!-- For an account that may not change sessions, where the line above promised what a tap would not do -->
+    <string name="hint_sessions_read_only">The college\'s academic sessions. Only the office or an administrator can change them.</string>
     <string name="dialog_delete_session_title">Remove this session?</string>
-    <string name="dialog_delete_session_message">%1$s will be removed. Lectures in these dates won\'t appear in reports until another session covers them.</string>
+    <string name="dialog_delete_session_message">%1$s will be removed.</string>
     <string name="dialog_delete_session_empty">Nothing is filed under it yet, so removing it
         costs nothing.</string>
-    <string name="dialog_delete_session_impact">%1$s and %2$s are filed under it.</string>
+    <string name="dialog_session_in_use_title">This session can\'t be removed</string>
+    <string name="dialog_session_in_use_message">%1$s still has %2$s, %3$s and %4$s. Only a session with nothing filed under it can be removed.</string>
+    <plurals name="count_batches_plain">
+        <item quantity="one">1 batch</item>
+        <item quantity="other">%1$d batches</item>
+    </plurals>
+    <string name="error_session_year">Enter the year the session starts in, such as 2026</string>
+    <string name="error_no_session_covers">No session covers %1$s, so this register would count nowhere. Ask an administrator to add or extend a session first. Nothing was saved.</string>
     <plurals name="count_lectures_plain">
         <item quantity="one">1 lecture</item>
         <item quantity="other">%1$d lectures</item>
@@ -470,8 +489,19 @@
     <string name="action_export">Export</string>
     <string name="hint_group_name">Group name</string>
     <string name="label_threshold_option">Below %1$d%%</string>
-    <string name="message_ods_export_done">%1$d students across %2$d courses. %3$d are below
-        the threshold and are shaded in the sheet.</string>
+    <string name="message_ods_export_done">%1$s across %2$s. %3$s</string>
+    <plurals name="export_done_students">
+        <item quantity="one">1 student</item>
+        <item quantity="other">%1$d students</item>
+    </plurals>
+    <plurals name="export_done_courses">
+        <item quantity="one">1 course</item>
+        <item quantity="other">%1$d courses</item>
+    </plurals>
+    <plurals name="export_done_defaulters">
+        <item quantity="one">1 is below the threshold and is shaded in the sheet.</item>
+        <item quantity="other">%1$d are below the threshold and are shaded in the sheet.</item>
+    </plurals>
 
     <!-- Editing a recorded lecture -->
     <string name="title_edit_lecture">Edit lecture</string>
@@ -484,8 +514,13 @@
 
     <string name="dialog_stranded_title">The roll is changing</string>
     <plurals name="dialog_stranded_message">
-        <item quantity="one">1 student marked on this lecture is not on the new roll. Their mark would count towards a course they don\'t take.</item>
-        <item quantity="other">%1$d students marked on this lecture are not on the new roll. Their marks would count towards a course they don\'t take.</item>
+        <item quantity="one">1 student marked on this lecture is not on the new roll. Kept, their mark would count on a lecture they weren\'t on the roll for.</item>
+        <item quantity="other">%1$d students marked on this lecture are not on the new roll. Kept, their marks would count on a lecture they weren\'t on the roll for.</item>
+    </plurals>
+    <!-- The same, for a class representative, who cannot remove marks -->
+    <plurals name="dialog_stranded_message_keep_only">
+        <item quantity="one">1 student marked on this lecture is not on the new roll. Kept, their mark would count on a lecture they weren\'t on the roll for, and only a professor can remove it.</item>
+        <item quantity="other">%1$d students marked on this lecture are not on the new roll. Kept, their marks would count on a lecture they weren\'t on the roll for, and only a professor can remove them.</item>
     </plurals>
     <string name="option_drop_stranded">Remove those marks</string>
     <string name="option_keep_stranded">Keep them anyway</string>
@@ -494,7 +529,12 @@
     <string name="dialog_discard_roll_title">Discard the marks you have made?</string>
     <string name="dialog_discard_roll_message">Switching courses discards the marks you haven\'t saved.</string>
     <string name="action_keep_marking">Keep marking</string>
+    <string name="action_discard_marks">Discard</string>
+    <string name="dialog_leave_unsaved_title">Leave without saving?</string>
+    <string name="dialog_leave_unsaved_message">The marks you have made on this register haven\'t been saved. Leaving discards them.</string>
     <string name="action_discard_and_switch">Discard and switch</string>
+    <string name="dialog_batch_not_linked_message">%1$s isn\'t linked to %2$s, so its roll can\'t be kept. Switching discards the marks you haven\'t saved.</string>
+    <string name="error_batch_not_linked">%1$s isn\'t linked to this course. Choose one of its batches.</string>
 
     <!-- Duplicating an attendance record -->
     <string name="action_duplicate_attendance">Duplicate this attendance</string>
@@ -535,7 +575,12 @@
         record naming them</string>
 
     <string name="dialog_withdraw_title">Remove from this session?</string>
-    <string name="dialog_withdraw_message">They will be removed from this session\'s roll and batches. Their %1$d attendance record(s) are kept.</string>
+    <string name="dialog_withdraw_message_unmarked">They will be removed from this session\'s roll and batches. They have no attendance in this session.</string>
+    <plurals name="dialog_withdraw_message_marked">
+        <item quantity="one">They will be removed from this session\'s roll and batches. Their 1 attendance record in this session is kept, but no longer counts in the statistics or the register export. If they left part way through, set a leave date instead.</item>
+        <item quantity="other">They will be removed from this session\'s roll and batches. Their %1$d attendance records in this session are kept, but no longer count in the statistics or the register export. If they left part way through, set a leave date instead.</item>
+    </plurals>
+    <string name="action_set_leave_date_instead">Set a leave date</string>
 
     <string name="dialog_delete_student_title">Delete this student?</string>
     <string name="dialog_delete_student_message_clean">There is no attendance recorded for
@@ -589,8 +634,8 @@
     <string name="label_import_batch_all">%1$s · %2$d marked</string>
     <string name="label_import_counts">%1$d present · %2$d absent</string>
     <string name="label_import_session_years">Session: %1$s</string>
-    <string name="note_import_replaces_sheet">Replaces the sheet already recorded for this
-        class.</string>
+    <string name="note_import_replaces_sheet">Already recorded. P and AB overwrite the
+        marks there, and other marks stay.</string>
 
     <plurals name="action_import_sessions">
         <item quantity="one">Import %d class</item>
@@ -603,8 +648,8 @@
     </plurals>
 
     <plurals name="label_import_replaces">
-        <item quantity="one">%d replaces a sheet already recorded</item>
-        <item quantity="other">%d replace sheets already recorded</item>
+        <item quantity="one">%d updates a sheet already recorded</item>
+        <item quantity="other">%d update sheets already recorded</item>
     </plurals>
 
     <plurals name="label_import_skipped">
@@ -613,7 +658,7 @@
     </plurals>
 
     <string name="dialog_import_attendance_title">Save these records?</string>
-    <string name="dialog_import_attendance_message">Check each class\'s batch before saving. Classes already on record have their marks replaced.</string>
+    <string name="dialog_import_attendance_message">Check each class\'s batch before saving. For a class already on record, P and AB overwrite the marks there, and every other mark stays.</string>
 
     <string name="message_import_attendance_failed">Nothing was saved: %1$s</string>
 
@@ -623,8 +668,8 @@
     </plurals>
 
     <plurals name="message_import_replaced">
-        <item quantity="one">%d existing sheet replaced</item>
-        <item quantity="other">%d existing sheets replaced</item>
+        <item quantity="one">%d existing sheet updated</item>
+        <item quantity="other">%d existing sheets updated</item>
     </plurals>
 
     <plurals name="message_import_marks">
@@ -788,4 +833,22 @@
     -->
     <string name="title_sign_in_required">Sign in to take attendance</string>
 
+    <!-- Adding a student by hand who is already on record (R34) -->
+    <string name="error_student_exists_roll_no">%1$s already has this roll number this session. Nothing was saved; edit their record instead.</string>
+    <string name="error_student_exists_apaar_id">%1$s already has this APAAR ID. Nothing was saved; edit their record instead.</string>
+    <string name="error_student_exists_email">%1$s already has this email address. Nothing was saved; edit their record instead.</string>
+    <!-- Taking a register (R29, R30) -->
+    <string name="error_register_in_future">That date hasn\'t happened yet. A register records a class that has been held. Nothing was saved.</string>
+    <string name="dialog_register_exists_title">This class already has a register</string>
+    <plurals name="dialog_register_exists_message">
+        <item quantity="one">%2$s already has a register for this batch and time, with 1 mark. Saving corrects it: each mark on this sheet replaces that student\'s, and any other mark is kept.</item>
+        <item quantity="other">%2$s already has a register for this batch and time, with %1$d marks. Saving corrects it: each mark on this sheet replaces that student\'s, and any other marks are kept.</item>
+    </plurals>
+    <string name="action_correct_register">Correct it</string>
+    <string name="dialog_date_changes_session_title">That date is in another session</string>
+    <string name="dialog_date_changes_session_message">%1$s is in another session, which has its own batches and roll. Changing the date clears the batch and discards the marks you haven\'t saved.</string>
+    <string name="action_change_date">Change the date</string>
+    <!-- Deleting a student with attendance (R28) -->
+    <string name="dialog_delete_student_needs_admin">This student has %1$d attendance record(s). Only an administrator can delete a student with attendance, because the server would keep some of those marks and the student with them. If they have left, set a leave date: their marks keep counting up to that day.</string>
+    <string name="not_permitted_delete_student_with_history">Only an administrator can delete a student who has attendance. Set a leave date instead.</string>
 </resources>

@@ -19,7 +19,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -110,9 +109,8 @@ public final class AttendanceRecordImporter {
 		/**
 		 * Marks that will not be written because the student is not in the chosen batch.
 		 * <p>
-		 * Writing them anyway would give the student attendance for a lecture that does not
-		 * count among the lectures held for them, and a percentage over a hundred. Non-zero
-		 * here means the file describes a group no batch matches — commonly a class taught to
+		 * Writing them anyway would file the student under a lecture of a batch they are not
+		 * in. Non-zero here means the file describes a group no batch matches — commonly a class taught to
 		 * everybody, which now has to be described by a batch that holds everybody — and is
 		 * reported rather than silently dropped.
 		 */
@@ -250,9 +248,15 @@ public final class AttendanceRecordImporter {
 	 * Reads the file and works out what it would create, without writing anything.
 	 * <p>
 	 * Blocks on file and database reads; call off the main thread.
+	 *
+	 * @param readsOnly the courses this account may read but not keep the registers of, as
+	 *                  {@code /me} last said ({@code DeviceIdentity.readsOnly}), or null when it
+	 *                  never said. Their columns are left out with a reason rather than sent
+	 *                  for the server to refuse.
 	 */
 	@NonNull
-	public static Plan plan(@NonNull Context context, @NonNull Uri uri) {
+	public static Plan plan(@NonNull Context context, @NonNull Uri uri,
+	                        @Nullable Set<Long> readsOnly) {
 
 		Plan plan = new Plan();
 
@@ -281,7 +285,7 @@ public final class AttendanceRecordImporter {
 		Map<String, Integer> claimed = new HashMap<>();
 
 		for (int index = 0; index < sheet.columns.size(); index++) {
-			plan.lectures.add(resolve(sheet, index, lookups, claimed));
+			plan.lectures.add(resolve(sheet, index, lookups, claimed, readsOnly));
 		}
 
 		reportUnknownRollNumbers(plan, lookups);
@@ -298,7 +302,8 @@ public final class AttendanceRecordImporter {
 	@NonNull
 	private static LecturePlan resolve(@NonNull AttendanceCsvParser.Sheet sheet, int index,
 	                                   @NonNull Lookups lookups,
-	                                   @NonNull Map<String, Integer> claimed) {
+	                                   @NonNull Map<String, Integer> claimed,
+	                                   @Nullable Set<Long> readsOnly) {
 
 		AttendanceCsvParser.Column column = sheet.columns.get(index);
 
@@ -321,7 +326,15 @@ public final class AttendanceRecordImporter {
 		lecture.courseCode = course.courseCode;
 		lecture.courseTopic = course.courseTopic;
 
-		ZoneId zone = ZoneId.systemDefault();
+		String readOnly = readOnlyProblem(readsOnly, course);
+
+		if (readOnly != null) {
+			lecture.problems.add(readOnly);
+			return lecture;
+		}
+
+		// The college's zone, as the server reads the same sheet, not the phone's (R14).
+		ZoneId zone = in.basulabs.siesattendance.backend.College.ZONE;
 		lecture.start = column.date.atTime(column.start).atZone(zone);
 		lecture.end = column.date.atTime(column.end).atZone(zone);
 		lecture.label = course.courseCode + " · " + column.date + " "
@@ -392,9 +405,29 @@ public final class AttendanceRecordImporter {
 		}
 
 		lecture.replacesExisting = lookups.db().daoLecture().findExisting(lecture.courseID,
-				lecture.batchID, lecture.start, lecture.end) != null;
+				lecture.batchID, lecture.start) != null;
 
 		return lecture;
+	}
+
+	/**
+	 * Why a column of this course cannot be imported by this account, or null when it can.
+	 * <p>
+	 * A professor reads every course their department offers (V53) but keeps the registers only
+	 * of those they teach or head. The server refuses attendance for the rest row by row, so an
+	 * import that sent them would end in a failed sync the professor has to untangle; refusing
+	 * the column here shows it on the review screen instead, beside the columns that will go in.
+	 * The same rule as {@code Permissions.mayKeepRegistersOf}, which the backend does not reach.
+	 */
+	@Nullable
+	public static String readOnlyProblem(@Nullable Set<Long> readsOnly,
+	                                     @NonNull EntityCourse course) {
+
+		if (readsOnly == null || !readsOnly.contains(course.courseID)) {
+			return null;
+		}
+		return "You can view " + course.courseCode + "'s registers but not change them: only "
+				+ "its instructors and the head of department can.";
 	}
 
 	/**
@@ -498,9 +531,12 @@ public final class AttendanceRecordImporter {
 	/**
 	 * Writes every usable column of a plan the user has approved.
 	 * <p>
-	 * Re-recording a session that is already on record replaces its sheet rather than failing on
-	 * the unique index, which is what {@code recordLectureWithAttendance} does when attendance is
-	 * taken twice for the same class, and what someone correcting a register expects.
+	 * A session that is already on record is corrected by the file, not replaced by it. Each
+	 * P or AB overwrites that student's mark, and no mark is ever taken away: a student is
+	 * either present or absent, and an empty cell is neither, so it changes nothing. A student
+	 * who is not listed, or who has left the batch since, was marked by somebody and the file
+	 * is no evidence that they were wrong. Clearing the lecture first, which this used to do,
+	 * deleted exactly those marks.
 	 * <p>
 	 * Blocks; call off the main thread.
 	 */
@@ -522,13 +558,12 @@ public final class AttendanceRecordImporter {
 					}
 
 					Long existing = db.daoLecture().findExisting(lecture.courseID,
-							lecture.batchID, lecture.start, lecture.end);
+							lecture.batchID, lecture.start);
 
 					long lectureID;
 
 					if (existing != null) {
 						lectureID = existing;
-						db.daoAttendance().clearForLecture(lectureID);
 						result.replaced++;
 					} else {
 						lectureID = db.daoLecture().insert(new EntityLecture(lecture.courseID,
@@ -626,13 +661,13 @@ public final class AttendanceRecordImporter {
 				return null;
 			}
 
-			String key = code.trim().toLowerCase(Locale.ROOT);
+			String key = CanonicalCode.of(code);
 
 			if (courses.containsKey(key)) {
 				return courses.get(key);
 			}
 
-			EntityCourse course = db.daoCourse().findByCodeSync(code.trim());
+			EntityCourse course = db.daoCourse().findByCodeSync(key);
 			courses.put(key, course);
 			return course;
 		}
@@ -739,8 +774,7 @@ public final class AttendanceRecordImporter {
 
 		@NonNull
 		private static String normalise(@NonNull String rollNo) {
-			return rollNo.trim().toLowerCase(Locale.ROOT)
-					.replace(" ", "").replace("-", "").replace("/", "");
+			return CanonicalCode.of(rollNo);
 		}
 	}
 }

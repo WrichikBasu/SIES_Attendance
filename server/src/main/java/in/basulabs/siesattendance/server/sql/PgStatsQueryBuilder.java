@@ -65,7 +65,7 @@ public final class PgStatsQueryBuilder {
 	 * double every figure in the report.
 	 */
 	private static final String FROM_CLAUSE =
-			" FROM attendance a"
+			" FROM " + PgSqlBits.MARKS + " a"
 					+ " INNER JOIN lectures l ON l.lecture_id = a.lecture_id"
 					+ " INNER JOIN courses c ON c.course_id = l.course_id"
 					+ " INNER JOIN students s ON s.student_id = a.student_id"
@@ -207,8 +207,12 @@ public final class PgStatsQueryBuilder {
 			args.add(filter.batchID);
 		}
 
+		// Every course the professor teaches, not only the ones they coordinate (R37), as the
+		// phone's builder does.
 		if (filter.professorID != null) {
-			where.append(" AND c.prof_id = ?");
+			where.append(" AND (c.prof_id = ? OR EXISTS (SELECT 1 FROM course_instructor ci")
+					.append("   WHERE ci.course_id = c.course_id AND ci.prof_id = ?))");
+			args.add(filter.professorID);
 			args.add(filter.professorID);
 		}
 
@@ -291,8 +295,12 @@ public final class PgStatsQueryBuilder {
 			case LABEL_ASC -> label + " ASC" + tiebreak;
 			case TOTAL_DESC -> "COUNT(*) DESC, " + label + " ASC" + tiebreak;
 			case CHRONOLOGICAL ->
-				// Time-based groupings read wrong worst-first; they want oldest to newest.
-					label + " ASC" + tiebreak;
+				// By time, not by label (R11): each group by its earliest lecture, and the
+				// weekdays Monday to Sunday. The app's StatsQueryBuilder says why.
+					(filter.groupBy == in.basulabs.siesattendance.backend.stats.StatsGroupBy.WEEKDAY
+							? "((" + group.idExpr + ") + 6) % 7"
+							: "MIN(l.start_at)")
+							+ " ASC, " + label + " ASC" + tiebreak;
 			default -> percent + " ASC, " + label + " ASC" + tiebreak;
 		};
 	}

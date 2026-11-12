@@ -34,6 +34,8 @@ import in.basulabs.siesattendance.backend.Division;
 import in.basulabs.siesattendance.backend.EntityStudent;
 import in.basulabs.siesattendance.backend.Stream;
 import in.basulabs.siesattendance.backend.Year;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
+import in.basulabs.siesattendance.backend.util.RosterCsv;
 import in.basulabs.siesattendance.frontend.util.DropdownBinder;
 import in.basulabs.siesattendance.frontend.util.Ui;
 import in.basulabs.siesattendance.frontend.util.Permissions;
@@ -74,7 +76,7 @@ public class FragmentAddStudent extends Fragment {
 
 	private TextInputEditText etName, etPronouns, etEmail, etRollNo, etApaarId;
 
-	private TextInputLayout tilApaarId;
+	private TextInputLayout tilApaarId, tilPronouns, tilEmail;
 
 	private MaterialButton btnJoinDate, btnLeaveDate;
 
@@ -118,6 +120,16 @@ public class FragmentAddStudent extends Fragment {
 	@Nullable
 	private Division chosenDivision;
 
+	/**
+	 * Whether the form was rebuilt from a saved state. What was typed and chosen is then the
+	 * form's own, and the stored student must not be written over it (R36).
+	 */
+	private boolean restored;
+
+	private static final String KEY_MAJOR = "major", KEY_MINOR = "minor", KEY_OE = "oe",
+			KEY_STREAM = "stream", KEY_YEAR = "year", KEY_SEMESTER = "semester",
+			KEY_DIVISION = "division", KEY_JOIN = "join", KEY_LEAVE = "leave";
+
 	@Nullable
 	@Override
 	public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
@@ -144,6 +156,10 @@ public class FragmentAddStudent extends Fragment {
 				? -1L
 				: getArguments().getLong("studentID", -1L);
 
+		if (savedInstanceState != null) {
+			restoreFrom(savedInstanceState);
+		}
+
 		// The session to read from and write back to. Absent when adding, and when the
 		// students list opened this; the detail screen passes the one it is showing.
 		int requested = getArguments() == null ? 0 : getArguments().getInt("academicYear", 0);
@@ -155,6 +171,8 @@ public class FragmentAddStudent extends Fragment {
 		etRollNo = view.findViewById(R.id.etRollNo);
 		etApaarId = view.findViewById(R.id.etApaarId);
 		tilApaarId = view.findViewById(R.id.tilApaarId);
+		tilPronouns = view.findViewById(R.id.tilPronouns);
+		tilEmail = view.findViewById(R.id.tilEmail);
 
 		btnJoinDate = view.findViewById(R.id.btnJoinDate);
 		btnLeaveDate = view.findViewById(R.id.btnLeaveDate);
@@ -196,7 +214,80 @@ public class FragmentAddStudent extends Fragment {
 
 		if (isEditing()) {
 			save.setText(R.string.action_save_changes);
-			prefillFromExisting();
+
+			// After a rotation the form holds what was being typed; reading the student again
+			// would write the stored values over it (R36).
+			if (!restored) {
+				prefillFromExisting();
+			}
+		}
+	}
+
+	// ── Rotation ─────────────────────────────────────────────────────────
+
+	/**
+	 * Keeps what the fields' own state does not: the department, stream, year, semester,
+	 * division, minor and open elective chosen, and the two dates. The text fields keep
+	 * themselves. Without this, adding a student and rotating kept the typing and lost the
+	 * dropdowns, and saving then reported them as missing (R36).
+	 */
+	@Override
+	public void onSaveInstanceState(@NonNull Bundle outState) {
+		super.onSaveInstanceState(outState);
+
+		putEnum(outState, KEY_MAJOR, chosenMajor);
+		putEnum(outState, KEY_MINOR, chosenMinor);
+		putEnum(outState, KEY_OE, chosenOe);
+		putEnum(outState, KEY_STREAM, chosenStream);
+		putEnum(outState, KEY_YEAR, chosenYear);
+		putEnum(outState, KEY_DIVISION, chosenDivision);
+
+		if (chosenSemester != null) {
+			outState.putInt(KEY_SEMESTER, chosenSemester);
+		}
+		if (joinDate != null) {
+			outState.putLong(KEY_JOIN, joinDate.toEpochDay());
+		}
+		if (leaveDate != null) {
+			outState.putLong(KEY_LEAVE, leaveDate.toEpochDay());
+		}
+	}
+
+	private void restoreFrom(@NonNull Bundle state) {
+
+		restored = true;
+
+		chosenMajor = getEnum(state, KEY_MAJOR, Department.class);
+		chosenMinor = getEnum(state, KEY_MINOR, Department.class);
+		chosenOe = getEnum(state, KEY_OE, Department.class);
+		chosenStream = getEnum(state, KEY_STREAM, Stream.class);
+		chosenYear = getEnum(state, KEY_YEAR, Year.class);
+		chosenDivision = getEnum(state, KEY_DIVISION, Division.class);
+		chosenSemester = state.containsKey(KEY_SEMESTER) ? state.getInt(KEY_SEMESTER) : null;
+		joinDate = state.containsKey(KEY_JOIN)
+				? LocalDate.ofEpochDay(state.getLong(KEY_JOIN)) : null;
+		leaveDate = state.containsKey(KEY_LEAVE)
+				? LocalDate.ofEpochDay(state.getLong(KEY_LEAVE)) : null;
+	}
+
+	private static void putEnum(@NonNull Bundle state, @NonNull String key,
+	                            @Nullable Enum<?> value) {
+		if (value != null) {
+			state.putString(key, value.name());
+		}
+	}
+
+	@Nullable
+	private static <E extends Enum<E>> E getEnum(@NonNull Bundle state, @NonNull String key,
+	                                             @NonNull Class<E> type) {
+		String name = state.getString(key);
+		if (name == null) {
+			return null;
+		}
+		try {
+			return Enum.valueOf(type, name);
+		} catch (IllegalArgumentException renamed) {
+			return null;
 		}
 	}
 
@@ -358,6 +449,8 @@ public class FragmentAddStudent extends Fragment {
 
 		tilName.setError(null);
 		tilRollNo.setError(null);
+		tilPronouns.setError(null);
+		tilEmail.setError(null);
 
 		String name = text(etName);
 		String rollNo = text(etRollNo);
@@ -366,10 +459,26 @@ public class FragmentAddStudent extends Fragment {
 			tilName.setError(getString(R.string.error_required));
 			return;
 		}
+
+		// The limits and the shapes below are RosterCsv's, which is where the file importers
+		// read them from: a form that took what a file is refused would be two answers to the
+		// same question, and the one it stored would be the one nobody checked.
+		if (name.length() > RosterCsv.NAME_MAX) {
+			tilName.setError(getString(R.string.error_too_long, RosterCsv.NAME_MAX));
+			return;
+		}
 		if (rollNo.isEmpty()) {
 			tilRollNo.setError(getString(R.string.error_required));
 			return;
 		}
+
+		// Stored as letters and digits in capitals (V57), which is what the field then shows.
+		rollNo = CanonicalCode.of(rollNo);
+		if (rollNo.isEmpty()) {
+			tilRollNo.setError(getString(R.string.error_letters_and_digits));
+			return;
+		}
+		etRollNo.setText(rollNo);
 
 		Year year = chosenYear;
 		Stream stream = chosenStream;
@@ -413,18 +522,28 @@ public class FragmentAddStudent extends Fragment {
 			pronouns = "they/them";
 		}
 
-		String email = text(etEmail);
+		if (pronouns.length() > RosterCsv.PRONOUNS_MAX) {
+			tilPronouns.setError(getString(R.string.error_too_long, RosterCsv.PRONOUNS_MAX));
+			return;
+		}
+
+		String email;
+
+		try {
+			email = RosterCsv.parseEmail(text(etEmail));
+		} catch (IllegalArgumentException notAnAddress) {
+			tilEmail.setError(getString(R.string.error_email));
+			return;
+		}
 
 		tilApaarId.setError(null);
-		String apaar = text(etApaarId);
-		Long apaarId = null;
+		Long apaarId;
 
-		if (!apaar.isEmpty()) {
-			if (!apaar.matches("[0-9]{1,18}") || Long.parseLong(apaar) == 0) {
-				tilApaarId.setError(getString(R.string.error_apaar_id));
-				return;
-			}
-			apaarId = Long.parseLong(apaar);
+		try {
+			apaarId = RosterCsv.parseApaarId(text(etApaarId));
+		} catch (IllegalArgumentException notAnApaarId) {
+			tilApaarId.setError(getString(R.string.error_apaar_id, RosterCsv.APAAR_DIGITS));
+			return;
 		}
 
 		if (joinDate != null && leaveDate != null && leaveDate.isBefore(joinDate)) {
@@ -435,8 +554,7 @@ public class FragmentAddStudent extends Fragment {
 			return;
 		}
 
-		EntityStudent student =
-				new EntityStudent(name, pronouns, email.isEmpty() ? null : email);
+		EntityStudent student = new EntityStudent(name, pronouns, email);
 		student.apaarId = apaarId;
 
 		Runnable navigateBack = () -> Ui.onMain(this, () -> {

@@ -102,6 +102,13 @@ public class FragmentAcademicYears extends Fragment {
 		recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
 		recyclerView.setAdapter(adapter);
 
+		// "Tap to edit, long-press to remove" is a promise only those who may change sessions
+		// can collect on; everybody else is told whose list this is instead.
+		if (!viewModel.may(Permissions.Capability.SESSIONS)) {
+			view.<TextView>findViewById(R.id.tvSessionsExplainer)
+					.setText(R.string.hint_sessions_read_only);
+		}
+
 		// Adding a session is an administrator's alone; everybody else reads the list.
 		FloatingActionButton fab = view.findViewById(R.id.fabAddYear);
 
@@ -178,23 +185,28 @@ public class FragmentAcademicYears extends Fragment {
 			btnEnd.setText(picked.format(DATE_LABEL));
 		}));
 
-		new MaterialAlertDialogBuilder(requireContext())
+		androidx.appcompat.app.AlertDialog dialog = new MaterialAlertDialogBuilder(requireContext())
 				.setTitle(existing == null
 						? R.string.title_add_session : R.string.title_edit_session)
 				.setView(content)
-				.setPositiveButton(R.string.action_save_changes, (d, w) -> {
-					int year;
-					try {
-						year = Integer.parseInt(etYear.getText().toString().trim());
-					} catch (NumberFormatException e) {
-						return;
-					}
-					viewModel.saveAcademicYear(year, dates[0], dates[1],
-							existing == null, () -> {
-							});
-				})
+				.setPositiveButton(R.string.action_save_changes, null)
 				.setNegativeButton(R.string.action_cancel, null)
 				.show();
+
+		// Set after show(), so a year that is not a number keeps the dialog open with the
+		// reason on the field. As a plain positive listener it closed and did nothing (R38).
+		dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener(v -> {
+			int year;
+			try {
+				year = Integer.parseInt(etYear.getText().toString().trim());
+			} catch (NumberFormatException e) {
+				etYear.setError(getString(R.string.error_session_year));
+				return;
+			}
+			viewModel.saveAcademicYear(year, dates[0], dates[1], existing == null, () -> {
+			});
+			dialog.dismiss();
+		});
 	}
 
 	/**
@@ -255,15 +267,26 @@ public class FragmentAcademicYears extends Fragment {
 	private void showDeleteConfirmation(@NonNull EntityAcademicYear year,
 	                                    @Nullable SessionImpact impact) {
 
+		// A session with anything under it is not removed (R38): enrolments and batches name
+		// it, the server refuses to delete it while they do, and its lectures would belong to
+		// no session. Said, with what is there, rather than offered.
+		if (impact != null && !impact.isEmpty()) {
+			new MaterialAlertDialogBuilder(requireContext())
+					.setTitle(R.string.dialog_session_in_use_title)
+					.setMessage(getString(R.string.dialog_session_in_use_message, year.label(),
+							getResources().getQuantityString(R.plurals.count_lectures_plain,
+									impact.lectures, impact.lectures),
+							getResources().getQuantityString(R.plurals.count_enrolments_plain,
+									impact.enrolments, impact.enrolments),
+							getResources().getQuantityString(R.plurals.count_batches_plain,
+									impact.batches, impact.batches)))
+					.setPositiveButton(android.R.string.ok, null)
+					.show();
+			return;
+		}
+
 		String message = getString(R.string.dialog_delete_session_message, year.label())
-				+ "\n\n"
-				+ (impact == null || impact.isEmpty()
-				? getString(R.string.dialog_delete_session_empty)
-				: getString(R.string.dialog_delete_session_impact,
-						getResources().getQuantityString(R.plurals.count_lectures_plain,
-								impact.lectures, impact.lectures),
-						getResources().getQuantityString(R.plurals.count_enrolments_plain,
-								impact.enrolments, impact.enrolments)));
+				+ "\n\n" + getString(R.string.dialog_delete_session_empty);
 
 		new MaterialAlertDialogBuilder(requireContext())
 				.setTitle(R.string.dialog_delete_session_title)

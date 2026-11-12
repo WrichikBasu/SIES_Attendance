@@ -5,10 +5,10 @@ import androidx.annotation.NonNull;
 /**
  * Per-course attendance aggregate across all its lectures.
  * <p>
- * {@code totalRecords} counts attendance rows, whereas {@code lectureCount} counts the lectures
- * themselves, so the two answer different questions: how much attendance was recorded against
- * the course, and how many times it actually met. A course with lectures but no records has the
- * second without the first, which is how an unmarked course shows up.
+ * {@code totalRecords} counts each student at each lecture held for them, a lecture with no
+ * mark for a student being an absence, whereas {@code lectureCount} counts the lectures
+ * themselves. The two answer different questions: how much attendance the course called for,
+ * and how many times it actually met.
  */
 public class CourseAttendanceStat {
 

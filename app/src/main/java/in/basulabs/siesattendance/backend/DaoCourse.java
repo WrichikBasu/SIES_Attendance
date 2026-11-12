@@ -71,6 +71,49 @@ public abstract class DaoCourse {
 		addInstructor(new EntityCourseInstructor(course.courseID, course.profID));
 	}
 
+	/**
+	 * Saves a course from the course form: the row, who teaches it, and which batches sit it,
+	 * all or nothing.
+	 * <p>
+	 * One transaction because they are one edit. Written as three, a failure in the second or
+	 * third left the course saved with its old instructors or links, and the form said it had
+	 * failed (R39).
+	 * <p>
+	 * The form does not show the dates a course was introduced and discontinued, so an edit
+	 * carries them over from the stored row. Writing the form's course as it came would empty
+	 * both, which brought a discontinued course back into use and lost every course's
+	 * introduced date (R33).
+	 *
+	 * @param creating whether this is a new course rather than an edit of the one with its ID
+	 * @param profIDs  everyone who teaches it; see {@link #setInstructors}
+	 * @param batchIDs the batches it is linked to, or null to leave its links as they are
+	 * @throws IllegalStateException when the course being edited is no longer on the phone
+	 */
+	@Transaction
+	public void save(@NonNull EntityCourse course, boolean creating,
+	                 @NonNull List<Long> profIDs, @Nullable List<Long> batchIDs) {
+
+		if (creating) {
+			insert(course);
+		} else {
+			EntityCourse stored = getByIdSync(course.courseID);
+
+			if (stored == null) {
+				throw new IllegalStateException("this course is no longer on the phone");
+			}
+
+			course.dateIntroduced = stored.dateIntroduced;
+			course.dateDiscontinued = stored.dateDiscontinued;
+			update(course);
+		}
+
+		setInstructors(course.courseID, profIDs);
+
+		if (batchIDs != null) {
+			setBatchLinks(course.courseID, batchIDs);
+		}
+	}
+
 	@Query("SELECT COUNT(*) FROM lectures WHERE courseID = :courseID")
 	public abstract int countLectures(long courseID);
 

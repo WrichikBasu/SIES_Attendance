@@ -101,7 +101,31 @@ public final class Permissions {
 		 * administrators -- and never a student. A professor's rows are held to their own
 		 * department (V27), which the import checks row by row.
 		 */
-		IMPORT_STUDENTS
+		IMPORT_STUDENTS,
+
+		/**
+		 * Deleting a lecture or any of its marks: clearing a register, deleting a lecture, or
+		 * dropping the marks an edit to a lecture leaves stranded. A course's instructors, its
+		 * department's head and an administrator (V6's {@code lectures_instructor},
+		 * {@code lectures_hod}, {@code lectures_admin} and their {@code attendance} twins).
+		 * Never a class representative, whose policies grant select, insert and update and no
+		 * delete, so a deletion on their phone would be refused row by row and the phone and
+		 * the server would disagree from then on. Nor the office, which only reads registers.
+		 */
+		DELETE_REGISTERS,
+
+		/**
+		 * Deleting a student who has attendance on record, with every mark naming them. An
+		 * administrator's, whom the server lets delete any mark, and a phone's with no server.
+		 * <p>
+		 * Nobody else, not even a head who keeps the roll: the phone sends the marks, the
+		 * memberships, the enrolments and the student as separate rows, and the server applies
+		 * each on its own. A head's own department's marks went, another department's were
+		 * refused, the student was then refused too, and came back on the next download
+		 * without the marks that had been deleted (R28). A student with no marks is a
+		 * correction and stays {@link #STUDENTS}'s to delete.
+		 */
+		DELETE_STUDENT_WITH_HISTORY
 	}
 
 	private Permissions() {
@@ -173,6 +197,13 @@ public final class Permissions {
 			case NEW_SESSION -> admin;
 			case SESSIONS -> admin || office;
 			case IMPORT_STUDENTS -> who == null || who == AccountKind.PROFESSOR || mayKeepARoll;
+
+			// Which lectures is the server's question, row by row; this only stops the phone
+			// offering a deletion to an account that can never make one. Unknown is permitted
+			// for the reason in the class notes.
+			case DELETE_REGISTERS -> who == null || who == AccountKind.PROFESSOR || admin;
+
+			case DELETE_STUDENT_WITH_HISTORY -> who == null || admin;
 		};
 	}
 

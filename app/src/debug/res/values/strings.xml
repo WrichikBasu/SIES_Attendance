@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        The debug build is a separate app (applicationIdSuffix ".debug") and installs beside a
+        release build, so it needs a name that tells the two apart on the launcher and in
+        Settings. These override the same strings in src/main for debug builds only.
+    -->
+    <string name="app_name">SIES Attendance Unofficial Debug</string>
+    <string name="title_activity_home">SIES Attendance Debug</string>
+</resources>

@@ -1,6 +1,7 @@
 package in.basulabs.siesattendance.backend.sync;
 
 import android.content.Context;
+import android.database.Cursor;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -122,6 +123,8 @@ public final class SignOut {
 			}
 		});
 
+		scrubTheFiles(db);
+
 		DeviceIdentity.recordSyncError(context, null);
 		DeviceIdentity.recordDisplayName(context, null);
 		DeviceIdentity.recordAccountKind(context, null);
@@ -139,5 +142,43 @@ public final class SignOut {
 		DeviceIdentity.recordAccessFingerprint(context, null);
 		DeviceIdentity.recordSweepWanted(context, false);
 		DeviceIdentity.recordLastSweepAt(context, 0L);
+	}
+
+	/**
+	 * Takes the deleted rows out of the database's files, not only out of its tables.
+	 * <p>
+	 * A {@code DELETE} in WAL mode writes the new page images to
+	 * {@code sies_attendance.sqlite3-wal} and leaves them there until something checkpoints
+	 * them, and a page the delete frees keeps whatever was written in it, because SQLite does
+	 * not blank one unless it is told to. So after a sign-out the tables read empty while the
+	 * file beside the database still held the last account's roll numbers and names — 940 of
+	 * them, counted in the file on a real phone. Signing out is supposed to be the thing that
+	 * makes a phone safe to hand to somebody else.
+	 * <p>
+	 * {@code VACUUM} rebuilds the database with no free pages in it, and the truncating
+	 * checkpoint then takes the write-ahead log down to nothing. Neither can run inside a
+	 * transaction, which is why this is not part of the one above.
+	 * <p>
+	 * Best effort, and deliberately: {@code VACUUM} wants room for a second copy of the
+	 * database and can fail on a full phone. The rows are already deleted by the time this
+	 * runs, so a failure here is a file that still holds old bytes, not an account still
+	 * signed in — worth a line in the log and not worth failing a sign-out over.
+	 */
+	private static void scrubTheFiles(@NonNull MainDatabase db) {
+
+		try {
+			SupportSQLiteDatabase sqlite = db.getOpenHelper().getWritableDatabase();
+
+			sqlite.execSQL("VACUUM");
+
+			// A pragma that answers with a row, so it is run as a query: execSQL is for
+			// statements that return nothing and would not step this one to completion.
+			try (Cursor checkpointed = sqlite.query("PRAGMA wal_checkpoint(TRUNCATE)")) {
+				checkpointed.moveToFirst();
+			}
+
+		} catch (RuntimeException e) {
+			Log.w(TAG, "could not scrub the database files after emptying them", e);
+		}
 	}
 }

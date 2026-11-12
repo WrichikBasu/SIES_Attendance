@@ -18,6 +18,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 
 import in.basulabs.siesattendance.backend.AuditAction;
 import in.basulabs.siesattendance.server.security.ActorSession;
@@ -222,6 +223,92 @@ class AuditLogTest {
 				"the entry should still be exactly as it was");
 	}
 
+	/**
+	 * The same, through a partition named directly (C4). A partition is a table of its own, and
+	 * each was created with the owner's default grants: V7's revoke on the parent did not reach
+	 * them, and the service could read and rewrite a month of the log by naming it. V61 takes
+	 * the grants back from every partition there is and every one the timer adds.
+	 */
+	@Test
+	void theApplicationRoleCannotReachAnEntryThroughAPartition() throws Exception {
+
+		try (Connection as = actingAsProfessor()) {
+			execute(as, "INSERT INTO attendance (lecture_id, student_id, present) "
+					+ "VALUES (" + LECTURE + ", " + STUDENT + ", true)");
+			as.commit();
+		}
+
+		String month = text("SELECT tableoid::regclass::text FROM audit_log LIMIT 1");
+
+		// A month the partition timer adds after the migration ran.
+		scalar("SELECT audit_log_add_months(date_trunc('month', now() + interval '5 years')"
+				+ "::date, 1)");
+		String later = text("SELECT 'audit_log_' || to_char(date_trunc('month', now() "
+				+ "+ interval '5 years'), 'YYYY_MM')");
+
+		for (String partition : List.of(month, later, "audit_log_overflow")) {
+
+			try (Connection as = postgres.appConnection()) {
+
+				assertThrows(SQLException.class, () -> execute(as,
+						"SELECT count(*) FROM " + partition),
+						"the service must not read " + partition);
+				assertThrows(SQLException.class, () -> execute(as,
+						"UPDATE " + partition + " SET after_image = '{}'::jsonb"),
+						"the service must not rewrite " + partition);
+				assertThrows(SQLException.class, () -> execute(as,
+						"DELETE FROM " + partition),
+						"the service must not remove entries from " + partition);
+			}
+		}
+
+		// And no partition anywhere grants it anything, whatever it is called.
+		assertEquals(0, scalar("""
+				SELECT count(*) FROM pg_inherits i
+				WHERE i.inhparent = 'audit_log'::regclass
+				  AND (has_table_privilege('sies_app', i.inhrelid, 'SELECT')
+				    OR has_table_privilege('sies_app', i.inhrelid, 'INSERT')
+				    OR has_table_privilege('sies_app', i.inhrelid, 'UPDATE')
+				    OR has_table_privilege('sies_app', i.inhrelid, 'DELETE'))
+				"""), "a partition still grants the service a privilege");
+
+		assertEquals(1, scalar("SELECT count(*) FROM audit_log"),
+				"the entry should still be exactly as it was");
+	}
+
+	/**
+	 * The bookkeeping tables the default grant also opened (C4): the service writes an import's
+	 * remappings and its run record, and changes or removes neither.
+	 */
+	@Test
+	void theApplicationRoleHoldsOnlyWhatItUsesOnTheBookkeepingTables() throws Exception {
+
+		String[][] expected = {
+				{"id_remap", "SELECT INSERT"},
+				{"import_run", "SELECT INSERT UPDATE"},
+				{"department_stream", "SELECT"},
+		};
+
+		for (String[] table : expected) {
+			for (String privilege : List.of("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")) {
+
+				boolean held = scalar("SELECT has_table_privilege('sies_app', '" + table[0]
+						+ "', '" + privilege + "')::int") == 1;
+
+				assertEquals(table[1].contains(privilege), held,
+						"sies_app " + (held ? "holds " : "lacks ") + privilege + " on "
+								+ table[0]);
+			}
+		}
+
+		if (scalar("SELECT (to_regclass('flyway_schema_history') IS NOT NULL)::int") == 1) {
+			assertEquals(0, scalar("SELECT (has_table_privilege('sies_app', "
+					+ "'flyway_schema_history', 'SELECT') OR has_table_privilege('sies_app', "
+					+ "'flyway_schema_history', 'UPDATE'))::int"),
+					"the migrations' ledger is the owner's alone");
+		}
+	}
+
 	// ── What it records, and what it must not ────────────────────────────
 
 	@Test
@@ -413,6 +500,33 @@ class AuditLogTest {
 			assertThrows(SQLException.class, () -> execute(as, "DELETE FROM audit_log"));
 			assertThrows(SQLException.class, () -> execute(as,
 					"INSERT INTO audit_log (actor_label, action) VALUES ('me', 'LOGIN')"));
+		}
+	}
+
+	/**
+	 * The auditor reads who an account is and when it signed in, and not the hashes the
+	 * sign-in rests on (C9). Both tables were readable whole through the default grant, and
+	 * neither has row-level security.
+	 */
+	@Test
+	void theAuditorReadsAccountsAndSessionsButNotTheirSecrets() throws Exception {
+
+		try (Connection as = postgres.auditorConnection()) {
+
+			assertThrows(SQLException.class, () -> execute(as,
+					"SELECT password_hash FROM app_account"),
+					"the auditor must not read password hashes");
+			assertThrows(SQLException.class, () -> execute(as,
+					"SELECT token_hash FROM app_session"),
+					"the auditor must not read session token hashes");
+			assertThrows(SQLException.class, () -> execute(as, "SELECT * FROM app_account"),
+					"nor reach them through *");
+
+			// What an audit does need is still there.
+			execute(as, "SELECT account_id, kind, display_name, login_email, last_login_at, "
+					+ "disabled_at FROM app_account");
+			execute(as, "SELECT session_id, account_id, issued_at, expires_at, client_ip, "
+					+ "revoked_at FROM app_session");
 		}
 	}
 

@@ -16,7 +16,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import in.basulabs.siesattendance.backend.CourseType;
+import in.basulabs.siesattendance.backend.Department;
+import in.basulabs.siesattendance.backend.EntityCourse;
+import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.util.AttendanceCsvParser;
+import in.basulabs.siesattendance.backend.util.AttendanceRecordImporter;
 import in.basulabs.siesattendance.backend.util.AttendanceCsvParser.Mark;
 import in.basulabs.siesattendance.backend.util.AttendanceCsvParser.Sheet;
 import in.basulabs.siesattendance.backend.util.BatchMatcher;
@@ -282,7 +287,10 @@ public class AttendanceImportTest {
 				"End time,10:00",
 				"2024PH001,P");
 
-		assertEquals("PHYS101, part 2", sheet.columns.get(0).courseCode);
+		// One column, not two: had the comma split the cell, column 1 would read PHYS101 and a
+		// second column would hold "part 2". The code is then stored canonically (V57).
+		assertEquals(1, sheet.columns.size());
+		assertEquals("PHYS101PART2", sheet.columns.get(0).courseCode);
 	}
 
 	@Test
@@ -455,6 +463,31 @@ public class AttendanceImportTest {
 		assertNotNull(choice);
 		assertEquals(0, choice.matched);
 		assertEquals(2, choice.missing);
+	}
+
+	// ── Courses this account only reads ──────────────────────────────────
+
+	/**
+	 * A professor reads their department's courses (V53) and keeps the registers only of those
+	 * they teach or head. A column for one of the others is left out on the review screen, with
+	 * the course named, rather than sent for the server to refuse.
+	 */
+	@Test
+	public void aColumnForACourseThisAccountOnlyReadsIsLeftOutWithItsReason() {
+
+		EntityCourse course = new EntityCourse("CS-MN1", "Topic",
+				in.basulabs.siesattendance.backend.Stream.BSc_unaided,
+				Department.COMPUTER_SCIENCE, Year.FY, 1, CourseType.MINOR, null);
+		course.courseID = 3002;
+
+		String problem = AttendanceRecordImporter.readOnlyProblem(Set.of(3002L), course);
+		assertNotNull(problem);
+		assertTrue(problem, problem.contains("CS-MN1"));
+
+		assertNull("a course it keeps the registers of",
+				AttendanceRecordImporter.readOnlyProblem(Set.of(3001L), course));
+		assertNull("/me never said, so the server decides as before",
+				AttendanceRecordImporter.readOnlyProblem(null, course));
 	}
 
 	private static void assertArrayEquals(Mark[] expected, Mark[] actual) {

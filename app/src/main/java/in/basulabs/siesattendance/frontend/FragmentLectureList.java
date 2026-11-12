@@ -149,6 +149,12 @@ public class FragmentLectureList extends Fragment {
 			@Override
 			public void onLectureLongPressed(LectureDetails lecture) {
 
+				// Long-press is only ever "delete", which the server refuses a class
+				// representative (R26). Nothing to offer, so nothing happens.
+				if (!viewModel.mayDeleteRegisters()) {
+					return;
+				}
+
 				// A department's course this professor reads and does not teach (V53).
 				if (!viewModel.mayKeepRegistersOf(lecture.courseID)) {
 					Toast.makeText(requireContext(), R.string.message_course_read_only,
@@ -576,7 +582,8 @@ public class FragmentLectureList extends Fragment {
 	private void confirmDelete(@NonNull LectureDetails lecture) {
 
 		String message = lecture.isMarked()
-				? getString(R.string.dialog_delete_lecture_marked, lecture.markedCount)
+				? getResources().getQuantityString(R.plurals.dialog_delete_lecture_marked,
+						lecture.markedCount, lecture.markedCount)
 				: getString(R.string.dialog_delete_lecture_message);
 
 		new MaterialAlertDialogBuilder(requireContext())

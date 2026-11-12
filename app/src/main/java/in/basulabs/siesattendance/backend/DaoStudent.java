@@ -1,5 +1,7 @@
 package in.basulabs.siesattendance.backend;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.lifecycle.LiveData;
 import androidx.room.Dao;
 import androidx.room.Insert;
@@ -16,6 +18,7 @@ import in.basulabs.siesattendance.backend.pojo.StudentCourseStat;
 import in.basulabs.siesattendance.backend.pojo.StudentLectureMark;
 import in.basulabs.siesattendance.backend.pojo.StudentWithYear;
 import in.basulabs.siesattendance.backend.stats.SqlBits;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 
 /**
  * Students, and the per-session enrolments that sit alongside them.
@@ -114,9 +117,164 @@ public abstract class DaoStudent {
 		}
 	}
 
+	/**
+	 * A roll number in its stored spelling (see {@link CanonicalCode}), refused when nothing of
+	 * it is left. Every write of an enrolment passes through here, so the form, the roster
+	 * import and anything added later store the same spelling the server does (V57), and an
+	 * exact match finds it.
+	 */
+	@NonNull
+	static String canonicalRollNo(@Nullable String rollNo) {
+		String canonical = CanonicalCode.of(rollNo);
+		if (canonical.isEmpty()) {
+			throw new IllegalArgumentException("A roll number needs a letter or a digit: \""
+					+ rollNo + "\"");
+		}
+		return canonical;
+	}
+
 	@Query("SELECT studentID FROM student_year WHERE rollNo = :rollNo AND academicYear = " +
 			":academicYear LIMIT 1")
 	public abstract Long findStudentIdByRollNo(String rollNo, int academicYear);
+
+	/**
+	 * Files one row of a roster, as the server's {@code RosterImporter} does.
+	 * <p>
+	 * The same person by the same three things as {@link #upsertStudentWithYear} -- this
+	 * session's roll number, then the APAAR ID, then the email -- with two differences that are
+	 * the reason a roster has a method of its own:
+	 * <ul>
+	 *     <li>An APAAR ID or email that matches a student already enrolled <em>this</em> session
+	 *     under another roll number is not that row's student being promoted. It is somebody
+	 *     else with the same address -- a sibling, most often -- and filing the row against them
+	 *     renamed them and took their roll number (R17). The row is refused.</li>
+	 *     <li>A column the file does not have leaves the value on record alone, and a blank email
+	 *     never erases one (R18); see {@code RosterCsv.Row.has}.</li>
+	 * </ul>
+	 *
+	 * @return true when an existing student was updated, false when one was created -- however
+	 * they were matched, which is what the import's summary counts (R20)
+	 * @throws IllegalStateException saying why, when the row is refused
+	 */
+	@Transaction
+	public boolean importRosterRow(@NonNull in.basulabs.siesattendance.backend.util.RosterCsv.Row row,
+	                               int academicYear) {
+
+		String rollNo = canonicalRollNo(row.rollNo());
+		Long existing = findStudentIdByRollNo(rollNo, academicYear);
+		String matchedBy = "roll number";
+
+		if (existing == null && row.apaarId() != null) {
+			existing = findStudentIdByApaarId(row.apaarId());
+			matchedBy = "APAAR ID";
+		}
+
+		if (existing == null && row.email() != null) {
+			existing = findStudentIdByEmail(row.email());
+			matchedBy = "email";
+		}
+
+		if (existing != null && !"roll number".equals(matchedBy)) {
+
+			EntityStudentYear held = getEnrolmentSync(existing, academicYear);
+
+			if (held != null && !held.rollNo.equals(rollNo)) {
+				throw new IllegalStateException("its " + matchedBy + " belongs to the student "
+						+ "enrolled this session as " + held.rollNo + ", so the row was not "
+						+ "imported. Two students cannot share an " + matchedBy
+						+ "; check the file.");
+			}
+		}
+
+		long studentID;
+
+		if (existing != null) {
+
+			studentID = existing;
+			EntityStudent stored = getStudentSync(studentID);
+			EntityStudent student = new EntityStudent(row.name(),
+					row.has("pronouns") || stored == null ? row.pronouns() : stored.pronouns,
+					row.email() != null || stored == null ? row.email() : stored.email);
+			student.studentID = studentID;
+			student.apaarId = row.apaarId() != null || stored == null
+					? row.apaarId() : stored.apaarId;
+
+			checkApaarIdIsFree(student.apaarId, studentID);
+			updateStudent(student);
+
+		} else {
+			EntityStudent student = new EntityStudent(row.name(), row.pronouns(), row.email());
+			student.apaarId = row.apaarId();
+			checkApaarIdIsFree(student.apaarId, 0L);
+			studentID = insertStudent(student);
+		}
+
+		EntityStudentYear before = getEnrolmentSync(studentID, academicYear);
+		boolean kept = before != null;
+
+		EntityStudentYear enrolment = new EntityStudentYear(studentID, academicYear, rollNo,
+				row.year(), row.stream(), row.majorDept(),
+				row.has("minordept") || !kept ? row.minorDept() : before.minorDept,
+				row.has("oedept") || !kept ? row.oeDept() : before.oeDept,
+				row.has("semester") || !kept ? row.semester() : before.semester,
+				row.has("division") || !kept ? row.division() : before.division);
+		enrolment.joinDate = row.joinDate() != null ? row.joinDate()
+				: kept ? before.joinDate : null;
+		enrolment.leaveDate = row.leaveDate() != null ? row.leaveDate()
+				: kept ? before.leaveDate : null;
+
+		insertStudentYear(enrolment);
+		return existing != null;
+	}
+
+	/**
+	 * Adds a student entered by hand, refusing anybody already on record.
+	 * <p>
+	 * The same three things {@link #upsertStudentWithYear} recognises a person by -- this
+	 * session's roll number, the APAAR ID, the email -- but here a match is a refusal rather
+	 * than an update (R34). The check and the write share one transaction, so nothing can slip
+	 * in between them.
+	 *
+	 * @throws StudentAlreadyExists naming the student already on record, and what matched
+	 */
+	@Transaction
+	public long addStudentWithYear(EntityStudent student, int academicYear, String rollNo,
+	                               Year year, Stream stream, Department majorDept,
+	                               Department minorDept, Department oeDept,
+	                               Integer semester, Division division,
+	                               java.time.LocalDate joinDate,
+	                               java.time.LocalDate leaveDate) {
+
+		String canonical = canonicalRollNo(rollNo);
+
+		refuseExisting(findStudentIdByRollNo(canonical, academicYear),
+				StudentAlreadyExists.Match.ROLL_NO);
+
+		if (student.apaarId != null) {
+			refuseExisting(findStudentIdByApaarId(student.apaarId),
+					StudentAlreadyExists.Match.APAAR_ID);
+		}
+
+		if (student.email != null && !student.email.isEmpty()) {
+			refuseExisting(findStudentIdByEmail(student.email),
+					StudentAlreadyExists.Match.EMAIL);
+		}
+
+		return upsertStudentWithYear(student, academicYear, canonical, year, stream, majorDept,
+				minorDept, oeDept, semester, division, joinDate, leaveDate);
+	}
+
+	private void refuseExisting(@Nullable Long existing,
+	                            @NonNull StudentAlreadyExists.Match match) {
+
+		if (existing == null) {
+			return;
+		}
+
+		EntityStudent stored = getStudentSync(existing);
+		throw new StudentAlreadyExists(existing, stored == null ? "Another student"
+				: stored.name, match);
+	}
 
 	/**
 	 * Inserts a student and their year record together. If a student with the same roll number
@@ -137,6 +295,8 @@ public abstract class DaoStudent {
 	                                  Integer semester, Division division,
 	                                  java.time.LocalDate joinDate,
 	                                  java.time.LocalDate leaveDate) {
+
+		rollNo = canonicalRollNo(rollNo);
 
 		// The same person, by what identifies them: this session's roll number, then their
 		// APAAR ID -- the one thing that is theirs for life, and so what recognises them in a
@@ -332,6 +492,7 @@ public abstract class DaoStudent {
 	                                  Integer semester, Division division,
 	                                  java.time.LocalDate joinDate,
 	                                  java.time.LocalDate leaveDate) {
+		rollNo = canonicalRollNo(rollNo);
 		checkApaarIdIsFree(student.apaarId, student.studentID);
 		updateStudent(student);
 		updateStudentYear(student.studentID, academicYear, rollNo, year, stream, majorDept,
@@ -486,6 +647,59 @@ public abstract class DaoStudent {
 			"ORDER BY y.rollNo ASC")
 	public abstract List<StudentWithYear> getRollForBatchSync(long batchID, int academicYear);
 
+	/**
+	 * The course's roll as it stood on one day: everybody in one of its batches who had joined
+	 * by then and had not yet left.
+	 * <p>
+	 * The rolls above are today's, and leave out anybody with a leave date, whenever it is. For
+	 * a lecture in July that is wrong about a student who left in August: they were in the room,
+	 * and "drop stranded marks" deleted their mark as though they had never been on the roll
+	 * (R16). A register is about its own day, so its roll is that day's.
+	 */
+	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
+			"FROM student_year y " +
+			"INNER JOIN students s ON s.studentID = y.studentID " +
+			"WHERE y.academicYear = :academicYear " +
+			"AND (y.joinDate IS NULL OR y.joinDate <= :day) " +
+			"AND (y.leaveDate IS NULL OR y.leaveDate >= :day) " +
+			"AND EXISTS (SELECT 1 FROM course_batch_map cb " +
+			"            INNER JOIN batch_student_map m ON m.batchID = cb.batchID " +
+			"            WHERE cb.courseID = :courseID " +
+			"              AND m.studentID = y.studentID " +
+			"              AND m.academicYear = :academicYear) " +
+			"ORDER BY y.rollNo ASC")
+	public abstract List<StudentWithYear> getRollForCourseOnSync(long courseID, int academicYear,
+	                                                             java.time.LocalDate day);
+
+	/**
+	 * A roll as it stood on one day: one batch's, or the course's whole roll when the batch is
+	 * null. See {@link #getRollForCourseOnSync}.
+	 */
+	@NonNull
+	public List<StudentWithYear> getRollOnSync(long courseID, @Nullable Long batchID,
+	                                           int academicYear, java.time.LocalDate day) {
+		return batchID == null
+				? getRollForCourseOnSync(courseID, academicYear, day)
+				: getRollForBatchOnSync(batchID, academicYear, day);
+	}
+
+	/** One batch's roll as it stood on one day; see {@link #getRollForCourseOnSync}. */
+	@Query("SELECT s.studentID, s.name, s.pronouns, s.email, y.rollNo, y.academicYear, " +
+			"y.year, y.stream, y.majorDept, y.minorDept, y.oeDept, y.semester, y.division, " +
+			"s.apaarId, y.joinDate, y.leaveDate " +
+			"FROM students s " +
+			"INNER JOIN batch_student_map m ON m.studentID = s.studentID " +
+			"INNER JOIN student_year y ON y.studentID = s.studentID " +
+			"   AND y.academicYear = m.academicYear " +
+			"WHERE m.batchID = :batchID AND m.academicYear = :academicYear " +
+			"AND (y.joinDate IS NULL OR y.joinDate <= :day) " +
+			"AND (y.leaveDate IS NULL OR y.leaveDate >= :day) " +
+			"ORDER BY y.rollNo ASC")
+	public abstract List<StudentWithYear> getRollForBatchOnSync(long batchID, int academicYear,
+	                                                            java.time.LocalDate day);
+
 	// ── Per-course breakdown for one student ─────────────────────────────
 
 	/*
@@ -501,12 +715,10 @@ public abstract class DaoStudent {
 					"AND (:toEpoch IS NULL OR " + SqlBits.EPOCH_START + " <= :toEpoch) ";
 
 	/**
-	 * One row per course this student has any attendance recorded against.
+	 * One row per course this student has had a lecture held for them in.
 	 * <p>
-	 * The denominator counts the student's own attendance rows, not lectures held, so a lecture
-	 * they were left off entirely does not appear here at all. That is the opposite of what the
-	 * export does, and it is the right way round for this screen: this is a breakdown of what
-	 * was recorded for one student, whereas the export is a report on how much they attended.
+	 * The denominator is the lectures the student has a mark for, as it is in the register
+	 * export and the statistics; see {@code SqlBits.MARKS}.
 	 * <p>
 	 * Unfiltered this spans every session the student has been enrolled in, which is the honest
 	 * default for a record of a person rather than of a year. The window narrows it; see
@@ -525,10 +737,14 @@ public abstract class DaoStudent {
 	@Query("SELECT c.courseID, c.courseCode, c.courseTopic, " +
 			"COUNT(a.lectureID) AS totalLectures, " +
 			"SUM(CASE WHEN a.present = 1 THEN 1 ELSE 0 END) AS attended " +
-			"FROM attendance a " +
+			"FROM " + SqlBits.MARKS + " a " +
 			"INNER JOIN lectures l ON l.lectureID = a.lectureID " +
 			"INNER JOIN courses c ON c.courseID = l.courseID " +
+			SqlBits.ENROLMENT_AT_LECTURE +
 			"WHERE a.studentID = :studentID " +
+			// From the day they joined, as the statistics count (R32): a mark from before is
+			// left out here too, so the two give the same fraction.
+			"AND " + SqlBits.COUNTS_FOR_ENROLMENT + " " +
 			LECTURE_IN_WINDOW +
 			// Several types at once: "how are the practicals doing" is one breakdown across
 			// every laboratory type, not one per type. Guarded by its own flag for the same
@@ -549,7 +765,7 @@ public abstract class DaoStudent {
 	                                                                     List<Long> courseIDs);
 
 	/**
-	 * Every course this student has been marked in, for the chips that pick which of them the
+	 * Every course this student has had a lecture held for them in, for the chips that pick which of them the
 	 * breakdown covers.
 	 * <p>
 	 * Deliberately unfiltered. The chips are the control, so narrowing them by the window they
@@ -559,18 +775,17 @@ public abstract class DaoStudent {
 	 */
 	@Query("SELECT DISTINCT c.* FROM courses c " +
 			"INNER JOIN lectures l ON l.courseID = c.courseID " +
-			"INNER JOIN attendance a ON a.lectureID = l.lectureID " +
+			"INNER JOIN " + SqlBits.MARKS + " a ON a.lectureID = l.lectureID " +
 			"WHERE a.studentID = :studentID " +
 			"ORDER BY c.courseCode ASC")
 	public abstract List<EntityCourse> getAttendedCoursesSync(long studentID);
 
 	/**
 	 * The lectures behind one row of {@link #getCourseBreakdown}: every lecture of one course
-	 * this student was marked on, and whether they were present at it.
+	 * held for this student, and whether they were present at it.
 	 * <p>
-	 * Restricted to the student's own attendance rows for the same reason the breakdown is. A
-	 * lecture nobody put them on the sheet for is not an absence, and listing it as a date they
-	 * missed would put a record on screen that was never taken.
+	 * Read from {@code SqlBits.MARKS} as the breakdown is, so the list is the marks the
+	 * fraction was counted from.
 	 * <p>
 	 * Newest first, because a run of recent absences is what anyone opening this screen is
 	 * looking for. Ordered on the epoch prefix rather than the stored string, which would sort
@@ -581,10 +796,13 @@ public abstract class DaoStudent {
 	 */
 	@Query("SELECT l.lectureID, l.startDateTime, l.endDateTime, " +
 			"b.batchName AS batchName, a.present " +
-			"FROM attendance a " +
+			"FROM " + SqlBits.MARKS + " a " +
 			"INNER JOIN lectures l ON l.lectureID = a.lectureID " +
 			"LEFT JOIN batch_desc b ON b.batchID = l.batchID " +
+			SqlBits.ENROLMENT_AT_LECTURE +
 			"WHERE a.studentID = :studentID AND l.courseID = :courseID " +
+			// The breakdown's own rule, so this list adds up to its fraction (R32).
+			"AND " + SqlBits.COUNTS_FOR_ENROLMENT + " " +
 			LECTURE_IN_WINDOW +
 			"ORDER BY " + SqlBits.EPOCH_START + " DESC")
 	public abstract LiveData<List<StudentLectureMark>> getLectureMarks(long studentID,

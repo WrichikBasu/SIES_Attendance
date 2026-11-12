@@ -42,6 +42,7 @@ import in.basulabs.siesattendance.backend.util.MarkSheetExporter;
 import in.basulabs.siesattendance.frontend.adapter.AdapterAttendance;
 import in.basulabs.siesattendance.frontend.util.MarkExportFlow;
 import in.basulabs.siesattendance.frontend.util.Ui;
+import in.basulabs.siesattendance.frontend.util.UnsavedMarksGuard;
 import in.basulabs.siesattendance.frontend.viewmodel.AttendanceViewModel;
 
 /**
@@ -73,6 +74,13 @@ public class FragmentAttendance extends Fragment {
 	private boolean readOnly;
 
 	private View markAllRow, save;
+
+	/**
+	 * Whether this fragment has already asked for its register. It outlives its view while
+	 * another screen is on top of it, so true here on a rebuilt view means the user is coming
+	 * back to a sheet they may have been part way through.
+	 */
+	private boolean sheetRequested;
 
 	/** Exporting this lecture's marks; a field so its save dialogs are registered in time. */
 	private final MarkExportFlow exportFlow = new MarkExportFlow(this);
@@ -119,9 +127,19 @@ public class FragmentAttendance extends Fragment {
 
 		viewModel.getAttendanceRows().observe(getViewLifecycleOwner(), this::onRowsChanged);
 
+		// The register is read every time the view is built, but only a fresh visit starts
+		// from what is saved. A rotation (a saved state) or coming back from "Edit lecture"
+		// (this same fragment, its view rebuilt) keeps the marks changed and not yet saved,
+		// which reading the register afresh used to throw away (R25). After the app was killed
+		// there is a saved state but nothing held, and the ViewModel starts afresh by itself.
 		if (lectureID > 0) {
-			viewModel.loadAttendanceSheet(lectureID);
+			viewModel.loadAttendanceSheet(lectureID,
+					sheetRequested || savedInstanceState != null);
+			sheetRequested = true;
 		}
+
+		// Back used to drop marks changed and not saved without a word.
+		UnsavedMarksGuard.install(this, () -> viewModel.hasUnsavedSheetEdits(lectureID));
 
 		setupMenu();
 	}
@@ -138,12 +156,17 @@ public class FragmentAttendance extends Fragment {
 				inflater.inflate(R.menu.menu_attendance_record, menu);
 			}
 
-			/** A register this account only reads can still be exported, and nothing else. */
+			/**
+			 * A register this account only reads can still be exported, and nothing else. A
+			 * class representative may correct a register but not delete one or its marks, which
+			 * the server refuses them (R26), so the delete item is not offered at all.
+			 */
 			@Override
 			public void onPrepareMenu(@NonNull Menu menu) {
 				menu.findItem(R.id.action_edit_lecture).setVisible(!readOnly);
 				menu.findItem(R.id.action_duplicate_attendance).setVisible(!readOnly);
-				menu.findItem(R.id.action_delete_attendance).setVisible(!readOnly);
+				menu.findItem(R.id.action_delete_attendance)
+						.setVisible(!readOnly && viewModel.mayDeleteRegisters());
 			}
 
 			@Override
@@ -227,8 +250,8 @@ public class FragmentAttendance extends Fragment {
 	/**
 	 * Two different things get called "deleting the attendance", and they are not
 	 * interchangeable: one throws away who was present, the other says the lecture never
-	 * happened. Statistics treat them differently, since a cleared lecture still counts as a
-	 * session that was held, so the choice is put to the user rather than assumed.
+	 * happened. A cleared lecture stays on the timetable, waiting to be marked again, and
+	 * counts for nobody until it is, so the choice is put to the user rather than assumed.
 	 */
 	private void askHowToDelete() {
 
@@ -256,7 +279,7 @@ public class FragmentAttendance extends Fragment {
 
 	/**
 	 * Clearing keeps the lecture and discards its sheet, which is what is wanted after marking
-	 * the wrong roll. The lecture itself stays, so it still counts as having been held.
+	 * the wrong roll. The lecture itself stays on the timetable, to be marked again.
 	 */
 	private void confirmClearMarks() {
 
@@ -300,6 +323,10 @@ public class FragmentAttendance extends Fragment {
 
 		int present = 0, absent = 0;
 		for (AttendanceRow row : rows) {
+			// Neither: nobody has said, and nothing will be saved for them.
+			if (!row.marked) {
+				continue;
+			}
 			if (row.present) {
 				present++;
 			} else {

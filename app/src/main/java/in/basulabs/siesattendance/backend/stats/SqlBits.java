@@ -34,13 +34,53 @@ public final class SqlBits {
 					+ "AS INTEGER)";
 
 	/**
-	 * Whether a lecture counts for the enrolment {@code y}: on or after the day the student
-	 * joined, or any lecture when no join date is recorded. A late joiner's attendance is
-	 * counted from the day they joined, so a defaulter list does not hold the weeks before
-	 * against them. {@code PgSqlBits.COUNTS_FOR_ENROLMENT} is the same rule.
+	 * Whether a lecture counts for the enrolment {@code y}: between the day the student joined
+	 * and the day they left, both included, with a missing date leaving that end open. A late
+	 * joiner's attendance is counted from the day they joined, so a defaulter list does not hold
+	 * the weeks before against them; and a leaver's stops on the day they left, which it did
+	 * not until R10 -- a mark recorded against them afterwards still counted.
+	 * {@code PgSqlBits.COUNTS_FOR_ENROLMENT} is the same rule.
 	 */
 	public static final String COUNTS_FOR_ENROLMENT =
-			"(y.joinDate IS NULL OR " + LECTURE_LOCAL_DAY + " >= y.joinDate)";
+			"((y.joinDate IS NULL OR " + LECTURE_LOCAL_DAY + " >= y.joinDate)"
+					+ " AND (y.leaveDate IS NULL OR " + LECTURE_LOCAL_DAY + " <= y.leaveDate))";
+
+	/** The session a lecture falls in: the latest one whose bounds contain its start. */
+	private static final String SESSION_OF_LECTURE =
+			"(SELECT ay2.academicYear FROM academic_years ay2"
+					+ " WHERE " + EPOCH_START + " BETWEEN ay2.startEpoch AND ay2.endEpoch"
+					+ " ORDER BY ay2.academicYear DESC LIMIT 1)";
+
+	/**
+	 * Joins {@code y}, the student's enrolment in the session of lecture {@code l}, for the
+	 * student {@code a}, so {@link #COUNTS_FOR_ENROLMENT} can be applied. A left join: a mark in
+	 * a session the student is no longer enrolled in has no row, and is kept, since
+	 * {@code COUNTS_FOR_ENROLMENT} passes a null join date.
+	 */
+	public static final String ENROLMENT_AT_LECTURE =
+			" LEFT JOIN student_year y ON y.studentID = a.studentID"
+					+ "    AND y.academicYear = " + SESSION_OF_LECTURE + " ";
+
+	/**
+	 * The marks on record, as {@code (lectureID, studentID, present)}: what every report counts.
+	 * <p>
+	 * Attendance is computed from the marks alone. A register writes a mark, present or
+	 * absent, for everybody on its sheet, so the marks are the record of who a lecture was
+	 * held for on the day; a student with no mark at a lecture was not on its sheet, and the
+	 * lecture counts neither for nor against them.
+	 * <p>
+	 * This used to add an absence for every lecture of a student's <em>current</em> batch that
+	 * they had no mark for. Batch membership is only what is true today, and students change
+	 * batch during the year, so that charged a student who moved into a batch with every
+	 * lecture it had held before they arrived. {@code ExportQueryBuilder} counts the same way,
+	 * so the register export and the statistics give the same figures.
+	 * <p>
+	 * A parenthesised subquery, to be given an alias by the query using it. Kept as a name, and
+	 * not replaced by the table, so that there is one place that says what a report reads.
+	 */
+	public static final String MARKS =
+			"(SELECT m.lectureID AS lectureID, m.studentID AS studentID, m.present AS present"
+					+ " FROM attendance m)";
 
 	private SqlBits() {
 	}

@@ -548,6 +548,16 @@ union of its kind, its roles (`HOD`, `OFFICE`, `AUDITOR`, `ADMIN`) and its CR ap
   phone shows them read-only to everybody else.
 - **A student account can do nothing until someone appoints it CR** of a course
   (`attendance_delegate`). Appointments are per course and per session.
+- **A mark may only name a student the account can already see** (V59). Whoever reads a mark
+  reads the student it names (V21), so without this rule writing a mark was a way of granting
+  yourself a read: a class representative could mark a student picked out of the key space and
+  be handed their name, email and APAAR ID. The check asks `students` under the account's own
+  policies, so it is the same list of rules and not a second copy of it.
+- **A professor reads a student who has no enrolment yet** (V60). Sync writes every row as
+  `INSERT … ON CONFLICT DO UPDATE`, and PostgreSQL holds that row to the `SELECT` policies too.
+  Without this, a student a professor added from a phone, with the enrolment still to come,
+  was refused, and the enrolment then failed its foreign key. The only students it adds to what
+  a professor already read are those with no enrolment at all.
 - **A HOD grant names a department and, optionally, a session.** With no session it lasts until
   revoked.
 - **Nothing is deleted to make room.** Every foreign key is `RESTRICT`. Roles and appointments
@@ -703,7 +713,8 @@ Drop `--import.dry-run` to keep the result. `--import.history=true` lists past r
 
 Each import runs in one transaction and its report is stored in `import_run`. Rows are matched by
 key, then by natural key (roll number, course code and so on), and inserted only if neither
-matches. Importing the same unchanged backup again changes nothing. A row that breaks a constraint
+matches. Roll numbers and course codes are compared and stored as letters and digits in capitals
+(V57), so a backup's `cs-fy-001` finds the server's `CSFY001`. Importing the same unchanged backup again changes nothing. A row that breaks a constraint
 stops the import: fix the data, not the constraint.
 
 **Exporting** (`POST /backup/export`, or the console) writes what a phone signed in as the admin

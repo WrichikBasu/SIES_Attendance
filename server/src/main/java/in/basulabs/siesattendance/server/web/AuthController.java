@@ -116,7 +116,8 @@ public final class AuthController {
 
 		String clientIp = Api.clientIp(http);
 
-		if (!limiter.allow(clientIp)) {
+		// Per address and account, and per address for failures: see LoginRateLimiter (R4).
+		if (!limiter.allow(clientIp, body.email())) {
 			// 429 and not 401: this one is about the address rather than the details, and a
 			// person who has genuinely mistyped their password ten times should be told to wait
 			// rather than told their password is wrong.
@@ -130,6 +131,7 @@ public final class AuthController {
 
 		if (body.email() == null || body.email().isBlank() || body.password() == null
 				|| body.password().isEmpty()) {
+			limiter.failed(clientIp);
 			// Refused without a database lookup, and refused with the same words as everything
 			// else. An empty password is not a special case worth describing.
 			throw new ApiException(401, "sign_in_refused", REFUSED);
@@ -139,6 +141,7 @@ public final class AuthController {
 				body.password().toCharArray(), clientIp, appVersion);
 
 		if (!attempt.succeeded()) {
+			limiter.failed(clientIp);
 			throw new ApiException(401, "sign_in_refused", REFUSED);
 		}
 
@@ -205,9 +208,20 @@ public final class AuthController {
 					"The new password is the same as the current one.");
 		}
 
-		if (!directory.matchesPassword(actor.accountId(),
-				body.currentPassword().toCharArray())) {
+		// Counted and recorded like a login attempt, in a transaction of its own that commits
+		// before any refusal is thrown: thrown inside it, the refusal would roll the count back
+		// and the check would again be an unlimited way to guess the password.
+		AccountDirectory.Recheck recheck = database.inTransaction(actor, connection ->
+				AccountDirectory.recheckPassword(connection, actor.accountId(),
+						body.currentPassword().toCharArray()));
 
+		if (recheck == AccountDirectory.Recheck.LOCKED) {
+			throw new ApiException(429, "account_locked",
+					"Too many wrong passwords for this account. Wait a few minutes, then try "
+							+ "again.");
+		}
+
+		if (recheck == AccountDirectory.Recheck.WRONG) {
 			// Not 401: the session is perfectly good and signing in again would not help.
 			throw new ApiException(403, "current_password_wrong",
 					"That is not the current password for this account.");

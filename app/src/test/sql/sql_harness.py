@@ -327,22 +327,278 @@ def test_export_denominator_counts_lectures_held(conn):
           f"held={rows[('2025CS01','CS201')]['held']} expected 3")
     check("export: batch lectures count only for that batch's members",
           rows[("2025CS01", "CS202")]["held"] == 1,
-          f"held={rows[('2025CS01','CS202')]['held']} expected 1")
+          f"held={rows[('2025CS01','CS202')]['held']} expected 1 (L3 only)")
     check("export: the other batch's lecture counts for the other batch",
           rows[("2025CS02", "CS202")]["held"] == 1)
 
-    # The load-bearing case: Rahul was left off L2's sheet entirely. Counting his own
-    # attendance rows would give 2/2 = 100%. Counting lectures held gives 2/3.
-    # Rahul: absent at L1, never on L2's sheet at all, present at L5. Counting his own
-    # attendance rows would make it 1 of 2 (50%); counting lectures held makes it 1 of 3
-    # (33%), which is the truth.
+    # The load-bearing case: Rahul was absent at L1, never on L2's sheet at all, and present
+    # at L5. Held is counted from his own marks, so L2 is not his: 1 of 2. Counting every
+    # lecture of the course, or of the batch he is in today, would make it 1 of 3.
     rahul = rows[("2025CS03", "CS201")]
     own_rows = conn.execute(
         "SELECT COUNT(*) FROM attendance a JOIN lectures l ON l.lectureID = a.lectureID "
         "WHERE a.studentID = 3 AND l.courseID = 1 AND l.lectureID != 6").fetchone()[0]
-    check("export: a student left off a sheet is not flattered by a shrunken denominator",
-          rahul["held"] == 3 and rahul["attended"] == 1 and own_rows == 2,
+    check("export: held is the lectures the student has a mark for",
+          rahul["held"] == 2 and rahul["attended"] == 1 and own_rows == 2,
           f"held={rahul['held']} attended={rahul['attended']} ownRows={own_rows}")
+
+
+def lecture_for(conn, lecture_id, course_id, batch_id, day, marks):
+    """Adds a July 2025 lecture and a mark for each (student, present) given."""
+    conn.execute("INSERT INTO lectures VALUES (?,?,?,?,?,?)",
+                 (lecture_id, course_id, batch_id, ts(2025, 7, day, 9, 0),
+                  ts(2025, 7, day, 10, 0), None))
+    conn.executemany("INSERT INTO attendance (lectureID, studentID, present) VALUES (?,?,?)",
+                     [(lecture_id, student, present) for student, present in marks])
+
+
+def export_rows(conn):
+    return {(r["rollNo"], r["courseCode"]): r for r in run(conn, "export_unrestricted")}
+
+
+def stats_by_student(conn):
+    return {r["primaryLabel"]: (r["total"], r["attended"])
+            for r in run(conn, "stats_grouped_STUDENT")}
+
+
+def test_export_follows_the_marks_when_a_student_changes_batch():
+    """
+    Students change batch during the year, and batch membership is only what is true today.
+    The figures are counted from the marks, so a move changes nothing that was already
+    recorded: the student keeps the lectures they were marked at with the old batch, owes
+    none of the lectures the new batch held before they arrived, and collects the new
+    batch's lectures from the first one they are marked at.
+    """
+    conn = build_fixture()
+
+    # Batch B (Sneha alone) holds three more CS202 lectures while Aarav is still in Batch A.
+    for i, day in enumerate((1, 2, 3)):
+        lecture_for(conn, 100 + i, 2, 2, day, [(2, 1)])
+    before = export_rows(conn)[("2025CS01", "CS202")]
+    stats_before = stats_by_student(conn)["2025CS01"]
+
+    conn.execute("UPDATE batch_student_map SET batchID = 2 WHERE batchID = 1 AND studentID = 1")
+    conn.commit()
+    moved = export_rows(conn)[("2025CS01", "CS202")]
+
+    check("export: moving batch changes nothing already recorded",
+          (moved["held"], moved["attended"]) == (before["held"], before["attended"]) == (1, 1),
+          f"before={dict(before)} after={dict(moved)}")
+    check("stats: moving batch changes nothing already recorded",
+          stats_by_student(conn)["2025CS01"] == stats_before,
+          f"before={stats_before} after={stats_by_student(conn)['2025CS01']}")
+
+    # The first lecture of Batch B he is on the sheet for, and absent from.
+    lecture_for(conn, 110, 2, 2, 20, [(1, 0), (2, 1)])
+    after = export_rows(conn)[("2025CS01", "CS202")]
+    check("export: the new batch's lectures count from the first one they are marked at",
+          after["held"] == 2 and after["attended"] == 1, f"{dict(after)}")
+
+    # Batch A carries on without him, and he owes it nothing.
+    lecture_for(conn, 111, 2, 1, 21, [(3, 1)])
+    still = export_rows(conn)[("2025CS01", "CS202")]
+    check("export: the old batch's later lectures are not held against them",
+          still["held"] == 2 and still["attended"] == 1, f"{dict(still)}")
+
+    conn.close()
+
+
+def test_export_keeps_a_student_who_is_in_none_of_the_courses_batches():
+    """
+    Taking a student out of every batch of a course deletes none of their marks, and the
+    register must go on showing them: they have a row for the course for as long as they hold
+    a mark in it this session, with the figures those marks give.
+    """
+    conn = build_fixture()
+
+    marks_before = conn.execute("SELECT COUNT(*) FROM attendance WHERE studentID = 1").fetchone()[0]
+    before = export_rows(conn)
+    stats_before = stats_by_student(conn)["2025CS01"]
+
+    # Aarav leaves Batch A, the only batch of CS202 he was in.
+    conn.execute("DELETE FROM batch_student_map WHERE studentID = 1 AND batchID = 1")
+    conn.commit()
+
+    marks_after = conn.execute("SELECT COUNT(*) FROM attendance WHERE studentID = 1").fetchone()[0]
+    check("dropping a student from a batch deletes none of their marks",
+          marks_after == marks_before, f"before={marks_before} after={marks_after}")
+
+    after = export_rows(conn)
+    row = after.get(("2025CS01", "CS202"))
+    check("export: a student in none of a course's batches keeps their row for it",
+          row is not None and (row["held"], row["attended"]) == (1, 1),
+          f"{dict(row) if row else None}")
+    check("export: and every other figure of theirs is unchanged",
+          {k: (v["held"], v["attended"]) for k, v in after.items() if k[0] == "2025CS01"}
+          == {k: (v["held"], v["attended"]) for k, v in before.items() if k[0] == "2025CS01"})
+    check("stats: a student in none of a course's batches keeps their figures",
+          stats_by_student(conn)["2025CS01"] == stats_before)
+
+    # Out of every batch altogether: still listed, for every course they were marked in.
+    conn.execute("DELETE FROM batch_student_map WHERE studentID = 1")
+    conn.commit()
+    codes = {code for roll, code in export_rows(conn) if roll == "2025CS01"}
+    check("export: a student in no batch at all keeps every course they hold a mark in",
+          codes == {"CS201", "CS202"}, f"{sorted(codes)}")
+
+    conn.close()
+
+
+def test_export_lists_the_roll_before_anything_is_marked():
+    """
+    The other way onto the sheet: a student put on a course's roll today has a row for it at
+    once, with nought held, and is charged nothing for what the course held before.
+    """
+    conn = build_fixture()
+
+    # Meera (Physics, 2025PH01) joins Batch B of CS202, which has already had a lecture.
+    conn.execute("INSERT INTO batch_student_map VALUES (2, 4, 2025)")
+    conn.commit()
+
+    row = export_rows(conn).get(("2025PH01", "CS202"))
+    check("export: a student new to the roll is listed with nothing held",
+          row is not None and (row["held"], row["attended"]) == (0, 0),
+          f"{dict(row) if row else None}")
+    check("stats: and has no figures until they are marked",
+          "2025PH01" not in stats_by_student(conn))
+
+    conn.close()
+
+
+def test_export_counts_from_the_join_date_or_the_session_start():
+    """
+    A student's figures start on the day they joined, or at the start of the session when no
+    join date is recorded. The same bound applies to held and to attended, so a mark from
+    before it can neither count for nor against them.
+
+    Aarav in CS201: present at L1 (10 July), L2 (11 July) and L5 (15 August).
+    """
+    import datetime
+
+    def day(y: int, m: int, d: int) -> int:
+        return (datetime.date(y, m, d) - datetime.date(1970, 1, 1)).days
+
+    def aarav(conn) -> tuple[int, int]:
+        r = export_rows(conn)[("2025CS01", "CS201")]
+        return r["held"], r["attended"]
+
+    def joined(conn, value) -> None:
+        conn.execute("UPDATE student_year SET joinDate = ? "
+                     "WHERE studentID = 1 AND academicYear = 2025", (value,))
+        conn.commit()
+
+    conn = build_fixture()
+
+    # A mark he holds from before the session began: the orphan lecture of February 2024.
+    conn.execute("INSERT INTO attendance (lectureID, studentID, present) VALUES (6, 1, 1)")
+    joined(conn, None)
+    check("export: with no join date, attended counts from the start of the session",
+          aarav(conn) == (3, 3), f"{aarav(conn)}")
+
+    joined(conn, day(2025, 7, 11))
+    check("export: attended counts from the join date, the day itself included",
+          aarav(conn) == (2, 2), f"{aarav(conn)}")
+
+    joined(conn, day(2025, 7, 12))
+    check("export: a mark from before the join date counts neither as held nor attended",
+          aarav(conn) == (1, 1), f"{aarav(conn)}")
+
+    joined(conn, day(2023, 1, 1))
+    check("export: a join date before the session still counts from the session start",
+          aarav(conn) == (3, 3), f"{aarav(conn)}")
+
+    joined(conn, day(2025, 9, 1))
+    after = export_rows(conn)
+    check("export: joined after every lecture, nothing is held or attended",
+          ("2025CS01", "CS201") in after and aarav(conn) == (0, 0), f"{aarav(conn)}")
+
+    stats = stats_by_student(conn).get("2025CS01", (0, 0))
+    total = [sum(v[k] for key, v in after.items() if key[0] == "2025CS01") for k in ("held", "attended")]
+    check("export and statistics agree on a late joiner",
+          stats == (total[0], total[1]), f"stats={stats} export={total}")
+
+    conn.close()
+
+
+def test_export_keeps_history_and_never_exceeds_held():
+    """
+    Held is the lectures the student has a mark for, so a change of batch keeps exactly what
+    was recorded, a lecture whose marks were cleared counts for nobody until it is marked
+    again, and attended can never be more than held.
+    """
+    conn = build_fixture()
+
+    def rows() -> dict[tuple[str, str], sqlite3.Row]:
+        return {(r["rollNo"], r["courseCode"]): r for r in run(conn, "export_unrestricted")}
+
+    # A student who moves to the course's other batch keeps the lecture they sat in the
+    # first, and owes nothing for the other batch's lecture, L4, which they were never
+    # marked at: one held, one attended.
+    conn.execute("UPDATE batch_student_map SET batchID = 2 WHERE batchID = 1 AND studentID = 1")
+    conn.commit()
+    aarav = rows()[("2025CS01", "CS202")]
+    check("export: a student who changed batch keeps the lectures they sat before",
+          aarav["held"] == 1 and aarav["attended"] == 1,
+          f"held={aarav['held']} attended={aarav['attended']}")
+
+    # A lecture whose marks were cleared is waiting to be marked again, and counts for nobody.
+    before = rows()[("2025CS02", "CS201")]
+    conn.execute("DELETE FROM attendance WHERE lectureID = 5")
+    conn.commit()
+    cleared = rows()[("2025CS02", "CS201")]
+    check("export: a lecture with its marks cleared counts for nobody",
+          cleared["held"] == before["held"] - 1 and cleared["attended"] == before["attended"] - 1,
+          f"before={dict(before)} after={dict(cleared)}")
+
+    check("export: nobody attends more than was held",
+          all(r["attended"] <= r["held"] for r in rows().values()))
+
+    conn.close()
+
+
+def test_export_agrees_with_the_statistics():
+    """
+    The register export and the statistics have to give one figure for one student. Both are
+    counted from the marks alone; three ways the tables change under them, and the two
+    reports must still agree after each.
+    """
+    conn = build_fixture()
+
+    def export_totals() -> dict[str, tuple[int, int]]:
+        totals: dict[str, tuple[int, int]] = {}
+        for r in run(conn, "export_unrestricted"):
+            held, attended = totals.get(r["rollNo"], (0, 0))
+            totals[r["rollNo"]] = (held + r["held"], attended + r["attended"])
+        return totals
+
+    def stats_totals() -> dict[str, tuple[int, int]]:
+        return {r["primaryLabel"]: (r["total"], r["attended"])
+                for r in run(conn, "stats_grouped_STUDENT")}
+
+    def agree(label: str) -> None:
+        export = export_totals()
+        stats = stats_totals()
+        # A student with no lecture held for them has an export row of 0/0 and no
+        # statistics row.
+        held = {roll: figures for roll, figures in export.items() if figures[0] > 0}
+        check(f"export and statistics agree: {label}", held == stats,
+              f"export={held} stats={stats}")
+
+    agree("as recorded, with Rahul left off one sheet")
+
+    conn.execute("UPDATE batch_student_map SET batchID = 2 WHERE batchID = 1 AND studentID = 1")
+    conn.commit()
+    agree("after a student changes batch")
+
+    conn.execute("DELETE FROM attendance WHERE lectureID = 5")
+    conn.commit()
+    agree("after a lecture's marks are cleared")
+
+    conn.execute("DELETE FROM batch_student_map WHERE studentID = 3")
+    conn.commit()
+    agree("after a student is taken out of every batch")
+
+    conn.close()
 
 
 def test_export_roster_is_the_courses_batches(conn):
@@ -408,8 +664,9 @@ def test_export_date_window(conn):
           f"held={rows[('2025CS01','CS201')]['held']} expected 2")
     check("export: the date window narrows the attended count in step",
           rows[("2025CS01", "CS201")]["attended"] == 2)
+    # Rahul in July: absent at L1 and not on L2's sheet, so one lecture held and none attended.
     check("export: a windowed percentage stays over one denominator",
-          rows[("2025CS03", "CS201")]["held"] == 2
+          rows[("2025CS03", "CS201")]["held"] == 1
           and rows[("2025CS03", "CS201")]["attended"] == 0,
           f"{rows[('2025CS03','CS201')]}")
 
@@ -445,7 +702,7 @@ def test_stats_grouped_by_student(conn):
           {"2025CS01", "2025CS02", "2025CS03"}, f"{sorted(rows)}")
 
     aarav = rows["2025CS01"]
-    check("stats: attendance rows are counted, not lectures held",
+    check("stats: a student marked at every lecture has one row per lecture",
           aarav["total"] == 4 and aarav["attended"] == 4,
           f"total={aarav['total']} attended={aarav['attended']}")
     check("stats: the secondary label carries the raw roster name",
@@ -456,7 +713,8 @@ def test_stats_grouped_by_student(conn):
           all(r["students"] == 1 for r in rows.values()))
 
     rahul = rows["2025CS03"]
-    check("stats: a student left off a sheet has a smaller denominator here than in export",
+    # Rahul has no mark at L2, so it is not counted for him, here as in the export.
+    check("stats: a lecture with no mark for a student is not counted for them",
           rahul["total"] == 3 and rahul["attended"] == 2,
           f"total={rahul['total']} attended={rahul['attended']}")
 
@@ -701,7 +959,7 @@ def test_stats_batch_filter_reaches_subset_batches():
     check("stats: whole-class lectures count towards a batch's students",
           rows["2025CS01"]["lectures"] == 4, f"{rows['2025CS01']}")
 
-    # Batch A itself: Aarav's four rows plus Rahul's three.
+    # Batch A itself: Aarav's four marks plus Rahul's three.
     parent = {r["primaryLabel"]: r for r in run(conn, "stats_batch_only", [2025, 1])}
     check("stats: the parent batch returns both its students",
           set(parent) == {"2025CS01", "2025CS03"}, f"{sorted(parent)}")
@@ -743,10 +1001,10 @@ def test_stats_lecture_counts_are_distinct(conn):
     rows = {r["primaryLabel"]: r for r in run(conn, "stats_grouped_COURSE")}
 
     cs201 = rows["CS201"]
-    # 3 lectures inside the session, 8 attendance rows across them.
+    # 3 lectures inside the session: 8 marks, Rahul having none at L2.
     check("stats: lectures are counted DISTINCT, not once per marked student",
           cs201["lectures"] == 3, f"lectures={cs201['lectures']}")
-    check("stats: total counts attendance rows",
+    check("stats: total counts each student at each lecture they have a mark for",
           cs201["total"] == 8, f"total={cs201['total']}")
     check("stats: distinct students across a course",
           cs201["students"] == 3, f"students={cs201['students']}")
@@ -759,7 +1017,8 @@ def test_stats_excludes_orphan_lectures(conn):
     check("stats: the session join excludes lectures outside every session",
           summary["lectures"] == 5,
           f"lectures={summary['lectures']} of 6 recorded")
-    check("stats: the summary total equals every in-session attendance row",
+    # Every mark, and nothing derived from who is in which batch.
+    check("stats: the summary total is every in-session mark and nothing else",
           summary["total"] == total_rows,
           f"summary={summary['total']} table={total_rows}")
 
@@ -837,16 +1096,60 @@ def test_stats_summary_agrees_with_the_grouped_rows(conn):
           summary["students"] == 3, f"students={summary['students']}")
 
 
+def test_stats_leave_date_ends_what_counts():
+    """
+    A student's figures stop on the day they left, as they start on the day they joined (R10).
+    Rahul is marked at L1 (10 July), L3 (12 July) and L5 (15 August).
+    """
+    conn = build_fixture()
+
+    def rahul():
+        return {r["primaryLabel"]: (r["total"], r["attended"])
+                for r in run(conn, "stats_grouped_STUDENT")}.get("2025CS03")
+
+    before = rahul()
+    leave = (datetime(2025, 8, 1).date() - datetime(1970, 1, 1).date()).days
+    conn.execute("UPDATE student_year SET leaveDate = ? WHERE studentID = 3", (leave,))
+    conn.commit()
+
+    check("stats: a mark after the day a student left does not count",
+          rahul() == (before[0] - 1, before[1] - 1), f"before={before} after={rahul()}")
+
+    conn.execute("UPDATE student_year SET leaveDate = ? WHERE studentID = 3", (leave + 14,))
+    conn.commit()
+    check("stats: a mark on or before the leave date still counts",
+          rahul() == before, f"before={before} after={rahul()}")
+    conn.close()
+
+
+def test_stats_oldest_first_is_by_time(conn):
+    """
+    Oldest first sorts by when, not by the label (R11): lectures by their date, not by the
+    course and the day of the month; weekdays Monday to Sunday, not alphabetically.
+    """
+    lectures = run(conn, "stats_oldest_first_LECTURE")
+    starts = [conn.execute("SELECT CAST(SUBSTR(startDateTime, 1, INSTR(startDateTime, '|') - 1)"
+                           " AS INTEGER) FROM lectures WHERE lectureID = ?",
+                           (r["rowId"],)).fetchone()[0] for r in lectures]
+    check("stats: oldest-first lectures run in date order", starts == sorted(starts),
+          f"{[r['primaryLabel'] for r in lectures]}")
+
+    order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    days = [r["primaryLabel"] for r in run(conn, "stats_oldest_first_WEEKDAY")]
+    check("stats: oldest-first weekdays run Monday to Sunday",
+          days == sorted(days, key=order.index), f"{days}")
+
+
 def test_stats_sort_orders(conn):
     asc = [r["primaryLabel"] for r in run(conn, "stats_sort_PERCENT_ASC")]
     desc = [r["primaryLabel"] for r in run(conn, "stats_sort_PERCENT_DESC")]
     label = [r["primaryLabel"] for r in run(conn, "stats_sort_LABEL_ASC")]
 
-    # By attendance rows: Sneha 2/4 = 50%, Rahul 2/3 = 67%, Aarav 4/4 = 100%.
-    check("stats: lowest-percentage-first puts the worst attender at the top",
+    # Sneha 2/4 = 50%, Rahul 2/3 = 67%, Aarav 4/4 = 100%.
+    check("stats: lowest-percentage-first puts the worst attenders at the top",
           asc == ["2025CS02", "2025CS03", "2025CS01"], f"{asc}")
-    check("stats: highest-first is the exact reverse",
-          desc == list(reversed(asc)), f"{desc}")
+    check("stats: highest-first puts the best attender at the top",
+          desc == ["2025CS01", "2025CS03", "2025CS02"], f"{desc}")
     check("stats: label order is register order",
           label == sorted(label), f"{label}")
 
@@ -854,6 +1157,32 @@ def test_stats_sort_orders(conn):
     check("stats: most-lectures-first is descending by row count",
           [t for _, t in total] == sorted([t for _, t in total], reverse=True),
           f"{total}")
+
+
+def test_stats_professor_filter_takes_every_course_they_teach(conn):
+    """
+    The professor filter names a professor's courses: the ones they coordinate and the ones
+    they teach alongside the coordinator (R37). It used to match the coordinator alone.
+
+    Arguments: the session, then the professor twice.
+    """
+    coordinated = {r["primaryLabel"] for r in run(conn, "stats_professor_only", [2025, 1, 1])}
+    check("stats: the professor filter keeps the courses they coordinate",
+          coordinated == {"CS201", "CS202"}, f"{sorted(coordinated)}")
+
+    # Dr Rao (2) coordinates no course with a lecture, so nothing yet.
+    rao = {r["primaryLabel"] for r in run(conn, "stats_professor_only", [2025, 2, 2])}
+    check("stats: a professor whose courses have no lectures gets nothing",
+          rao == set(), f"{sorted(rao)}")
+
+    # Dr Rao also teaches CS201, which Dr Sharma (1) coordinates.
+    conn.execute("INSERT INTO course_instructor (courseID, profID) VALUES (1, 2)")
+    try:
+        rao = {r["primaryLabel"] for r in run(conn, "stats_professor_only", [2025, 2, 2])}
+        check("stats: the professor filter takes a course they teach without coordinating",
+              rao == {"CS201"}, f"{sorted(rao)}")
+    finally:
+        conn.execute("DELETE FROM course_instructor WHERE courseID = 1 AND profID = 2")
 
 
 def test_stats_full_filter_returns_a_consistent_slice(conn):
@@ -1022,22 +1351,32 @@ def test_lecture_detail_projection(conn):
 
 
 def test_find_existing_catches_whole_class_duplicates(conn):
+    # DaoLecture.findExisting: the course, the batch, and the start as an instant (R14, R15).
     find = ("SELECT lectureID FROM lectures WHERE courseID = ? "
             "AND ((? IS NULL AND batchID IS NULL) OR batchID = ?) "
-            "AND startDateTime = ? AND endDateTime = ? LIMIT 1")
+            "AND CAST(SUBSTR(startDateTime, 1, INSTR(startDateTime, '|') - 1) AS INTEGER) = "
+            "CAST(SUBSTR(?, 1, INSTR(?, '|') - 1) AS INTEGER) LIMIT 1")
 
-    start, end = ts(2025, 7, 10, 10, 0), ts(2025, 7, 10, 11, 0)
-    hit = conn.execute(find, (1, None, None, start, end)).fetchone()
+    def at(start):
+        return (start, start)
+
+    start = ts(2025, 7, 10, 10, 0)
+    hit = conn.execute(find, (1, None, None) + at(start)).fetchone()
     check("duplicate check: a whole-class repeat is found despite the NULL batch",
           hit is not None and hit[0] == 1, f"{hit}")
 
-    miss = conn.execute(find, (1, 1, 1, start, end)).fetchone()
+    miss = conn.execute(find, (1, 1, 1) + at(start)).fetchone()
     check("duplicate check: the same slot for a batch is a different lecture",
           miss is None)
 
-    batch_hit = conn.execute(
-        find, (2, 1, 1, ts(2025, 7, 12, 14, 0), ts(2025, 7, 12, 16, 0))).fetchone()
+    batch_hit = conn.execute(find, (2, 1, 1) + at(ts(2025, 7, 12, 14, 0))).fetchone()
     check("duplicate check: a batch repeat is found", batch_hit[0] == 3)
+
+    # The same instant written under another zone's name is the same start (R14).
+    same_instant = start.split("|")[0] + "|0|UTC"
+    zoned = conn.execute(find, (1, None, None) + at(same_instant)).fetchone()
+    check("duplicate check: the same moment under another zone is found",
+          zoned is not None and zoned[0] == 1, f"{zoned}")
 
 
 def test_unique_index_does_not_catch_whole_class_duplicates(conn):
@@ -1256,6 +1595,12 @@ def main():
     test_every_generated_statement_parses_and_runs(conn)
     test_a_null_argument_round_trips(conn)
     test_export_denominator_counts_lectures_held(conn)
+    test_export_keeps_history_and_never_exceeds_held()
+    test_export_counts_from_the_join_date_or_the_session_start()
+    test_export_follows_the_marks_when_a_student_changes_batch()
+    test_export_keeps_a_student_who_is_in_none_of_the_courses_batches()
+    test_export_lists_the_roll_before_anything_is_marked()
+    test_export_agrees_with_the_statistics()
     test_export_roster_is_the_courses_batches(conn)
     test_export_excludes_other_sessions_and_orphans(conn)
     test_export_date_window(conn)
@@ -1277,7 +1622,10 @@ def main():
     test_stats_all_sessions_spans_both(conn)
     test_stats_summary_agrees_with_the_grouped_rows(conn)
     test_stats_sort_orders(conn)
+    test_stats_leave_date_ends_what_counts()
+    test_stats_oldest_first_is_by_time(conn)
     test_stats_full_filter_returns_a_consistent_slice(conn)
+    test_stats_professor_filter_takes_every_course_they_teach(conn)
     test_dao_roster_query_agrees_with_the_export(conn)
     test_lecture_filter_narrows_by_every_dimension(conn)
     test_lecture_filter_combines_period_with_the_rest(conn)

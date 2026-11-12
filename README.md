@@ -32,14 +32,21 @@ and synced when there is a connection.
   - batches: named groups of students, linked to the courses they sit. Each batch belongs to a
     department and is linked only to that department's courses. Its students may come from any
     department
-- **Rolls.** A course with batches linked for the session takes its roll from those batches.
-  Otherwise the roll comes from the course type: major courses take the offering department's
-  majors, open electives take students whose OE department it is, and so on.
+- **Rolls.** A course's roll is the members of the batches linked to it for the session, and
+  nothing else: a course with no batch linked has nobody on its roll, and no register to mark.
+  Attendance is taken against a batch, so a second opinion of who sits a course — worked out
+  from the course type and the students' departments — described a roll nobody could mark; it
+  was removed. Link a batch to a course to give it a roll.
 - **Statistics** grouped and filtered in several ways, plus per-student breakdowns with the dates
   of every lecture.
 - **Exports:**
   - an attendance register spreadsheet (`.ods`), with lectures held and attended per course and
-    students below the threshold shaded
+    students below the threshold shaded. The figures are counted from the marks alone, here
+    and in the statistics: held is the lectures a student has a mark for, present or absent,
+    and attended is the ones marked present. Batches are not consulted, so a student who
+    changes batch during the year keeps exactly the lectures they were marked at, and one who
+    is taken out of every batch of a course keeps their row for it. A student on a course's
+    roll with nothing marked yet is listed with nought held
   - mark sheets for a lecture or a day, as `.ods` or CSV
 - **Imports:**
   - a student roster CSV (see below)
@@ -114,16 +121,29 @@ apaarId,joinDate,leaveDate
 ```
 
 - Columns can be in any order.
+- Roll numbers and course codes are stored as letters and digits only, in capitals, everywhere in
+  the app and on the server: `2024-cs-032` is read as `2024CS032`. A value with no letters or digits
+  is refused.
 - `pronouns`, `email`, `minorDept`, `oeDept`, `semester`, `division`, `apaarId`, `joinDate` and
   `leaveDate` may be blank or left out.
-- Dates can be written as `2026-06-15`, `15/06/2026` or `15-06-2026`.
+- Two columns with the same name — `Roll No` beside `rollNo` — are refused, and the file with
+  them: which of the two holds the value is not something to guess at.
+- `apaarId` is the 12-digit APAAR number, `email` has to look like an address, and a name is
+  stored up to 200 characters. These are refused by the file and by the app's own form alike.
+- Dates can be written as `2026-06-15`, `15/06/2026` or `15-06-2026`, and have to fall in the
+  years 2000 to 2099: `0025-06-15` is refused rather than stored as the year 25. The same holds
+  for the dates on an attendance sheet.
 - Departments, streams and years accept either the stored name or the display label, so
   `Computer Science` and `COMPUTER_SCIENCE` both work.
 - A bad row is reported and skipped; the rest of the file is still imported.
-- Importing again updates the students whose roll numbers already exist. A blank APAAR ID or
-  date keeps the one already stored.
+- Importing again updates the students whose roll numbers already exist. A column the file
+  does not have keeps what is stored for it. A blank email, APAAR ID or date keeps the one
+  already stored; a blank minor, open elective, semester or division in a column the file does
+  have clears it.
 - A student is matched by roll number in that session, then by APAAR ID, then by email. The
-  APAAR ID is what recognises the same person in a new session under a new roll number.
+  APAAR ID is what recognises the same person in a new session under a new roll number. A row
+  whose APAAR ID or email belongs to a student already enrolled that session under a different
+  roll number is refused rather than filed against them: two students cannot share either.
 
 ### Attendance sheets
 
@@ -131,6 +151,9 @@ Imported from **Attendance → Import attendance** in the app, or the console's 
 first four rows name each class (course code, date, start time, end time) and every row after
 that is a student: their roll number, then `P`, `AB`, or blank for "not in this class". The blank
 cells decide which batch was in the room. Nothing is saved until the preview has been confirmed.
+
+Importing a class that is already on record corrects it: a `P` or `AB` overwrites that student's
+mark, and every other mark is left alone: a blank never removes one.
 
 ### Joining late and leaving
 

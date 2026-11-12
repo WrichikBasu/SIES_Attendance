@@ -65,7 +65,7 @@
         <!-- Matches the app bar, which is colorPrimaryContainer -->
         <item name="android:statusBarColor">@color/md_primary_container</item>
         <item name="android:windowLightStatusBar">?attr/isLightTheme</item>
-        <item name="android:windowLightNavigationBar">?attr/isLightTheme</item>
+        <!-- windowLightNavigationBar needs Android 8.1 (API 27); values-v27 sets it there. -->
 
     </style>
 

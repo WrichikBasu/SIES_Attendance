@@ -2,6 +2,8 @@ package in.basulabs.siesattendance.server.sync;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -19,6 +21,7 @@ import java.util.Set;
 import in.basulabs.siesattendance.backend.StructuredId;
 import in.basulabs.siesattendance.backend.sync.DeviceTables;
 import in.basulabs.siesattendance.backend.sync.OutboxOp;
+import in.basulabs.siesattendance.server.sql.DatabaseRefusal;
 
 /**
  * Applies what a device's outbox drained: one row per intent, by primary key.
@@ -64,6 +67,24 @@ import in.basulabs.siesattendance.backend.sync.OutboxOp;
  * Tables with no surrogate key of their own are not checked at all and do not need to be: their
  * keys are other rows' keys, and a CR marking a register the professor created is the ordinary
  * case.
+ *
+ * <h3>Two phones, one class</h3>
+ * Two phones that each record the same class offline give it two ids, and the first push takes
+ * the slot. The second used to be refused with a unique violation treated as "not yet", so the
+ * losing phone sent its lecture and every mark under it on every sync, for ever, while showing
+ * them as saved (C2). Two professors typing the same course code met the same wall.
+ * <p>
+ * A lecture or course pushed under a new id whose natural key another row already holds is now
+ * <em>folded</em> into that row: {@code sync_fold} (V62) records that the second id means the
+ * first, the push is accepted without writing the duplicate, and every intent is read through
+ * those records before it is applied. A mark under the second lecture lands on the first; a
+ * lecture of the second course is filed under the first. The phone learns the first id when
+ * the pull brings that row, and re-keys its own copy to it.
+ * <p>
+ * Only those two tables, because only there is a matching natural key the same thing under two
+ * ids -- and a course only when it is the same course, not merely the same code. A roll number,
+ * an email or an APAAR ID that collides may be two people, so those are refused for good, with
+ * the reason, rather than merged.
  */
 public final class SyncWriter {
 
@@ -103,6 +124,8 @@ public final class SyncWriter {
 	/** PostgreSQL's {@code insufficient_privilege}: a policy refused the statement. */
 	private static final String INSUFFICIENT_PRIVILEGE = "42501";
 
+	private static final Logger LOG = LoggerFactory.getLogger(SyncWriter.class);
+
 	/** {@code foreign_key_violation}: the row points at one that is not here. */
 	private static final String FOREIGN_KEY_VIOLATION = "23503";
 
@@ -120,6 +143,23 @@ public final class SyncWriter {
 	 */
 	private static final String RESTRICT_VIOLATION = "23001";
 
+	/** {@code unique_violation}: another row already holds a value this one claims. */
+	private static final String UNIQUE_VIOLATION = "23505";
+
+	/**
+	 * The tables a push may be folded into an existing row of, and what has to match for two
+	 * rows to be one: one class at one time; one course code <em>for the same course</em>.
+	 * <p>
+	 * A course code alone is not enough. A code reused for a different course -- another year,
+	 * another type -- is a mistake to refuse in words, not a course to file under the one that
+	 * holds the code, which would quietly drop it. See the class notes.
+	 */
+	private static final Map<String, List<String>> FOLDABLE = Map.of(
+			// The slot is the start, not the span, since V67 (R15).
+			"lectures", List.of("course_id", "batch_id", "start_at"),
+			"courses", List.of("course_code", "stream", "offering_department", "year",
+					"semester", "course_type"));
+
 	/**
 	 * The tables whose refusals a professor is likely to meet, and which deserve a sentence
 	 * that says what to do rather than only what went wrong.
@@ -132,9 +172,14 @@ public final class SyncWriter {
 	 * "not yet" or "not just then".
 	 * <p>
 	 * A check constraint, a not-null, a bad value: the row says something the schema forbids, and
-	 * it will say the same thing tomorrow. A foreign key is deliberately <em>not</em> here, and
-	 * nor is a unique violation, which usually means two devices are arguing about a natural key
-	 * and one of them is about to win.
+	 * it will say the same thing tomorrow. A foreign key is deliberately <em>not</em> here: a
+	 * missing parent may be in the next batch.
+	 * <p>
+	 * A unique violation is. It used to be left out, on the grounds that two devices were
+	 * arguing about a natural key and one was about to win -- but the loser's row keeps its own
+	 * id, so it lost the same way on every push, for ever (C2). A lecture or course is folded
+	 * into the row that won before it gets here; anything else that collides is two things
+	 * claiming one value, and sending it again cannot change that.
 	 * <p>
 	 * A policy refusal is in {@link #settled} rather than here, because it is the one that
 	 * depends on what else has arrived — see that method.
@@ -146,7 +191,9 @@ public final class SyncWriter {
 			"22P02",    // invalid_text_representation
 			"22003",    // numeric_value_out_of_range
 			"22007",    // invalid_datetime_format
-			"22008");   // datetime_field_overflow
+			"22008",    // datetime_field_overflow
+			"22021",    // character_not_in_repertoire: a NUL, or bytes that are not UTF-8
+			UNIQUE_VIOLATION);
 
 	private SyncWriter() {
 	}
@@ -173,15 +220,29 @@ public final class SyncWriter {
 		Set<String> stamped = tablesWithProvenance(connection);
 		List<Rejection> rejected = new ArrayList<>();
 		int accepted = 0;
+		Folds folds = new Folds(connection);
 
-		for (Intent intent : inApplicationOrder(intents)) {
+		for (Intent sent : inApplicationOrder(intents)) {
+
+			// Read through the folds, so a mark under a lecture another phone recorded first
+			// lands on that one. The device's own key is what every answer is reported under:
+			// it is how the device finds the intent in its queue.
+			Intent intent = allowed.contains(sent.table()) ? folds.through(sent) : sent;
+
+			if (intent == null) {
+				// The row itself was folded into another: a duplicate of a row that is already
+				// here, so there is nothing to write and nothing to delete. The other row is the
+				// record, and the device gets it on its next pull.
+				accepted++;
+				continue;
+			}
 
 			String refusal = unacceptable(connection, intent, allowed, deviceNode, priorNode);
 
 			if (refusal != null) {
 				// Every refusal from there is about the intent itself rather than about the
 				// state of the database, so none of them is worth sending again.
-				rejected.add(new Rejection(intent.table(), intent.key(), refusal, true));
+				rejected.add(new Rejection(sent.table(), sent.key(), refusal, true));
 				continue;
 			}
 
@@ -196,8 +257,7 @@ public final class SyncWriter {
 						// Not an exception: row-level security answers a DELETE nobody is
 						// allowed to make by matching no rows, not by raising. See delete().
 						connection.rollback(savepoint);
-						rejected.add(new Rejection(intent.table(), intent.key(),
-								unremovable, true));
+						rejected.add(new Rejection(sent.table(), sent.key(), unremovable, true));
 						continue;
 					}
 
@@ -211,15 +271,232 @@ public final class SyncWriter {
 			} catch (DeviceValue.Unconvertible e) {
 				connection.rollback(savepoint);
 				// The row will convert the same way next time.
-				rejected.add(new Rejection(intent.table(), intent.key(), e.getMessage(), true));
+				rejected.add(new Rejection(sent.table(), sent.key(), e.getMessage(), true));
 
 			} catch (SQLException e) {
 				connection.rollback(savepoint);
-				rejected.add(rejectionFor(connection, intent, e));
+
+				if (UNIQUE_VIOLATION.equals(e.getSQLState()) && intent.op() == OutboxOp.UPSERT
+						&& folds.fold(intent)) {
+					// Another row already holds this one's natural key, and it is the same
+					// thing: see the class notes.
+					accepted++;
+					continue;
+				}
+
+				Rejection refused = rejectionFor(connection, intent, e);
+				rejected.add(new Rejection(sent.table(), sent.key(), refused.reason(),
+						refused.permanent()));
 			}
 		}
 
 		return new Result(accepted, rejected);
+	}
+
+	/**
+	 * The folds recorded in {@code sync_fold}, read through for every intent of a push and
+	 * added to when a push collides; see the class notes.
+	 */
+	private static final class Folds {
+
+		@NonNull
+		private final Connection connection;
+
+		/** What has been looked up in this push, misses included, by table and id. */
+		private final Map<String, Long> known = new java.util.HashMap<>();
+
+		Folds(@NonNull Connection connection) {
+			this.connection = connection;
+		}
+
+		/**
+		 * The intent with every id that was folded replaced by the row it was folded into, or
+		 * null when the intent's own row is one of them.
+		 */
+		@Nullable
+		Intent through(@NonNull Intent intent) throws SQLException {
+
+			DeviceTables.Table table;
+
+			try {
+				table = DeviceTables.of(intent.table());
+			} catch (RuntimeException e) {
+				return intent;
+			}
+
+			// A malformed intent is passed on untouched, for the checks after this to refuse in
+			// words; reading a fold for a key that is not there would only fail less usefully.
+			if (intent.key().contains(null) || intent.key().size() != table.primaryKey().size()) {
+				return intent;
+			}
+
+			if (FOLDABLE.containsKey(table.name()) && table.surrogate() != null
+					&& intent.key().size() == table.primaryKey().size()) {
+
+				long own = intent.key().get(table.primaryKey().indexOf(table.surrogate()));
+
+				if (into(table.name(), own) != null) {
+					return null;
+				}
+			}
+
+			List<Long> key = new ArrayList<>(intent.key());
+			Map<String, Object> row = intent.row() == null ? null
+					: new java.util.LinkedHashMap<>(intent.row());
+			boolean changed = false;
+
+			for (Map.Entry<String, String> reference : table.foreignKeys().entrySet()) {
+
+				if (!FOLDABLE.containsKey(reference.getValue())) {
+					continue;
+				}
+
+				String column = reference.getKey();
+				int inKey = table.primaryKey().indexOf(column);
+
+				if (inKey >= 0 && inKey < key.size()) {
+					Long folded = into(reference.getValue(), key.get(inKey));
+					if (folded != null) {
+						key.set(inKey, folded);
+						changed = true;
+					}
+				}
+
+				if (row != null && row.get(column) instanceof Number value) {
+					Long folded = into(reference.getValue(), value.longValue());
+					if (folded != null) {
+						row.put(column, folded);
+						changed = true;
+					}
+				}
+			}
+
+			return changed ? new Intent(intent.table(), key, intent.op(), row) : intent;
+		}
+
+		/**
+		 * Folds an upsert whose natural key another row holds into that row, when it may be.
+		 *
+		 * @return true when it was folded, and the push should count it as accepted; false when
+		 * it is not a fold: another table, an existing row being moved onto a slot that is taken,
+		 * or a holder this actor cannot see
+		 */
+		boolean fold(@NonNull Intent intent) throws SQLException {
+
+			List<String> natural = FOLDABLE.get(intent.table());
+
+			if (natural == null || intent.row() == null) {
+				return false;
+			}
+
+			DeviceTables.Table table = DeviceTables.of(intent.table());
+			String surrogate = table.column(table.surrogate()).postgres();
+			long own = intent.key().get(table.primaryKey().indexOf(table.surrogate()));
+
+			if (exists(connection, table, intent.key())) {
+				// An edit that moves a row onto a slot another row holds is two rows, not one
+				// row under two ids. Refused, with the reason.
+				return false;
+			}
+
+			List<DeviceValue.Field> fields = fieldsOf(table, intent);
+			StringBuilder sql = new StringBuilder("SELECT ").append(surrogate)
+					.append(" FROM ").append(table.name()).append(" WHERE ");
+			List<Object> values = new ArrayList<>();
+
+			for (int at = 0; at < natural.size(); at++) {
+
+				DeviceValue.Field field = fieldNamed(fields, natural.get(at));
+				String placeholder = field == null ? "NULL" : field.placeholder();
+
+				if (natural.get(at).equals("course_code")) {
+					// Stored as its canonical spelling (V57), which is what collided.
+					placeholder = "canonical_code(" + placeholder + ")";
+				}
+
+				sql.append(at == 0 ? "" : " AND ").append(natural.get(at))
+						.append(" IS NOT DISTINCT FROM ").append(placeholder);
+
+				if (field != null) {
+					values.add(field.value());
+				}
+			}
+
+			Long holder = null;
+
+			try (PreparedStatement statement = connection.prepareStatement(
+					sql.append(" LIMIT 1").toString())) {
+
+				for (int at = 0; at < values.size(); at++) {
+					statement.setObject(at + 1, values.get(at));
+				}
+
+				try (ResultSet results = statement.executeQuery()) {
+					if (results.next()) {
+						holder = results.getLong(1);
+					}
+				}
+			}
+
+			if (holder == null || holder == own) {
+				// Read under the actor's own policies: a holder they cannot see is not one
+				// they may fold into, and the push is refused instead.
+				return false;
+			}
+
+			try (PreparedStatement statement = connection.prepareStatement(
+					"INSERT INTO sync_fold (table_name, from_id, to_id) VALUES (?, ?, ?) "
+							+ "ON CONFLICT DO NOTHING")) {
+				statement.setString(1, table.name());
+				statement.setLong(2, own);
+				statement.setLong(3, holder);
+				statement.executeUpdate();
+			}
+
+			known.put(table.name() + ":" + own, holder);
+			LOG.info("folded {}[{}] into {}: the same {} pushed twice", table.name(), own, holder,
+					table.name().equals("lectures") ? "class" : "course code");
+			return true;
+		}
+
+		/** The row that id was folded into, or null when it was not folded. */
+		@Nullable
+		private Long into(@NonNull String table, long id) throws SQLException {
+
+			String cached = table + ":" + id;
+
+			if (known.containsKey(cached)) {
+				return known.get(cached);
+			}
+
+			Long folded = null;
+
+			try (PreparedStatement statement = connection.prepareStatement(
+					"SELECT to_id FROM sync_fold WHERE table_name = ? AND from_id = ?")) {
+				statement.setString(1, table);
+				statement.setLong(2, id);
+
+				try (ResultSet results = statement.executeQuery()) {
+					if (results.next()) {
+						folded = results.getLong(1);
+					}
+				}
+			}
+
+			known.put(cached, folded);
+			return folded;
+		}
+
+		@Nullable
+		private static DeviceValue.Field fieldNamed(@NonNull List<DeviceValue.Field> fields,
+		                                            @NonNull String column) {
+			for (DeviceValue.Field field : fields) {
+				if (field.column().equals(column)) {
+					return field;
+				}
+			}
+			return null;
+		}
 	}
 
 	/**
@@ -727,21 +1004,7 @@ public final class SyncWriter {
 	                           boolean stamped) throws SQLException {
 
 		DeviceTables.Table table = DeviceTables.of(intent.table());
-		Map<String, Object> row = intent.row();
-
-		List<DeviceValue.Field> fields = new ArrayList<>();
-
-		for (DeviceTables.Column column : table.carriedColumns()) {
-			fields.addAll(DeviceValue.convert(table, column, row.get(column.room())));
-		}
-
-		// The key as the device named it wins over whatever the row claims: the key is what the
-		// intent is about, and a row whose body disagreed with its own key would otherwise be
-		// written under the body's.
-		for (int at = 0; at < table.primaryKey().size(); at++) {
-			String postgres = table.column(table.primaryKey().get(at)).postgres();
-			replace(fields, postgres, intent.key().get(at));
-		}
+		List<DeviceValue.Field> fields = fieldsOf(table, intent);
 
 		StringBuilder sql = new StringBuilder("INSERT INTO ").append(table.name()).append(" (");
 		StringBuilder values = new StringBuilder();
@@ -825,6 +1088,28 @@ public final class SyncWriter {
 			}
 			statement.executeUpdate();
 		}
+	}
+
+	/** The row as the columns and values a statement binds, keyed as the intent names it. */
+	@NonNull
+	private static List<DeviceValue.Field> fieldsOf(@NonNull DeviceTables.Table table,
+	                                                @NonNull Intent intent) {
+
+		Map<String, Object> row = intent.row();
+		List<DeviceValue.Field> fields = new ArrayList<>();
+
+		for (DeviceTables.Column column : table.carriedColumns()) {
+			fields.addAll(DeviceValue.convert(table, column, row.get(column.room())));
+		}
+
+		// The key as the device named it wins over whatever the row claims: the key is what the
+		// intent is about, and a row whose body disagreed with its own key would otherwise be
+		// written under the body's.
+		for (int at = 0; at < table.primaryKey().size(); at++) {
+			String postgres = table.column(table.primaryKey().get(at)).postgres();
+			replace(fields, postgres, intent.key().get(at));
+		}
+		return fields;
 	}
 
 	/**
@@ -996,13 +1281,24 @@ public final class SyncWriter {
 	 * sentence of their own, because that refusal is the one a professor will actually meet —
 	 * they imported a class list on their own phone, which is what the app has always let them
 	 * do, and "not yours to change" would leave them with nothing to do about it. Everything
-	 * else keeps the server's own message, because the alternative is a device displaying
-	 * "something went wrong" about a row it cannot send.
+	 * else is said by {@link DatabaseRefusal}: what a named constraint means, or the schema's
+	 * own words for a trigger's refusal. Not "something went wrong", which a device cannot act
+	 * on, and not PostgreSQL's wording, which names an index rather than a reason.
 	 */
 	@NonNull
 	private static String explain(@NonNull SQLException e, @NonNull String table) {
 
 		if (INSUFFICIENT_PRIVILEGE.equals(e.getSQLState())) {
+
+			// Since V27 a professor adds and corrects their own department's students, so the
+			// refusal they meet is for somebody else's: a student of another department, or one
+			// on two departments' rolls, which neither corrects.
+			if (table.equals("students") || table.equals("student_year")) {
+				return "a student is added and corrected by their own department's professors "
+						+ "and head, or by the office; one also on another department's roll is "
+						+ "the office's to correct. This roster stays on this device. "
+						+ "Attendance still syncs.";
+			}
 
 			if (ROSTER_TABLES.contains(table)) {
 				return "the roll is loaded by the office, so this roster stays on this device. "
@@ -1019,13 +1315,9 @@ public final class SyncWriter {
 			return "the server refused this row: it is not yours to change";
 		}
 
-		String message = e.getMessage();
-
-		if (message == null) {
-			return "the server could not write this row";
-		}
-
-		int newline = message.indexOf('\n');
-		return newline < 0 ? message : message.substring(0, newline);
+		// The words go to the device; the constraint and the key, which are how the next one is
+		// diagnosed, stay here.
+		LOG.warn("a push to {} was refused ({}): {}", table, e.getSQLState(), e.getMessage());
+		return DatabaseRefusal.inWords(e);
 	}
 }

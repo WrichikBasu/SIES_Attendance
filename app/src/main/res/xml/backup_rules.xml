@@ -1,13 +1,21 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Nothing of this app is backed up (R5), for Android 11 and below. Android 12 and above read
+    data_extraction_rules.xml instead; allowBackup is false in the manifest as well.
+
+    The college's copy is on the server. What a backup would carry is what must not be copied:
+    the session token and the device's install id (in device-protected preferences), and the
+    database whose row keys carry this install's node. A phone restored from another's backup
+    would sign in as that person and issue keys that collide with theirs.
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="root" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="external" path="." />
+    <exclude domain="device_root" path="." />
+    <exclude domain="device_file" path="." />
+    <exclude domain="device_database" path="." />
+    <exclude domain="device_sharedpref" path="." />
 </full-backup-content>

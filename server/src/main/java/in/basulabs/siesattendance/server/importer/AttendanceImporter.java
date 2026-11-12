@@ -22,6 +22,7 @@ import java.util.Set;
 
 import in.basulabs.siesattendance.backend.util.AttendanceCsvParser;
 import in.basulabs.siesattendance.backend.util.BatchMatcher;
+import in.basulabs.siesattendance.backend.util.CanonicalCode;
 
 /**
  * An attendance sheet, turned into lectures and marks on the server.
@@ -44,7 +45,7 @@ import in.basulabs.siesattendance.backend.util.BatchMatcher;
 public final class AttendanceImporter {
 
 	/** The zone a sheet's dates and times are read in. */
-	static final ZoneId COLLEGE = ZoneId.of("Asia/Kolkata");
+	static final ZoneId COLLEGE = in.basulabs.siesattendance.backend.College.ZONE;
 
 	/** One column of the sheet, as it will be filed. */
 	public static final class Lecture {
@@ -293,8 +294,14 @@ public final class AttendanceImporter {
 	// ── Writing ──────────────────────────────────────────────────────────
 
 	/**
-	 * Writes every usable lecture of the plan, on the caller's transaction. A lecture already on
-	 * record has its marks replaced; a new one is keyed under the server's node.
+	 * Writes every usable lecture of the plan, on the caller's transaction. A new lecture is
+	 * keyed under the server's node.
+	 * <p>
+	 * A lecture already on record is corrected by the sheet, not replaced by it: each P or AB
+	 * overwrites that student's mark, and no mark is taken away: an empty cell changes
+	 * nothing, and a mark the sheet says nothing about stays. The device's
+	 * {@code AttendanceRecordImporter.commit} has the same rule and why; clearing the lecture
+	 * first, which both used to do, deleted the marks of everybody the sheet did not list.
 	 */
 	@NonNull
 	public static Result commit(@NonNull Connection connection, @NonNull Plan plan)
@@ -317,11 +324,6 @@ public final class AttendanceImporter {
 			Long lectureId = lookups.existing(lecture);
 
 			if (lectureId != null) {
-				try (PreparedStatement clear = connection.prepareStatement(
-						"DELETE FROM attendance WHERE lecture_id = ?")) {
-					clear.setLong(1, lectureId);
-					clear.executeUpdate();
-				}
 				replaced++;
 
 			} else {
@@ -344,7 +346,13 @@ public final class AttendanceImporter {
 			}
 
 			try (PreparedStatement mark = connection.prepareStatement(
-					"INSERT INTO attendance (lecture_id, student_id, present) VALUES (?, ?, ?)")) {
+					"INSERT INTO attendance (lecture_id, student_id, present) VALUES (?, ?, ?) "
+							// Over the mark that is there, and only when it differs, so a
+							// sheet imported twice writes nothing the second time and leaves
+							// nothing in the audit log.
+							+ "ON CONFLICT (lecture_id, student_id) DO UPDATE "
+							+ "SET present = EXCLUDED.present "
+							+ "WHERE attendance.present IS DISTINCT FROM EXCLUDED.present")) {
 
 				for (Map.Entry<Long, Boolean> entry : lecture.marks.entrySet()) {
 					mark.setLong(1, lectureId);
@@ -386,7 +394,7 @@ public final class AttendanceImporter {
 				return null;
 			}
 
-			String key = code.trim().toLowerCase(Locale.ROOT);
+			String key = CanonicalCode.of(code);
 
 			if (courses.containsKey(key)) {
 				return courses.get(key);
@@ -394,12 +402,13 @@ public final class AttendanceImporter {
 
 			Course found = null;
 
-			// Case-insensitive, as the device's COLLATE NOCASE is.
+			// An exact match on the stored spelling: V57 keeps every course code canonical, so
+			// the sheet's spelling is brought to it rather than the column loosened.
 			try (PreparedStatement statement = connection.prepareStatement(
 					"SELECT course_id, course_code, course_topic, offering_department::text "
-							+ "FROM courses WHERE lower(course_code) = lower(?) LIMIT 1")) {
+							+ "FROM courses WHERE course_code = ? LIMIT 1")) {
 
-				statement.setString(1, code.trim());
+				statement.setString(1, key);
 
 				try (ResultSet results = statement.executeQuery()) {
 					if (results.next()) {
@@ -567,8 +576,7 @@ public final class AttendanceImporter {
 
 		@NonNull
 		private static String normalise(@NonNull String rollNo) {
-			return rollNo.trim().toLowerCase(Locale.ROOT)
-					.replace(" ", "").replace("-", "").replace("/", "");
+			return CanonicalCode.of(rollNo);
 		}
 	}
 

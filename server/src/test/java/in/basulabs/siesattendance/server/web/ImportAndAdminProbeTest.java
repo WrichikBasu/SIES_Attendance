@@ -1,0 +1,633 @@
+package in.basulabs.siesattendance.server.web;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.web.server.context.WebServerApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import in.basulabs.siesattendance.backend.AccountKind;
+import in.basulabs.siesattendance.server.SiesAttendanceServer;
+import in.basulabs.siesattendance.server.security.AccountDirectory;
+import in.basulabs.siesattendance.server.testing.TestPostgres;
+
+/**
+ * White-box probes, second round, of the paths {@code WireTest} reaches only on their happy
+ * side: the roster and attendance importers' matching, the password re-check, and the V43
+ * guard that there is always an administrator.
+ * <p>
+ * The whole service over real HTTP against a real PostgreSQL as {@code sies_app}, built the way
+ * {@code WireTest} builds it, so that every policy applies. Skipped without Docker.
+ * <p>
+ * The tests marked BUG fail as of this commit.
+ */
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class ImportAndAdminProbeTest {
+
+	private static final int SESSION = 2025;
+
+	private static final long PROF_CS = 1001;
+	private static final long PROF_CHEM = 1002;
+
+	private static final String PASSWORD = "correct horse battery staple";
+
+	private static final ObjectMapper JSON = new ObjectMapper();
+
+	private static final HttpClient HTTP = HttpClient.newHttpClient();
+
+	private static TestPostgres postgres;
+
+	private static ConfigurableApplicationContext service;
+
+	private static int port;
+
+	private long accountAdmin;
+	private long accountSecondAdmin;
+
+	@BeforeAll
+	void startEverything() throws Exception {
+
+		assumeTrue(TestPostgres.isAvailable(), "Docker is not available");
+
+		postgres = TestPostgres.start();
+
+		service = new SpringApplication(SiesAttendanceServer.class).run(
+				"--spring.datasource.url=" + postgres.appJdbcUrl(),
+				"--spring.datasource.username=" + TestPostgres.appUsername(),
+				"--spring.datasource.password=" + TestPostgres.appPassword(),
+				"--spring.flyway.enabled=false",
+				"--server.port=0",
+				"--spring.main.banner-mode=off",
+				"--sies.login.attempts-per-window=1000");
+
+		port = ((WebServerApplicationContext) service).getWebServer().getPort();
+	}
+
+	@AfterAll
+	void stopEverything() {
+
+		if (service != null) {
+			service.close();
+		}
+
+		if (postgres != null) {
+			postgres.close();
+		}
+	}
+
+	@BeforeEach
+	void buildFixture() throws Exception {
+
+		assumeTrue(postgres != null, "no database");
+
+		postgres.reset();
+
+		postgres.asSuperuser("""
+				INSERT INTO academic_years (academic_year, start_date, end_date) VALUES
+				    (2025, '2025-06-01', '2026-05-31'),
+				    (2026, '2026-06-01', '2027-05-31');
+
+				INSERT INTO professors (prof_id, name, email, department, designation) VALUES
+				    (1001, 'A CS',   'a.cs@sies.edu.in',   'COMPUTER_SCIENCE', 'Assistant Professor'),
+				    (1002, 'B CHEM', 'b.chem@sies.edu.in', 'CHEMISTRY',        'Assistant Professor');
+
+				INSERT INTO students (student_id, name, pronouns, email, apaar_id) VALUES
+				    (2001, 'R RAO',  'she/her',   'r.rao@sies.edu.in',  999000111222),
+				    (2002, 'S SHAH', 'they/them', 's.shah@sies.edu.in', NULL);
+
+				-- R Rao reads Computer Science with a Chemistry minor, which V30 lets the
+				-- Chemistry professor see.
+				INSERT INTO student_year
+				    (student_id, academic_year, roll_no, year, stream, major_dept, minor_dept,
+				     semester) VALUES
+				    (2001, 2025, 'CS-FY-001', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', 'CHEMISTRY', 1),
+				    (2002, 2025, 'CS-FY-002', 'FY', 'BSc_unaided', 'COMPUTER_SCIENCE', NULL,        1);
+
+				INSERT INTO courses
+				    (course_id, prof_id, course_code, course_topic, stream,
+				     offering_department, year, semester, course_type) VALUES
+				    (3001, 1001, 'CS-101', 'Programming', 'BSc_unaided',
+				     'COMPUTER_SCIENCE', 'FY', 1, 'MAJOR');
+
+				INSERT INTO course_instructor (course_id, prof_id) VALUES (3001, 1001)
+				    ON CONFLICT DO NOTHING;
+
+				INSERT INTO batch_desc (batch_id, batch_name, academic_year, department) VALUES
+				    (5901, 'FY CS', 2025, 'COMPUTER_SCIENCE');
+
+				INSERT INTO batch_student_map (batch_id, student_id, academic_year) VALUES
+				    (5901, 2001, 2025), (5901, 2002, 2025);
+
+				INSERT INTO course_batch_map (course_id, batch_id) VALUES (3001, 5901);
+				""");
+
+		account(AccountKind.PROFESSOR, PROF_CS, "a.cs@sies.edu.in");
+		account(AccountKind.PROFESSOR, PROF_CHEM, "b.chem@sies.edu.in");
+		long office = account(AccountKind.STAFF, null, "office@sies.edu.in");
+		accountAdmin = account(AccountKind.STAFF, null, "admin@sies.edu.in");
+		accountSecondAdmin = account(AccountKind.STAFF, null, "admin2@sies.edu.in");
+
+		grantRole(accountAdmin, "ADMIN", accountAdmin);
+		grantRole(accountSecondAdmin, "ADMIN", accountAdmin);
+		grantRole(office, "OFFICE", accountAdmin);
+	}
+
+	// ── Roster: roll numbers ─────────────────────────────────────────────
+
+	/**
+	 * Was a bug: the roster matched a roll number exactly, and {@code student_year_roll_no_
+	 * academic_year_uq} is case-sensitive, so the same roll number typed in lower case was a
+	 * second student in the same session. Fixed by storing every roll number canonically
+	 * ({@code CanonicalCode}, V57): {@code cs-fy-002} is {@code CSFY002}, the student on file.
+	 */
+	@Test
+	void aRollNumberInAnotherCaseIsTheSameStudent() throws Exception {
+
+		Reply reply = postCsv("/roster?year=" + SESSION, """
+				rollNo,name,pronouns,year,stream,majorDept,semester
+				cs-fy-002,S Shah,they/them,FY,BSc_unaided,COMPUTER_SCIENCE,1
+				""", tokenFor("office@sies.edu.in"));
+
+		assertEquals(200, reply.status(), reply::toString);
+		assertEquals(1, reply.body().get("updated").intValue(), reply::toString);
+		assertEquals(1, count("SELECT count(*) FROM student_year WHERE academic_year = "
+						+ SESSION + " AND roll_no = 'CSFY002'"),
+				"one student per roll number per session, whatever its case: " + reply);
+	}
+
+	// ── Roster: what "updated" means ─────────────────────────────────────
+
+	/**
+	 * Was a bug: the Chemistry professor can see R Rao (a CS major with a Chemistry minor, V30),
+	 * so the APAAR ID found her. {@code UPDATE students} was then filtered to nothing by
+	 * {@code students_professor_update}, without an error, and the reply still counted the row
+	 * as updated; meanwhile the enrolment went through, filing her as a Chemistry major for
+	 * 2026. A row whose student the caller cannot change is now refused whole.
+	 */
+	@Test
+	void aStudentTheCallerCannotChangeIsRefusedNotCountedAsUpdated() throws Exception {
+
+		Reply reply = postCsv("/roster?year=" + (SESSION + 1), """
+				rollNo,name,pronouns,year,stream,majorDept,semester,apaarId
+				CH-SY-050,Renamed By Chemistry,she/her,SY,BSc,CHEMISTRY,3,999000111222
+				""", tokenFor("b.chem@sies.edu.in"));
+
+		assertEquals(200, reply.status(), reply::toString);
+		assertEquals(0, reply.body().get("updated").intValue(), reply::toString);
+		assertEquals(0, reply.body().get("created").intValue(), reply::toString);
+		assertEquals(1, reply.body().get("failed").intValue(), reply::toString);
+
+		String error = reply.body().get("errors").get(0).stringValue();
+		assertTrue(error.startsWith("Line 2: its APAAR ID belongs to a student"), error);
+
+		assertEquals("R RAO", text("SELECT name FROM students WHERE student_id = 2001"));
+		assertEquals(List.of("2025 COMPUTER_SCIENCE"), list("SELECT academic_year || ' ' "
+				+ "|| major_dept FROM student_year WHERE student_id = 2001"),
+				"no enrolment filed for the new session");
+	}
+
+	/** The control: her own department may change her, by the same path. */
+	@Test
+	void aStudentsOwnDepartmentStillUpdatesThem() throws Exception {
+
+		Reply reply = postCsv("/roster?year=" + (SESSION + 1), """
+				rollNo,name,pronouns,year,stream,majorDept,semester,apaarId
+				CS-SY-050,R Rao Renamed,she/her,SY,BSc_unaided,COMPUTER_SCIENCE,3,999000111222
+				""", tokenFor("a.cs@sies.edu.in"));
+
+		assertEquals(200, reply.status(), reply::toString);
+		assertEquals(1, reply.body().get("updated").intValue(), reply::toString);
+		assertEquals("R Rao Renamed", text("SELECT name FROM students WHERE student_id = 2001"));
+		assertEquals(List.of("2025 COMPUTER_SCIENCE", "2026 COMPUTER_SCIENCE"),
+				list("SELECT academic_year || ' ' || major_dept FROM student_year "
+						+ "WHERE student_id = 2001 ORDER BY academic_year"));
+	}
+
+	/**
+	 * The same professor, the same student, this session: the roll number finds her, the
+	 * enrolment is not theirs to change, and the row is refused rather than half-done.
+	 */
+	@Test
+	void anotherDepartmentsEnrolmentIsRefusedNotRewritten() throws Exception {
+
+		Reply reply = postCsv("/roster?year=" + SESSION, """
+				rollNo,name,pronouns,year,stream,majorDept,semester
+				CS-FY-001,Renamed By Chemistry,she/her,FY,BSc,CHEMISTRY,1
+				""", tokenFor("b.chem@sies.edu.in"));
+
+		assertEquals(200, reply.status(), reply::toString);
+		assertEquals(1, reply.body().get("failed").intValue(), reply::toString);
+		assertEquals("COMPUTER_SCIENCE", text("SELECT major_dept FROM student_year "
+				+ "WHERE student_id = 2001 AND academic_year = " + SESSION));
+		assertEquals("R RAO", text("SELECT name FROM students WHERE student_id = 2001"));
+
+		// And the reason is said in a sentence, not as a policy name.
+		String error = reply.body().get("errors").get(0).stringValue();
+		assertFalse(error.contains("row-level security"),
+				"a policy name is not a reason a professor can act on: " + error);
+	}
+
+	// ── Roster: refusals in words ────────────────────────────────────────
+	//
+	// S Shah is a CS major with no Chemistry in her session, so the Chemistry professor cannot
+	// see her. The lookups miss her, and the row runs into a unique index instead.
+
+	@Test
+	void aRollNumberAnotherStudentHoldsIsSaidInWords() throws Exception {
+
+		String error = oneRosterError("b.chem@sies.edu.in", SESSION,
+				"CS-FY-002,New Chemist,they/them,FY,BSc,CHEMISTRY,1,,");
+
+		assertTrue(error.startsWith("Line 2: the roll number CSFY002 is already another "
+				+ "student's in 2025"), error);
+		assertPlainWords(error);
+		assertEquals(0, count("SELECT count(*) FROM students WHERE name = 'New Chemist'"),
+				"the student created for the row is rolled back with it");
+	}
+
+	@Test
+	void anEmailAnotherStudentHoldsIsSaidInWords() throws Exception {
+
+		String error = oneRosterError("b.chem@sies.edu.in", SESSION,
+				"CH-FY-009,New Chemist,they/them,FY,BSc,CHEMISTRY,1,s.shah@sies.edu.in,");
+
+		assertTrue(error.startsWith("Line 2: the email address s.shah@sies.edu.in is already "
+				+ "another student's"), error);
+		assertPlainWords(error);
+	}
+
+	/** Visible this time: the roll number finds S Shah, and the APAAR ID is R Rao's. */
+	@Test
+	void anApaarIdAnotherStudentHoldsIsSaidInWords() throws Exception {
+
+		String error = oneRosterError("a.cs@sies.edu.in", SESSION,
+				"CS-FY-002,S Shah,they/them,FY,BSc_unaided,COMPUTER_SCIENCE,1,,999000111222");
+
+		assertTrue(error.startsWith("Line 2: the APAAR ID 999000111222 is already another "
+				+ "student's"), error);
+		assertPlainWords(error);
+	}
+
+	private String oneRosterError(String email, int session, String row) throws Exception {
+
+		Reply reply = postCsv("/roster?year=" + session,
+				"rollNo,name,pronouns,year,stream,majorDept,semester,email,apaarId\n" + row + "\n",
+				tokenFor(email));
+
+		assertEquals(200, reply.status(), reply::toString);
+		assertEquals(1, reply.body().get("failed").intValue(), reply::toString);
+		assertEquals(1, reply.body().get("errors").size(), reply::toString);
+		return reply.body().get("errors").get(0).stringValue();
+	}
+
+	/** No PostgreSQL wording: no constraint, index, relation or policy name reaches a person. */
+	private static void assertPlainWords(String message) {
+
+		for (String jargon : List.of("ERROR:", "violates", "constraint", "relation",
+				"row-level security", "_uq", "_key", "_fkey", "Detail:")) {
+			assertFalse(message.contains(jargon), () -> "'" + jargon + "' in: " + message);
+		}
+	}
+
+	// ── Attendance import: one student under two spellings ───────────────
+
+	/**
+	 * Was a bug: CS-FY-002 and CS/FY/002 passed the parser's duplicate check (it kept slashes)
+	 * and were one student to the importer (it stripped them), so the preview offered three
+	 * marks for two students and the later line silently won. Both now compare
+	 * {@code CanonicalCode} spellings, so the sheet is refused for naming one student twice.
+	 */
+	@Test
+	void oneStudentUnderTwoSpellingsIsNotImportedQuietly() throws Exception {
+
+		Reply preview = postCsv("/attendance/import?dryRun=true", """
+				Course code,CS-101
+				Date,21/07/2025
+				Start time,09:00
+				End time,10:00
+				CS-FY-001,P
+				CS-FY-002,P
+				CS/FY/002,AB
+				""", tokenFor("a.cs@sies.edu.in"));
+
+		assertEquals(200, preview.status(), preview::toString);
+		assertFalse(preview.body().get("canImport").booleanValue(), preview::toString);
+		assertTrue(preview.raw().contains("CSFY002 appears on lines 6 and 7"),
+				preview::toString);
+	}
+
+	// ── The password re-check ────────────────────────────────────────────
+
+	/**
+	 * Was a bug: {@code /auth/login} counted failures, locked the account and logged each
+	 * refusal, while {@code /auth/password} checked the current password with none of that, so
+	 * a session token was an unlimited, unlogged way to find the account's password. The
+	 * re-check is now counted and recorded as a login attempt is.
+	 */
+	@Test
+	void guessingTheCurrentPasswordLocksTheAccount() throws Exception {
+
+		String token = tokenFor("a.cs@sies.edu.in");
+		List<Integer> statuses = new ArrayList<>();
+
+		for (int attempt = 0; attempt < 6; attempt++) {
+			statuses.add(changePassword(token, "guess number " + attempt).status());
+		}
+
+		assertEquals(List.of(403, 403, 403, 403, 403, 429), statuses,
+				"five wrong guesses are refused as wrong, and the sixth finds the account locked");
+		assertEquals(1, count("SELECT count(*) FROM app_account WHERE login_email = "
+				+ "'a.cs@sies.edu.in' AND locked_until > now()"));
+		assertEquals(6, count("SELECT count(*) FROM audit_log WHERE action = 'LOGIN_FAILED' "
+				+ "AND detail ->> 'while' = 'changing the password' "
+				+ "AND session_id IS NOT NULL"), "each refusal is logged, against the session");
+		assertEquals(1, count("SELECT count(*) FROM audit_log WHERE action = 'ACCOUNT_LOCKED'"));
+
+		// While locked, the right password is refused like any other, so the refusal cannot be
+		// used to tell a right guess from a wrong one.
+		Reply right = changePassword(token, PASSWORD);
+
+		assertEquals(429, right.status(), right::toString);
+		assertEquals("account_locked", right.body().get("code").stringValue());
+
+		// And the login box is locked by the same count.
+		assertEquals(401, post("/auth/login", json("email", "a.cs@sies.edu.in", "door",
+				"STAFF", "password", PASSWORD), null).status());
+	}
+
+	/** A slip or two, then the right password: the change goes through and the count is gone. */
+	@Test
+	void aChangeAfterAFewSlipsClearsTheCount() throws Exception {
+
+		String token = tokenFor("a.cs@sies.edu.in");
+
+		assertEquals(403, changePassword(token, "not it").status());
+		assertEquals(403, changePassword(token, "not it either").status());
+
+		Reply changed = changePassword(token, PASSWORD);
+
+		assertEquals(200, changed.status(), changed::toString);
+		assertEquals(0, count("SELECT failed_logins FROM app_account "
+				+ "WHERE login_email = 'a.cs@sies.edu.in'"));
+	}
+
+	private Reply changePassword(String token, String current) throws Exception {
+		return post("/auth/password", json("currentPassword", current,
+				"newPassword", "a brand new passphrase entirely"), token);
+	}
+
+	// ── V43: there is always an administrator ────────────────────────────
+
+	/** The control: one administrator may not disable the other when that leaves none. */
+	@Test
+	void theLastAdministratorCannotBeDisabled() throws Exception {
+
+		postgres.asSuperuser("UPDATE app_account SET disabled_at = now() WHERE account_id = "
+				+ accountSecondAdmin);
+
+		SQLException refused = null;
+
+		try {
+			postgres.asSuperuser("UPDATE app_account SET disabled_at = now() "
+					+ "WHERE account_id = " + accountAdmin);
+		} catch (SQLException e) {
+			refused = e;
+		}
+
+		assertTrue(refused != null && refused.getMessage().contains("no administrator"),
+				"the trigger has to refuse the last one: " + refused);
+	}
+
+	/**
+	 * Was a bug: V43's trigger checked with a plain {@code NOT EXISTS}, under READ COMMITTED,
+	 * and took no lock, so two transactions disabling the two administrators each saw the
+	 * other's still live, both passed, and both committed. V58 takes an advisory lock first, so
+	 * the second waits for the first and then sees what it did.
+	 */
+	@Test
+	void twoAdministratorsCannotBeDisabledAtOnce() throws Exception {
+
+		ExecutorService second = Executors.newSingleThreadExecutor();
+
+		try (Connection first = postgres.connection()) {
+
+			first.setAutoCommit(false);
+
+			try (Statement statement = first.createStatement()) {
+				statement.executeUpdate("UPDATE app_account SET disabled_at = now() "
+						+ "WHERE account_id = " + accountAdmin);
+			}
+
+			Future<SQLException> other = second.submit(() -> {
+				try (Connection connection = postgres.connection();
+				     Statement statement = connection.createStatement()) {
+
+					connection.setAutoCommit(false);
+					statement.executeUpdate("UPDATE app_account SET disabled_at = now() "
+							+ "WHERE account_id = " + accountSecondAdmin);
+					connection.commit();
+					return null;
+
+				} catch (SQLException refused) {
+					return refused;
+				}
+			});
+
+			// The second removal waits on the first rather than deciding beside it.
+			assertThrows(TimeoutException.class, () -> other.get(1, TimeUnit.SECONDS),
+					"the second removal must wait for the first, not run alongside it");
+
+			first.commit();
+
+			SQLException refused = other.get(30, TimeUnit.SECONDS);
+
+			assertNotNull(refused, "the second removal went through after the first");
+			assertTrue(refused.getMessage().contains("no administrator"),
+					refused::getMessage);
+
+		} finally {
+			second.shutdownNow();
+		}
+
+		assertEquals(1, count("SELECT count(*) FROM user_role r JOIN app_account a USING "
+						+ "(account_id) WHERE r.role = 'ADMIN' AND r.revoked_at IS NULL "
+						+ "AND a.disabled_at IS NULL"),
+				"one administrator is left: the one the second removal was refused for");
+	}
+
+	// ── Fixture helpers ──────────────────────────────────────────────────
+
+	private long account(AccountKind kind, Long prof, String email) throws SQLException {
+
+		try (Connection connection = postgres.connection()) {
+
+			long id = AccountDirectory.create(connection, kind, prof, null,
+					email.substring(0, email.indexOf('@')), email, PASSWORD.toCharArray(),
+					null);
+
+			try (PreparedStatement statement = connection.prepareStatement(
+					"UPDATE app_account SET must_rotate = false WHERE account_id = ?")) {
+
+				statement.setLong(1, id);
+				statement.executeUpdate();
+			}
+			return id;
+		}
+	}
+
+	private void grantRole(long account, String role, long grantedBy) throws SQLException {
+
+		try (Connection connection = postgres.connection();
+		     PreparedStatement statement = connection.prepareStatement(
+				     "INSERT INTO user_role (account_id, role, granted_by) "
+						     + "VALUES (?, ?::app_role, ?)")) {
+
+			statement.setLong(1, account);
+			statement.setString(2, role);
+			statement.setLong(3, grantedBy);
+			statement.execute();
+		}
+	}
+
+	// ── HTTP ─────────────────────────────────────────────────────────────
+
+	private record Reply(int status, JsonNode body, String raw) {
+
+		@Override
+		public String toString() {
+			return status + " " + raw;
+		}
+	}
+
+	private String tokenFor(String email) throws Exception {
+
+		Reply reply = post("/auth/login", json("email", email, "door", "STAFF",
+				"password", PASSWORD), null);
+
+		assertEquals(200, reply.status(), reply::toString);
+		return reply.body().get("token").stringValue();
+	}
+
+	private Reply post(String path, String body, String token) throws Exception {
+
+		return send(HttpRequest
+				.newBuilder(URI.create("http://localhost:" + port + Api.V1 + path))
+				.header("Content-Type", "application/json")
+				.POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8)), token);
+	}
+
+	private Reply postCsv(String path, String csv, String token) throws Exception {
+
+		return send(HttpRequest
+				.newBuilder(URI.create("http://localhost:" + port + Api.V1 + path))
+				.header("Content-Type", "text/csv")
+				.POST(HttpRequest.BodyPublishers.ofString(csv, StandardCharsets.UTF_8)), token);
+	}
+
+	private static Reply send(HttpRequest.Builder request, String token)
+			throws IOException, InterruptedException {
+
+		if (token != null) {
+			request.header("Authorization", "Bearer " + token);
+		}
+
+		request.header(Api.VERSION_HEADER, "probe-harness/1.0");
+
+		HttpResponse<String> response = HTTP.send(request.build(),
+				HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+		String raw = response.body();
+		JsonNode body;
+
+		try {
+			body = raw == null || raw.isBlank() ? JSON.nullNode() : JSON.readTree(raw);
+		} catch (RuntimeException e) {
+			body = JSON.nullNode();
+		}
+
+		return new Reply(response.statusCode(), body, raw);
+	}
+
+	private static String json(Object... pairs) {
+
+		Map<String, Object> body = new LinkedHashMap<>();
+
+		for (int at = 0; at < pairs.length; at += 2) {
+			body.put(String.valueOf(pairs[at]), pairs[at + 1]);
+		}
+		return JSON.writeValueAsString(body);
+	}
+
+	// ── Reading the database back ────────────────────────────────────────
+
+	private long count(String sql) throws SQLException {
+
+		try (Connection connection = postgres.connection();
+		     Statement statement = connection.createStatement();
+		     ResultSet results = statement.executeQuery(sql)) {
+
+			assertTrue(results.next(), () -> "no row from: " + sql);
+			return results.getLong(1);
+		}
+	}
+
+	private String text(String sql) throws SQLException {
+
+		try (Connection connection = postgres.connection();
+		     Statement statement = connection.createStatement();
+		     ResultSet results = statement.executeQuery(sql)) {
+
+			assertTrue(results.next(), () -> "no row from: " + sql);
+			return results.getString(1);
+		}
+	}
+
+	private List<String> list(String sql) throws SQLException {
+
+		List<String> out = new ArrayList<>();
+
+		try (Connection connection = postgres.connection();
+		     Statement statement = connection.createStatement();
+		     ResultSet results = statement.executeQuery(sql)) {
+
+			while (results.next()) {
+				out.add(results.getString(1));
+			}
+		}
+		return out;
+	}
+}
