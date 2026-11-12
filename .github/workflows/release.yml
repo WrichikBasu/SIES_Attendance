@@ -97,7 +97,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           PRERELEASE=""
-          if echo "$TAG" | grep -qiE 'alpha|beta'; then
+          if echo "$TAG" | grep -qiE 'alpha'; then
             PRERELEASE="--prerelease"
           fi
           gh release create "$TAG" dist/* \
