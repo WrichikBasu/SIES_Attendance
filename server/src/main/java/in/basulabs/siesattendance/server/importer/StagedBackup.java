@@ -317,6 +317,8 @@ public final class StagedBackup implements AutoCloseable {
 			}
 		}
 
+		stripTriggersAndViews(connection);
+
 		Set<String> tables = new HashSet<>();
 
 		try (Statement statement = connection.createStatement();
@@ -336,6 +338,38 @@ public final class StagedBackup implements AutoCloseable {
 			throw new RejectedException(Rejection.NOT_A_BACKUP,
 					staged.getFileName() + " is a database, but not one from this app; it has "
 							+ "no " + missing);
+		}
+	}
+
+	/**
+	 * Drops every trigger and view in the staged copy before anything else touches it (R6).
+	 * <p>
+	 * Only table names used to be checked, so a file could carry its own triggers, and the
+	 * migrations that run next write to the copy: a trigger in an uploaded file runs whatever SQL
+	 * it was given -- recursion enough to hold a thread, or rows rewritten on their way into the
+	 * import. A view could stand in for a table this code reads. The importer reads rows and
+	 * nothing else, so none of either is needed; a phone's own outbox triggers go too, and the
+	 * migrations put back any trigger the schema itself defines.
+	 */
+	private static void stripTriggersAndViews(@NonNull Connection connection)
+			throws SQLException {
+
+		java.util.List<String[]> found = new java.util.ArrayList<>();
+
+		try (Statement statement = connection.createStatement();
+		     ResultSet results = statement.executeQuery("SELECT type, name FROM sqlite_master "
+				     + "WHERE type IN ('trigger', 'view')")) {
+
+			while (results.next()) {
+				found.add(new String[]{results.getString(1), results.getString(2)});
+			}
+		}
+
+		try (Statement statement = connection.createStatement()) {
+			for (String[] item : found) {
+				statement.execute("DROP " + ("trigger".equals(item[0]) ? "TRIGGER" : "VIEW")
+						+ " IF EXISTS \"" + item[1].replace("\"", "\"\"") + "\"");
+			}
 		}
 	}
 

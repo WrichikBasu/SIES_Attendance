@@ -49,21 +49,60 @@ import javax.crypto.SecretKey;
  * the UI ask for one only when the file actually needs it, and lets a backup from a newer app
  * version be rejected with a clear message instead of a decryption failure.
  *
+ * <h3>Limits, and what a file is trusted with (R6)</h3>
+ * A backup is a file somebody hands the server or the phone, so nothing in it is taken on
+ * trust:
+ * <ul>
+ *     <li><b>The header is authenticated</b> from revision 2: every byte of it, up to the
+ *     payload, is the encryption's associated data, so a header changed after the file was
+ *     written -- a schema version, a creation date -- fails the password check like a changed
+ *     payload does. A revision-1 file is still read, with its header taken as written; there is
+ *     no key to check an unencrypted file's header against at all.</li>
+ *     <li><b>The round count</b> is read from the file and used to derive the key, so it is
+ *     refused past {@link #MAX_ITERATIONS} before any deriving starts. Five hundred million
+ *     rounds was minutes of a core for a five-byte file.</li>
+ *     <li><b>The unpacked size</b> is capped at {@link #MAX_UNPACKED}. A gzip stream can
+ *     unpack to hundreds of times its size, and an unencrypted file had no ceiling at all.</li>
+ *     <li><b>The encrypted payload</b> is buffered whole and decrypted whole (see
+ *     {@link #unpack}), so it is held twice; {@link #MAX_ENCRYPTED_PAYLOAD} keeps that to a
+ *     size any phone or server has room for.</li>
+ * </ul>
+ *
  * @see BackupCrypto for the encryption itself
  */
 public final class BackupContainer {
 
 	private static final byte[] MAGIC = {'S', 'I', 'E', 'S', 'B', 'A', 'K', '1'};
 
-	/** The container revision this code writes, and the highest it reads. */
-	public static final byte FORMAT_VERSION = 1;
+	/**
+	 * The container revision this code writes, and the highest it reads. Revision 2
+	 * authenticates the header (R6); revision 1 is still read.
+	 */
+	public static final byte FORMAT_VERSION = 2;
+
+	/** The first revision whose header is the encryption's associated data. */
+	private static final int FORMAT_AUTHENTICATED_HEADER = 2;
 
 	/**
-	 * A ceiling on the encrypted payload, which is buffered whole (see {@link #unpack}). Far
-	 * above any realistic roster and attendance history, and only here so an absurd or hostile
-	 * file fails with a message instead of an OutOfMemoryError.
+	 * A ceiling on the encrypted payload, which is buffered whole and decrypted whole, so held
+	 * twice at the peak (see {@link #unpack}). A college's roster and a session of attendance
+	 * compress to a few megabytes; this is far above that, and only here so an absurd or
+	 * hostile file fails with a message instead of taking the heap.
 	 */
-	public static final long MAX_ENCRYPTED_PAYLOAD = 256L * 1024 * 1024;
+	public static final long MAX_ENCRYPTED_PAYLOAD = 64L * 1024 * 1024;
+
+	/**
+	 * A ceiling on the database a file unpacks to, encrypted or not. A gzip stream can expand to
+	 * hundreds of times its size: six hundred megabytes of zeros fit in under one.
+	 */
+	public static final long MAX_UNPACKED = 256L * 1024 * 1024;
+
+	/**
+	 * The most key-derivation rounds a file may ask for: ten times what this code writes. The
+	 * count is read from the file, and deriving the key runs it, so a file asking for five
+	 * hundred million rounds was minutes of a core before the password was even checked.
+	 */
+	public static final int MAX_ITERATIONS = BackupCrypto.DEFAULT_ITERATIONS * 10;
 
 	/**
 	 * The schema version reported for a file whose container revision is newer than
@@ -107,6 +146,9 @@ public final class BackupContainer {
 	 */
 	public static final class Info {
 
+		/** The container revision the file was written at. */
+		public final int format;
+
 		public final boolean encrypted;
 
 		/**
@@ -123,6 +165,12 @@ public final class BackupContainer {
 		public final int appVersionCode;
 
 		public Info(boolean encrypted, int schemaVersion, long createdAt, int appVersionCode) {
+			this(FORMAT_VERSION, encrypted, schemaVersion, createdAt, appVersionCode);
+		}
+
+		public Info(int format, boolean encrypted, int schemaVersion, long createdAt,
+		            int appVersionCode) {
+			this.format = format;
 			this.encrypted = encrypted;
 			this.schemaVersion = schemaVersion;
 			this.createdAt = createdAt;
@@ -171,7 +219,34 @@ public final class BackupContainer {
 		long createdAt = in.readLong();
 		int appVersionCode = in.readInt();
 
-		return new Info(encrypted, schemaVersion, createdAt, appVersionCode);
+		return new Info(format, encrypted, schemaVersion, createdAt, appVersionCode);
+	}
+
+	/**
+	 * The header as it was written, up to the payload: what revision 2 authenticates. Rebuilt
+	 * from what was read rather than kept as bytes, which is the same thing, since every field
+	 * is fixed-width.
+	 */
+	@NonNull
+	private static byte[] headerBytes(int format, boolean encrypted, int schemaVersion,
+	                                  long createdAt, int appVersionCode, int iterations,
+	                                  @NonNull byte[] salt, @NonNull byte[] iv)
+			throws IOException {
+
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		DataOutputStream out = new DataOutputStream(bytes);
+
+		out.write(MAGIC);
+		out.writeByte(format);
+		out.writeBoolean(encrypted);
+		out.writeInt(schemaVersion);
+		out.writeLong(createdAt);
+		out.writeInt(appVersionCode);
+		out.writeInt(iterations);
+		out.write(salt);
+		out.write(iv);
+		out.flush();
+		return bytes.toByteArray();
 	}
 
 	/**
@@ -206,6 +281,13 @@ public final class BackupContainer {
 				throw new DamagedBackupException(null);
 			}
 
+			if (iterations > MAX_ITERATIONS) {
+				// Refused before anything is derived: deriving is what the count would cost.
+				throw new DamagedBackupException("The file asks for " + iterations
+						+ " rounds of key derivation, far more than any release of this app "
+						+ "writes.");
+			}
+
 			if (password == null) {
 				throw new DamagedBackupException(
 						"The file is encrypted and no password was given.");
@@ -215,6 +297,12 @@ public final class BackupContainer {
 
 			SecretKey key = BackupCrypto.deriveKey(password, salt, iterations);
 			Cipher cipher = BackupCrypto.decryptCipher(key, iv);
+
+			if (info.format >= FORMAT_AUTHENTICATED_HEADER) {
+				// A header changed after the file was written fails here like a wrong password.
+				cipher.updateAAD(headerBytes(info.format, true, info.schemaVersion,
+						info.createdAt, info.appVersionCode, iterations, salt, iv));
+			}
 
 			// doFinal on the whole payload rather than a CipherInputStream. GCM only knows
 			// the data was untampered once it reaches the tag at the very end, and a
@@ -231,7 +319,7 @@ public final class BackupContainer {
 		}
 
 		try (GZIPInputStream gzip = new GZIPInputStream(compressed)) {
-			copy(gzip, target);
+			copy(gzip, target, MAX_UNPACKED);
 		}
 	}
 
@@ -280,6 +368,11 @@ public final class BackupContainer {
 
 			SecretKey key = BackupCrypto.deriveKey(password, salt, iterations);
 			Cipher cipher = BackupCrypto.encryptCipher(key, iv);
+
+			// The whole header, so a reader can tell when any of it has been changed (R6).
+			cipher.updateAAD(headerBytes(FORMAT_VERSION, true, schemaVersion, createdAt,
+					appVersionCode, iterations, salt, iv));
+
 			payload = new CipherOutputStream(out, cipher);
 		}
 
@@ -312,13 +405,22 @@ public final class BackupContainer {
 		return buffer.toByteArray();
 	}
 
-	private static void copy(@NonNull InputStream in, @NonNull OutputStream out)
+	/** Copies, refusing anything past {@code limit} bytes. */
+	private static void copy(@NonNull InputStream in, @NonNull OutputStream out, long limit)
 			throws IOException {
 
 		byte[] buffer = new byte[8192];
+		long total = 0;
 		int read;
 
 		while ((read = in.read(buffer)) != -1) {
+
+			total += read;
+
+			if (total > limit) {
+				throw new DamagedBackupException("The file unpacks to more than "
+						+ (limit >> 20) + " MB, which no backup of this app does.");
+			}
 			out.write(buffer, 0, read);
 		}
 		out.flush();

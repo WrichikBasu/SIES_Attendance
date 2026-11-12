@@ -222,4 +222,50 @@ public class BackupContainerTest {
 		assertTrue("gzip should have shrunk a quarter-megabyte of zeroes, got "
 				+ file.length, file.length < compressible.length / 10);
 	}
+
+	/**
+	 * Every backup made before R6 is revision 1, with no authenticated header, and has to keep
+	 * opening: the change is in what new files carry, not in which old ones are accepted.
+	 */
+	@Test
+	public void aRevisionOneFileStillOpens() throws Exception {
+
+		char[] password = "correct horse".toCharArray();
+		byte[] salt = in.basulabs.siesattendance.backend.util.BackupCrypto.randomBytes(
+				in.basulabs.siesattendance.backend.util.BackupCrypto.SALT_BYTES);
+		byte[] iv = in.basulabs.siesattendance.backend.util.BackupCrypto.randomBytes(
+				in.basulabs.siesattendance.backend.util.BackupCrypto.IV_BYTES);
+		int iterations = 1000;
+
+		// Written as revision 1 wrote it: the same header, and no associated data.
+		java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+		java.io.DataOutputStream out = new java.io.DataOutputStream(bytes);
+		out.write(new byte[]{'S', 'I', 'E', 'S', 'B', 'A', 'K', '1'});
+		out.writeByte(1);
+		out.writeBoolean(true);
+		out.writeInt(7);
+		out.writeLong(1_700_000_000_000L);
+		out.writeInt(20);
+		out.writeInt(iterations);
+		out.write(salt);
+		out.write(iv);
+
+		javax.crypto.Cipher cipher = in.basulabs.siesattendance.backend.util.BackupCrypto
+				.encryptCipher(in.basulabs.siesattendance.backend.util.BackupCrypto
+						.deriveKey(password, salt, iterations), iv);
+		try (java.io.OutputStream gzip = new java.util.zip.GZIPOutputStream(
+				new javax.crypto.CipherOutputStream(out, cipher))) {
+			gzip.write("an old backup".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+		}
+
+		java.io.DataInputStream read = new java.io.DataInputStream(
+				new java.io.ByteArrayInputStream(bytes.toByteArray()));
+		BackupContainer.Info info = BackupContainer.readHeader(read);
+		assertEquals(1, info.format);
+
+		java.io.ByteArrayOutputStream unpacked = new java.io.ByteArrayOutputStream();
+		BackupContainer.unpack(read, info, password, unpacked);
+		assertEquals("an old backup",
+				unpacked.toString(java.nio.charset.StandardCharsets.UTF_8.name()));
+	}
 }
