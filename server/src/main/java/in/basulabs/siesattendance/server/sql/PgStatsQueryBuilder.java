@@ -207,8 +207,12 @@ public final class PgStatsQueryBuilder {
 			args.add(filter.batchID);
 		}
 
+		// Every course the professor teaches, not only the ones they coordinate (R37), as the
+		// phone's builder does.
 		if (filter.professorID != null) {
-			where.append(" AND c.prof_id = ?");
+			where.append(" AND (c.prof_id = ? OR EXISTS (SELECT 1 FROM course_instructor ci")
+					.append("   WHERE ci.course_id = c.course_id AND ci.prof_id = ?))");
+			args.add(filter.professorID);
 			args.add(filter.professorID);
 		}
 

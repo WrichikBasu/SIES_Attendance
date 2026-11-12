@@ -201,6 +201,9 @@ class Fixture:
     # (course_id, batch_id): a course's roll is the members of the batches linked to it
     # for the session (V41), and a course with none has nobody on it.
     course_batches: list[tuple[int, int]] = field(default_factory=list)
+    # (course_id, prof_id): who teaches a course besides its coordinator. The report's
+    # professor filter matches these too (R37).
+    course_instructors: list[tuple[int, int]] = field(default_factory=list)
     lectures: list[Lecture] = field(default_factory=list)
     marks: list[Mark] = field(default_factory=list)
 
@@ -274,6 +277,8 @@ FIXTURE = Fixture(
         Batch(6, "IT minor", None, 2025, (1,)),
         Batch(7, "SY Physics", None, 2025, (4, 5)),
     ],
+    # Dr 1 teaches PH201 alongside its coordinator, Dr 2.
+    course_instructors=[(7, 1)],
     course_batches=[
         (1, 5), (5, 5), (6, 5),
         (2, 1), (2, 2),
@@ -431,6 +436,10 @@ def build_sqlite() -> sqlite3.Connection:
     for course_id, batch_id in FIXTURE.course_batches:
         c.execute("INSERT INTO course_batch_map VALUES (?,?)", (course_id, batch_id))
 
+    for course_id, prof_id in FIXTURE.course_instructors:
+        c.execute("INSERT INTO course_instructor (courseID, profID) VALUES (?,?)",
+                  (course_id, prof_id))
+
     for lecture in FIXTURE.lectures:
         c.execute("INSERT INTO lectures VALUES (?,?,?,?,?,?)", (
             lecture.lecture_id, lecture.course_id, lecture.batch_id,
@@ -529,6 +538,12 @@ def postgres_inserts() -> list[tuple[str, list[str | None]]]:
         out.append((
             "INSERT INTO course_batch_map (course_id, batch_id) VALUES (?, ?)",
             [str(course_id), str(batch_id)],
+        ))
+
+    for course_id, prof_id in FIXTURE.course_instructors:
+        out.append((
+            "INSERT INTO course_instructor (course_id, prof_id) VALUES (?, ?)",
+            [str(course_id), str(prof_id)],
         ))
 
     for lecture in FIXTURE.lectures:

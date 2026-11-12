@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.Set;
 
 import in.basulabs.siesattendance.R;
+import in.basulabs.siesattendance.backend.EntityStudentYear;
 import in.basulabs.siesattendance.backend.AcademicRules;
 import in.basulabs.siesattendance.backend.CourseType;
 import in.basulabs.siesattendance.backend.Department;
@@ -905,9 +906,30 @@ public class FragmentStats extends Fragment {
 			Integer session = viewModel.statsFilter().academicYear;
 			if (session != null) {
 				args.putInt("academicYear", session);
+				Navigation.findNavController(requireView())
+						.navigate(R.id.action_stats_to_studentDetail, args);
+				return;
 			}
-			Navigation.findNavController(requireView())
-					.navigate(R.id.action_stats_to_studentDetail, args);
+
+			// "All sessions" names none, and the students list's session may be one this
+			// student was never in, which showed a blank header (R37). One of their own
+			// instead: the current session if they are in it, else their latest.
+			viewModel.loadEnrolments(row.rowId, enrolments -> Ui.onMain(this, () -> {
+				int current = viewModel.academicYearValue();
+				int chosen = 0;
+				for (EntityStudentYear enrolment : enrolments) {
+					if (enrolment.academicYear == current) {
+						chosen = current;
+						break;
+					}
+					chosen = Math.max(chosen, enrolment.academicYear);
+				}
+				if (chosen > 0) {
+					args.putInt("academicYear", chosen);
+				}
+				Navigation.findNavController(requireView())
+						.navigate(R.id.action_stats_to_studentDetail, args);
+			}));
 			return;
 		}
 
@@ -973,6 +995,17 @@ public class FragmentStats extends Fragment {
 		});
 
 		viewModel.getStatsSummary().observe(getViewLifecycleOwner(), this::bindSummary);
+
+		// A mark saved, a lecture added or a sync arriving runs the report again (R37). The
+		// first emission is only the observer attaching, and the screen has already asked for
+		// its first run; the debounce merges a burst of writes, such as a pull, into one run.
+		final boolean[] attached = {false};
+		viewModel.getReportInputs().observe(getViewLifecycleOwner(), changed -> {
+			if (attached[0]) {
+				viewModel.scheduleStatsQuery();
+			}
+			attached[0] = true;
+		});
 
 		viewModel.getStatsBelowCount().observe(getViewLifecycleOwner(), count -> {
 			if (tvBelow != null) {

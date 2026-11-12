@@ -138,6 +138,55 @@ public abstract class DaoStudent {
 	public abstract Long findStudentIdByRollNo(String rollNo, int academicYear);
 
 	/**
+	 * Adds a student entered by hand, refusing anybody already on record.
+	 * <p>
+	 * The same three things {@link #upsertStudentWithYear} recognises a person by -- this
+	 * session's roll number, the APAAR ID, the email -- but here a match is a refusal rather
+	 * than an update (R34). The check and the write share one transaction, so nothing can slip
+	 * in between them.
+	 *
+	 * @throws StudentAlreadyExists naming the student already on record, and what matched
+	 */
+	@Transaction
+	public long addStudentWithYear(EntityStudent student, int academicYear, String rollNo,
+	                               Year year, Stream stream, Department majorDept,
+	                               Department minorDept, Department oeDept,
+	                               Integer semester, Division division,
+	                               java.time.LocalDate joinDate,
+	                               java.time.LocalDate leaveDate) {
+
+		String canonical = canonicalRollNo(rollNo);
+
+		refuseExisting(findStudentIdByRollNo(canonical, academicYear),
+				StudentAlreadyExists.Match.ROLL_NO);
+
+		if (student.apaarId != null) {
+			refuseExisting(findStudentIdByApaarId(student.apaarId),
+					StudentAlreadyExists.Match.APAAR_ID);
+		}
+
+		if (student.email != null && !student.email.isEmpty()) {
+			refuseExisting(findStudentIdByEmail(student.email),
+					StudentAlreadyExists.Match.EMAIL);
+		}
+
+		return upsertStudentWithYear(student, academicYear, canonical, year, stream, majorDept,
+				minorDept, oeDept, semester, division, joinDate, leaveDate);
+	}
+
+	private void refuseExisting(@Nullable Long existing,
+	                            @NonNull StudentAlreadyExists.Match match) {
+
+		if (existing == null) {
+			return;
+		}
+
+		EntityStudent stored = getStudentSync(existing);
+		throw new StudentAlreadyExists(existing, stored == null ? "Another student"
+				: stored.name, match);
+	}
+
+	/**
 	 * Inserts a student and their year record together. If a student with the same roll number
 	 * already exists for that academic year, the existing student ID is reused and only the year
 	 * record is refreshed, which is what makes CSV import idempotent: importing the same file

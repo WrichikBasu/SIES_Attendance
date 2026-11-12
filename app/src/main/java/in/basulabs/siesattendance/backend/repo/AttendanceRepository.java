@@ -83,6 +83,12 @@ public interface AttendanceRepository {
 	@NonNull
 	List<EntityAcademicYear> academicYearsSync();
 
+	/**
+	 * Removes a session with nothing filed under it.
+	 *
+	 * @throws IllegalStateException when students, batches or lectures are still filed under
+	 *                               it, saying so
+	 */
 	void deleteAcademicYear(@NonNull EntityAcademicYear year);
 
 	@Nullable
@@ -130,8 +136,6 @@ public interface AttendanceRepository {
 	@NonNull
 	List<EntityCourse> coursesSync();
 
-	long insertCourse(@NonNull EntityCourse course);
-
 	@NonNull
 	LiveData<Integer> observeCourseCount();
 
@@ -140,9 +144,15 @@ public interface AttendanceRepository {
 
 	void setCourseDiscontinued(long courseID, ZonedDateTime discontinuedOn);
 
-	void setCourseInstructors(long courseID, @NonNull List<Long> profIDs);
-
-	void updateCourse(@NonNull EntityCourse course);
+	/**
+	 * Saves a course from the course form, with its instructors and, unless null, its batch
+	 * links, in one transaction. An edit keeps the stored introduced and discontinued dates,
+	 * which the form does not show.
+	 *
+	 * @param creating whether this is a new course rather than an edit
+	 */
+	void saveCourse(@NonNull EntityCourse course, boolean creating,
+	                @NonNull List<Long> profIDs, @Nullable List<Long> batchIDs);
 
 
 	// ── Batches ──────────────────────────────────────────────────────────
@@ -273,6 +283,19 @@ public interface AttendanceRepository {
 	                           @Nullable java.time.LocalDate joinDate,
 	                           @Nullable java.time.LocalDate leaveDate);
 
+	/**
+	 * Adds a student entered by hand. Unlike {@link #upsertStudentWithYear}, a student already
+	 * on record under the same roll number this session, APAAR ID or email is refused rather
+	 * than updated.
+	 *
+	 * @throws in.basulabs.siesattendance.backend.StudentAlreadyExists naming who is there
+	 */
+	long addStudentWithYear(@NonNull EntityStudent student, int academicYear, String rollNo,
+	                        Year year, Stream stream, Department majorDept, Department minorDept,
+	                        Department oeDept, Integer semester, Division division,
+	                        @Nullable java.time.LocalDate joinDate,
+	                        @Nullable java.time.LocalDate leaveDate);
+
 	void withdrawFromSession(long studentID, int academicYear);
 
 	@NonNull
@@ -356,6 +379,13 @@ public interface AttendanceRepository {
 
 	@NonNull
 	StatsSummary statsSummarySync(@NonNull SupportSQLiteQuery query);
+
+	/**
+	 * Changes whenever anything the report reads is written. Carries no rows; observe it to
+	 * know when to run the report again.
+	 */
+	@NonNull
+	LiveData<List<Integer>> observeReportInputs();
 
 	// ── Sync, as far as a screen needs to know ──────────────────────
 

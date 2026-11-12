@@ -98,7 +98,7 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 
 	@Override
 	public void deleteAcademicYear(@NonNull EntityAcademicYear year) {
-		db.daoAcademicYear().delete(year);
+		db.daoAcademicYear().deleteIfEmpty(year);
 	}
 
 	@Override
@@ -190,15 +190,9 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 		return db.daoCourse().getAllSync();
 	}
 
-	@Override
-	public long insertCourse(@NonNull EntityCourse course) {
-		course.courseCode = canonicalCourseCode(course.courseCode);
-		return db.daoCourse().insert(course);
-	}
-
 	/**
 	 * A course code in its stored spelling (see {@link CanonicalCode}), refused when nothing of
-	 * it is left. Both course writes pass through here, so the phone stores what the server's
+	 * it is left. Every course write passes through here, so the phone stores what the server's
 	 * V57 trigger would.
 	 */
 	@NonNull
@@ -229,14 +223,10 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	}
 
 	@Override
-	public void setCourseInstructors(long courseID, @NonNull List<Long> profIDs) {
-		db.daoCourse().setInstructors(courseID, profIDs);
-	}
-
-	@Override
-	public void updateCourse(@NonNull EntityCourse course) {
+	public void saveCourse(@NonNull EntityCourse course, boolean creating,
+	                       @NonNull List<Long> profIDs, @Nullable List<Long> batchIDs) {
 		course.courseCode = canonicalCourseCode(course.courseCode);
-		db.daoCourse().update(course);
+		db.daoCourse().save(course, creating, profIDs, batchIDs);
 	}
 
 	// ── Batches ──────────────────────────────────────────────────────────
@@ -429,6 +419,16 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	}
 
 	@Override
+	public long addStudentWithYear(@NonNull EntityStudent student, int academicYear,
+	                               String rollNo, Year year, Stream stream, Department majorDept,
+	                               Department minorDept, Department oeDept, Integer semester,
+	                               Division division, @Nullable java.time.LocalDate joinDate,
+	                               @Nullable java.time.LocalDate leaveDate) {
+		return db.daoStudent().addStudentWithYear(student, academicYear, rollNo, year, stream,
+				majorDept, minorDept, oeDept, semester, division, joinDate, leaveDate);
+	}
+
+	@Override
 	public long upsertStudentWithYear(@NonNull EntityStudent student, int academicYear,
 	                                  String rollNo, Year year, Stream stream, Department majorDept,
 	                                  Department minorDept, Department oeDept, Integer semester,
@@ -587,6 +587,12 @@ public final class RoomAttendanceRepository implements AttendanceRepository {
 	@NonNull
 	public StatsSummary statsSummarySync(@NonNull SupportSQLiteQuery query) {
 		return db.daoStats().runSummary(query);
+	}
+
+	@Override
+	@NonNull
+	public LiveData<List<Integer>> observeReportInputs() {
+		return db.daoStats().observeReportInputs();
 	}
 
 	// ── Observers taken by method reference ──────────────────────────────

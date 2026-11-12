@@ -8,6 +8,7 @@ import androidx.room.Delete;
 import androidx.room.Insert;
 import androidx.room.OnConflictStrategy;
 import androidx.room.Query;
+import androidx.room.Transaction;
 import androidx.room.Update;
 
 import java.util.List;
@@ -42,6 +43,30 @@ public interface DaoAcademicYear {
 	 */
 	@Delete
 	void delete(EntityAcademicYear year);
+
+	/**
+	 * Removes a session, but only one with nothing filed under it (R38).
+	 * <p>
+	 * Enrolments and batches name the session, and the server's foreign keys refuse its
+	 * deletion while they do, so removing it here anyway left them behind on the phone and
+	 * the phone disagreeing with the server. Lectures carry no session column, but without the
+	 * session their dates belong to none and they fall out of every report. Checked in the
+	 * same transaction as the delete, so nothing can be filed in between.
+	 *
+	 * @throws IllegalStateException when anything is still filed under it
+	 */
+	@Transaction
+	default void deleteIfEmpty(@NonNull EntityAcademicYear year) {
+
+		SessionImpact impact = deletionImpactSync(year.academicYear, year.startEpoch,
+				year.endEpoch);
+
+		if (!impact.isEmpty()) {
+			throw new IllegalStateException("The " + year.label() + " session still has "
+					+ "students, batches or lectures, so it was not removed");
+		}
+		delete(year);
+	}
 
 	@Query("SELECT * FROM academic_years ORDER BY academicYear DESC")
 	LiveData<List<EntityAcademicYear>> getAll();
@@ -83,7 +108,9 @@ public interface DaoAcademicYear {
 			+ "   CAST(SUBSTR(l.startDateTime, 1, INSTR(l.startDateTime, '|') - 1) AS INTEGER) "
 			+ "   BETWEEN :startEpoch AND :endEpoch) AS lectures, "
 			+ "(SELECT COUNT(*) FROM student_year WHERE academicYear = :academicYear) "
-			+ "   AS enrolments")
+			+ "   AS enrolments, "
+			+ "(SELECT COUNT(*) FROM batch_desc WHERE academicYear = :academicYear) "
+			+ "   AS batches")
 	@NonNull
 	SessionImpact deletionImpactSync(int academicYear, long startEpoch, long endEpoch);
 

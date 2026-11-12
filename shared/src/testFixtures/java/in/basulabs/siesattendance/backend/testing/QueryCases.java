@@ -113,6 +113,14 @@ public final class QueryCases {
 
 		cases.add(new StatsCase("stats_full_filter", fullyPopulatedFilter(), false));
 
+		// A professor on their own, by course, so a course they teach without coordinating
+		// can be told from one they coordinate (R37). Three arguments: the session, then the
+		// professor twice, once for the coordinator and once for course_instructor.
+		StatsFilter professorOnly = new StatsFilter(SESSION);
+		professorOnly.professorID = 1L;
+		professorOnly.groupBy = StatsGroupBy.COURSE;
+		cases.add(new StatsCase("stats_professor_only", professorOnly, false));
+
 		for (StatsFilter.SortOrder order : StatsFilter.SortOrder.values()) {
 			StatsFilter filter = new StatsFilter(SESSION);
 			filter.sortOrder = order;

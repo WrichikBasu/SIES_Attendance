@@ -937,6 +937,32 @@ def test_stats_sort_orders(conn):
           f"{total}")
 
 
+def test_stats_professor_filter_takes_every_course_they_teach(conn):
+    """
+    The professor filter names a professor's courses: the ones they coordinate and the ones
+    they teach alongside the coordinator (R37). It used to match the coordinator alone.
+
+    Arguments: the session, then the professor twice.
+    """
+    coordinated = {r["primaryLabel"] for r in run(conn, "stats_professor_only", [2025, 1, 1])}
+    check("stats: the professor filter keeps the courses they coordinate",
+          coordinated == {"CS201", "CS202"}, f"{sorted(coordinated)}")
+
+    # Dr Rao (2) coordinates no course with a lecture, so nothing yet.
+    rao = {r["primaryLabel"] for r in run(conn, "stats_professor_only", [2025, 2, 2])}
+    check("stats: a professor whose courses have no lectures gets nothing",
+          rao == set(), f"{sorted(rao)}")
+
+    # Dr Rao also teaches CS201, which Dr Sharma (1) coordinates.
+    conn.execute("INSERT INTO course_instructor (courseID, profID) VALUES (1, 2)")
+    try:
+        rao = {r["primaryLabel"] for r in run(conn, "stats_professor_only", [2025, 2, 2])}
+        check("stats: the professor filter takes a course they teach without coordinating",
+              rao == {"CS201"}, f"{sorted(rao)}")
+    finally:
+        conn.execute("DELETE FROM course_instructor WHERE courseID = 1 AND profID = 2")
+
+
 def test_stats_full_filter_returns_a_consistent_slice(conn):
     rows = run(conn, "stats_full_filter")
     check("stats: a filter that matches nothing returns no rows rather than failing",
@@ -1361,6 +1387,7 @@ def main():
     test_stats_summary_agrees_with_the_grouped_rows(conn)
     test_stats_sort_orders(conn)
     test_stats_full_filter_returns_a_consistent_slice(conn)
+    test_stats_professor_filter_takes_every_course_they_teach(conn)
     test_dao_roster_query_agrees_with_the_export(conn)
     test_lecture_filter_narrows_by_every_dimension(conn)
     test_lecture_filter_combines_period_with_the_rest(conn)

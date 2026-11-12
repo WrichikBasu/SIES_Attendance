@@ -187,8 +187,13 @@ public final class StatsQueryBuilder {
 			args.add(filter.batchID);
 		}
 
+		// Every course the professor teaches, not only the ones they coordinate (R37). The
+		// coordinator is named as well as looked up, so a course whose coordinator row in
+		// course_instructor is missing is still theirs.
 		if (filter.professorID != null) {
-			where.append(" AND c.profID = ?");
+			where.append(" AND (c.profID = ? OR EXISTS (SELECT 1 FROM course_instructor ci")
+					.append("   WHERE ci.courseID = c.courseID AND ci.profID = ?))");
+			args.add(filter.professorID);
 			args.add(filter.professorID);
 		}
 

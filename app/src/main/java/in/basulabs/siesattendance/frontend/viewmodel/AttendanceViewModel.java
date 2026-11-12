@@ -42,6 +42,7 @@ import in.basulabs.siesattendance.backend.EntityStudent;
 import in.basulabs.siesattendance.backend.EntityStudentYear;
 import in.basulabs.siesattendance.backend.MainDatabase;
 import in.basulabs.siesattendance.backend.Stream;
+import in.basulabs.siesattendance.backend.StudentAlreadyExists;
 import in.basulabs.siesattendance.backend.Year;
 import in.basulabs.siesattendance.backend.pojo.DeletionImpact;
 import in.basulabs.siesattendance.backend.pojo.AttendanceRow;
@@ -318,6 +319,20 @@ public class AttendanceViewModel extends AndroidViewModel {
 					return;
 				}
 
+				// The year names the session, so it is the year the session starts in, and
+				// the session ends by the close of the next one. Unchecked, "2026" could cover
+				// any dates at all (R38).
+				String label = EntityAcademicYear.of(year, start, end).label();
+				if (start.getYear() != year) {
+					toastMessage.postValue("The " + label + " session has to start in " + year);
+					return;
+				}
+				if (end.getYear() > year + 1) {
+					toastMessage.postValue("The " + label + " session has to end by 31 December "
+							+ (year + 1));
+					return;
+				}
+
 				if (creating) {
 					EntityAcademicYear clash = repository.academicYearSync(year);
 
@@ -365,6 +380,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void deleteAcademicYear(@NonNull EntityAcademicYear year, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
+				// Refused, with the reason, unless nothing is filed under it (R38).
 				repository.deleteAcademicYear(year);
 				toastMessage.postValue("Session removed");
 				resolveCurrentSession();
@@ -683,6 +699,7 @@ public class AttendanceViewModel extends AndroidViewModel {
 			refreshLectures();
 
 			statsHandler.removeCallbacks(statsRunnable);
+			statsGeneration++;
 			statsFilter = null;
 			statsYearChosenByUser = false;
 			statRows.setValue(new ArrayList<>());
@@ -1422,11 +1439,19 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				repository.upsertStudentWithYear(student, acadYear, rollNo, year, stream,
+				// Not the roster's upsert: a match there is the same person, updated, and here
+				// it is somebody else about to be written over (R34).
+				repository.addStudentWithYear(student, acadYear, rollNo, year, stream,
 						majorDept, minorDept, oeDept, semester, division, joinDate, leaveDate);
 				toastMessage.postValue("Student saved");
 				refreshStudents();
 				onDone.run();
+			} catch (StudentAlreadyExists there) {
+				toastMessage.postValue(getApplication().getString(switch (there.match) {
+					case ROLL_NO -> R.string.error_student_exists_roll_no;
+					case APAAR_ID -> R.string.error_student_exists_apaar_id;
+					case EMAIL -> R.string.error_student_exists_email;
+				}, there.name));
 			} catch (Exception e) {
 				toastMessage.postValue("Could not save: " + e.getMessage());
 			}
@@ -1661,13 +1686,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                      @Nullable List<Long> batchIDs, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				repository.insertCourse(course);
-				repository.setCourseInstructors(course.courseID, instructorIDs);
-
+				// Batches fetched from the server go in first, since the links name them. On
+				// their own: a batch row is harmless if the course then fails.
 				if (batchIDs != null) {
 					adoptPicked(batchIDs);
-					repository.setCourseBatches(course.courseID, batchIDs);
 				}
+				repository.saveCourse(course, true, instructorIDs, batchIDs);
 				toastMessage.postValue("Course saved");
 				onDone.run();
 			} catch (Exception e) {
@@ -2056,6 +2080,17 @@ public class AttendanceViewModel extends AndroidViewModel {
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
+				// A register no session covers would count nowhere: statistics and the
+				// export find a lecture's session by its date (R38). The app works in the
+				// latest session when today falls outside every one, so this is reachable.
+				if (repository.academicYearContainingSync(start.toEpochSecond()) == null) {
+					toastMessage.postValue(getApplication().getString(
+							R.string.error_no_session_covers,
+							start.toLocalDate().format(java.time.format.DateTimeFormatter
+									.ofPattern("d MMM yyyy"))));
+					return;
+				}
+
 				// One repository call, because it is one transaction: see
 				// AttendanceRepository.recordLectureWithMarks.
 				repository.recordLectureWithMarks(courseID, batchID, start, end, notes,
@@ -2493,13 +2528,12 @@ public class AttendanceViewModel extends AndroidViewModel {
 	                         @Nullable List<Long> batchIDs, @NonNull Runnable onDone) {
 		MainDatabase.DB_EXECUTOR.execute(() -> {
 			try {
-				repository.updateCourse(course);
-				repository.setCourseInstructors(course.courseID, instructorIDs);
-
 				if (batchIDs != null) {
 					adoptPicked(batchIDs);
-					repository.setCourseBatches(course.courseID, batchIDs);
 				}
+				// Keeps the stored introduced and discontinued dates (R33), and writes the
+				// course, its instructors and its links together (R39).
+				repository.saveCourse(course, false, instructorIDs, batchIDs);
 				toastMessage.postValue("Course updated");
 				onDone.run();
 			} catch (Exception e) {
@@ -3256,6 +3290,23 @@ public class AttendanceViewModel extends AndroidViewModel {
 	private static final long STATS_DEBOUNCE_MS = 250L;
 
 	/**
+	 * Counts the report runs started, so that only the latest one's result is shown. Two runs
+	 * close together could finish in either order on the query pool, and the older result
+	 * then stayed on screen (R37). Main thread only.
+	 */
+	private int statsGeneration;
+
+	/**
+	 * Changes whenever anything the report reads is written, a sync's pull included. The
+	 * report screen watches it and runs again, so its figures follow the data rather than the
+	 * last time a filter was touched (R37).
+	 */
+	@NonNull
+	public LiveData<List<Integer>> getReportInputs() {
+		return repository.observeReportInputs();
+	}
+
+	/**
 	 * The live filter object, mutated in place by the report screen and re-run through
 	 * {@link #runStatsQuery()}, so the screen never has to reassemble it from scratch.
 	 * <p>
@@ -3380,6 +3431,8 @@ public class AttendanceViewModel extends AndroidViewModel {
 	public void runStatsQuery() {
 
 		final StatsFilter snapshot = statsFilter().copy();
+		final int generation = ++statsGeneration;
+		final Handler main = new Handler(Looper.getMainLooper());
 		busy.setValue(true);
 
 		MainDatabase.DB_EXECUTOR.execute(() -> {
@@ -3399,14 +3452,27 @@ public class AttendanceViewModel extends AndroidViewModel {
 					}
 				}
 
-				statRows.postValue(rows);
-				statsSummary.postValue(summary == null ? new StatsSummary() : summary);
-				statsBelowCount.postValue(below);
+				final int belowCount = below;
+
+				// Published only if no later run has started since; that one will publish.
+				main.post(() -> {
+					if (generation != statsGeneration) {
+						return;
+					}
+					statRows.setValue(rows);
+					statsSummary.setValue(summary == null ? new StatsSummary() : summary);
+					statsBelowCount.setValue(belowCount);
+				});
 			} catch (Exception e) {
-				toastMessage.postValue("Could not run report: " + e.getMessage());
-				statRows.postValue(new ArrayList<>());
-				statsSummary.postValue(new StatsSummary());
-				statsBelowCount.postValue(0);
+				main.post(() -> {
+					if (generation != statsGeneration) {
+						return;
+					}
+					toastMessage.setValue("Could not run report: " + e.getMessage());
+					statRows.setValue(new ArrayList<>());
+					statsSummary.setValue(new StatsSummary());
+					statsBelowCount.setValue(0);
+				});
 			} finally {
 				busy.postValue(false);
 			}

@@ -120,6 +120,16 @@ public class FragmentAddStudent extends Fragment {
 	@Nullable
 	private Division chosenDivision;
 
+	/**
+	 * Whether the form was rebuilt from a saved state. What was typed and chosen is then the
+	 * form's own, and the stored student must not be written over it (R36).
+	 */
+	private boolean restored;
+
+	private static final String KEY_MAJOR = "major", KEY_MINOR = "minor", KEY_OE = "oe",
+			KEY_STREAM = "stream", KEY_YEAR = "year", KEY_SEMESTER = "semester",
+			KEY_DIVISION = "division", KEY_JOIN = "join", KEY_LEAVE = "leave";
+
 	@Nullable
 	@Override
 	public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
@@ -145,6 +155,10 @@ public class FragmentAddStudent extends Fragment {
 		editingStudentID = getArguments() == null
 				? -1L
 				: getArguments().getLong("studentID", -1L);
+
+		if (savedInstanceState != null) {
+			restoreFrom(savedInstanceState);
+		}
 
 		// The session to read from and write back to. Absent when adding, and when the
 		// students list opened this; the detail screen passes the one it is showing.
@@ -200,7 +214,80 @@ public class FragmentAddStudent extends Fragment {
 
 		if (isEditing()) {
 			save.setText(R.string.action_save_changes);
-			prefillFromExisting();
+
+			// After a rotation the form holds what was being typed; reading the student again
+			// would write the stored values over it (R36).
+			if (!restored) {
+				prefillFromExisting();
+			}
+		}
+	}
+
+	// ── Rotation ─────────────────────────────────────────────────────────
+
+	/**
+	 * Keeps what the fields' own state does not: the department, stream, year, semester,
+	 * division, minor and open elective chosen, and the two dates. The text fields keep
+	 * themselves. Without this, adding a student and rotating kept the typing and lost the
+	 * dropdowns, and saving then reported them as missing (R36).
+	 */
+	@Override
+	public void onSaveInstanceState(@NonNull Bundle outState) {
+		super.onSaveInstanceState(outState);
+
+		putEnum(outState, KEY_MAJOR, chosenMajor);
+		putEnum(outState, KEY_MINOR, chosenMinor);
+		putEnum(outState, KEY_OE, chosenOe);
+		putEnum(outState, KEY_STREAM, chosenStream);
+		putEnum(outState, KEY_YEAR, chosenYear);
+		putEnum(outState, KEY_DIVISION, chosenDivision);
+
+		if (chosenSemester != null) {
+			outState.putInt(KEY_SEMESTER, chosenSemester);
+		}
+		if (joinDate != null) {
+			outState.putLong(KEY_JOIN, joinDate.toEpochDay());
+		}
+		if (leaveDate != null) {
+			outState.putLong(KEY_LEAVE, leaveDate.toEpochDay());
+		}
+	}
+
+	private void restoreFrom(@NonNull Bundle state) {
+
+		restored = true;
+
+		chosenMajor = getEnum(state, KEY_MAJOR, Department.class);
+		chosenMinor = getEnum(state, KEY_MINOR, Department.class);
+		chosenOe = getEnum(state, KEY_OE, Department.class);
+		chosenStream = getEnum(state, KEY_STREAM, Stream.class);
+		chosenYear = getEnum(state, KEY_YEAR, Year.class);
+		chosenDivision = getEnum(state, KEY_DIVISION, Division.class);
+		chosenSemester = state.containsKey(KEY_SEMESTER) ? state.getInt(KEY_SEMESTER) : null;
+		joinDate = state.containsKey(KEY_JOIN)
+				? LocalDate.ofEpochDay(state.getLong(KEY_JOIN)) : null;
+		leaveDate = state.containsKey(KEY_LEAVE)
+				? LocalDate.ofEpochDay(state.getLong(KEY_LEAVE)) : null;
+	}
+
+	private static void putEnum(@NonNull Bundle state, @NonNull String key,
+	                            @Nullable Enum<?> value) {
+		if (value != null) {
+			state.putString(key, value.name());
+		}
+	}
+
+	@Nullable
+	private static <E extends Enum<E>> E getEnum(@NonNull Bundle state, @NonNull String key,
+	                                             @NonNull Class<E> type) {
+		String name = state.getString(key);
+		if (name == null) {
+			return null;
+		}
+		try {
+			return Enum.valueOf(type, name);
+		} catch (IllegalArgumentException renamed) {
+			return null;
 		}
 	}
 

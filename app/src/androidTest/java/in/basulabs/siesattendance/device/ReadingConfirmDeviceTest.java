@@ -216,7 +216,7 @@ public class ReadingConfirmDeviceTest {
 
 		// What the "Add student" form calls on Save, with a roll number mistyped as Alice's.
 		try {
-			repository.upsertStudentWithYear(new EntityStudent("CAROL", "she/her", null),
+			repository.addStudentWithYear(new EntityStudent("CAROL", "she/her", null),
 					SESSION, "PH-1", Year.SY, Stream.BSc, Department.PHYSICS, null, null, 3,
 					null, null, null);
 		} catch (Exception refused) {

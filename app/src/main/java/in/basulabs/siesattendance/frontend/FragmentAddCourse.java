@@ -86,6 +86,29 @@ public class FragmentAddCourse extends Fragment {
 	private long pendingProfID = -1L;
 
 	/**
+	 * The coordinator chosen, by ID, or -1 for none.
+	 * <p>
+	 * Held as an ID rather than read back from the dropdown's text. The text is
+	 * "name (department)", and two professors of one department with the same name share it,
+	 * so matching on it always picked the first of them (R39).
+	 */
+	private long chosenProfID = -1L;
+
+	/** The professors the coordinator dropdown is offering, in its order. */
+	private final List<EntityProfessor> coordinatorChoices = new ArrayList<>();
+
+	/**
+	 * Whether the form was rebuilt from a saved state: a rotation, or the app restored after
+	 * Android killed it. What was typed and chosen is then the form's own, and the stored course
+	 * must not be written over it (R36).
+	 */
+	private boolean restored;
+
+	private static final String KEY_DEPT = "dept", KEY_STREAM = "stream", KEY_YEAR = "year",
+			KEY_SEMESTER = "semester", KEY_TYPE = "type", KEY_PROF = "prof",
+			KEY_INSTRUCTORS = "instructors", KEY_BATCHES = "batches";
+
+	/**
 	 * The co-instructors currently ticked. Ordered so the summary line does not reshuffle
 	 * itself every time the dialog is reopened.
 	 * <p>
@@ -189,6 +212,10 @@ public class FragmentAddCourse extends Fragment {
 			chosenDept = viewModel.batchDepartments().get(0);
 		}
 
+		if (savedInstanceState != null) {
+			restoreFrom(savedInstanceState);
+		}
+
 		bindDropdowns();
 
 		MaterialButton save = view.findViewById(R.id.btnSaveCourse);
@@ -259,6 +286,12 @@ public class FragmentAddCourse extends Fragment {
 					}
 				}));
 
+				// After a rotation the form holds what was being typed, which is what the
+				// user is editing; the stored course would write over it (R36).
+				if (restored) {
+					return;
+				}
+
 				etCode.setText(course.courseCode);
 				etTopic.setText(course.courseTopic);
 				etRemarks.setText(course.remarks);
@@ -276,6 +309,10 @@ public class FragmentAddCourse extends Fragment {
 				applyPendingProfessor();
 			});
 		});
+
+		if (restored) {
+			return;
+		}
 
 		// Read separately from the course row, and every instructor is loaded rather than only
 		// the co-instructors: the coordinator is among them in the database, and which one they
@@ -300,8 +337,11 @@ public class FragmentAddCourse extends Fragment {
 					batchOptions.clear();
 					batchOptions.addAll(options);
 
-					batchIDs.clear();
-					batchIDs.addAll(linked);
+					// After a rotation the ticks are the ones being edited, already restored.
+					if (!restored || !batchesLoaded) {
+						batchIDs.clear();
+						batchIDs.addAll(linked);
+					}
 					batchesLoaded = true;
 
 					showBatchSummary();
@@ -392,13 +432,19 @@ public class FragmentAddCourse extends Fragment {
 		}
 		for (EntityProfessor professor : professors) {
 			if (professor.profID == pendingProfID) {
-				actvProfessor.setText(
-						professor.name + " (" + professor.department + ")", false);
+				chosenProfID = professor.profID;
+				pendingProfID = -1L;
+				actvProfessor.setText(label(professor), false);
 				// The summary names people, so it can only be written once the names are here.
 				showInstructorSummary();
 				return;
 			}
 		}
+	}
+
+	@NonNull
+	private static String label(@NonNull EntityProfessor professor) {
+		return professor.name + " (" + professor.department + ")";
 	}
 
 	/**
@@ -432,7 +478,7 @@ public class FragmentAddCourse extends Fragment {
 
 		for (int i = 0; i < choices.size(); i++) {
 			EntityProfessor professor = choices.get(i);
-			labels[i] = professor.name + " (" + professor.department + ")";
+			labels[i] = label(professor);
 			checked[i] = otherInstructorIDs.contains(professor.profID);
 		}
 
@@ -485,13 +531,9 @@ public class FragmentAddCourse extends Fragment {
 				: names.toString());
 	}
 
-	/**
-	 * The professor currently chosen as coordinator, or -1 before one has been. Read from the
-	 * dropdown rather than held in a field, because the dropdown is what the user is editing.
-	 */
+	/** The professor currently chosen as coordinator, or -1 before one has been. */
 	private long coordinatorProfID() {
-		int index = indexOfSelectedProfessor();
-		return index < 0 ? -1L : professors.get(index).profID;
+		return chosenProfID;
 	}
 
 	/**
@@ -551,6 +593,7 @@ public class FragmentAddCourse extends Fragment {
 		// Changing the coordinator changes who the picker may offer and who the summary may
 		// name, so both are redrawn rather than left showing the previous choice.
 		actvProfessor.setOnItemClickListener((parent, view, position, id) -> {
+			chosenProfID = coordinatorChoices.get(position).profID;
 			((TextInputLayout) requireView().findViewById(R.id.tilProfessor)).setError(null);
 			showInstructorSummary();
 		});
@@ -571,19 +614,22 @@ public class FragmentAddCourse extends Fragment {
 	 */
 	private void showCoordinatorChoices(boolean clearRefused) {
 
+		coordinatorChoices.clear();
 		List<String> labels = new ArrayList<>();
 		for (EntityProfessor professor : professors) {
 			if (AcademicRules.validateCoordinator(chosenType, professor.department) == null) {
-				labels.add(professor.name + " (" + professor.department + ")");
+				coordinatorChoices.add(professor);
+				labels.add(label(professor));
 			}
 		}
 		actvProfessor.setAdapter(new ArrayAdapter<>(requireContext(),
 				android.R.layout.simple_list_item_1, labels));
 
 		if (clearRefused) {
-			int index = indexOfSelectedProfessor();
-			if (index >= 0 && AcademicRules.validateCoordinator(chosenType,
-					professors.get(index).department) != null) {
+			EntityProfessor chosen = chosenProfessor();
+			if (chosen != null && AcademicRules.validateCoordinator(chosenType,
+					chosen.department) != null) {
+				chosenProfID = -1L;
 				actvProfessor.setText("", false);
 				showInstructorSummary();
 			}
@@ -689,15 +735,15 @@ public class FragmentAddCourse extends Fragment {
 				type, remarks.isEmpty() ? null : remarks);
 
 		// EntityCourse carries a profID foreign key, so a professor must be chosen.
-		int index = indexOfSelectedProfessor();
-		if (index < 0) {
+		EntityProfessor coordinator = chosenProfessor();
+		if (coordinator == null) {
 			refuse(R.id.tilProfessor);
 			return;
 		}
-		course.profID = professors.get(index).profID;
+		course.profID = coordinator.profID;
 
 		String coordinatorProblem = AcademicRules.validateCoordinator(type,
-				professors.get(index).department);
+				coordinator.department);
 		if (coordinatorProblem != null) {
 			new MaterialAlertDialogBuilder(requireContext())
 					.setTitle(R.string.dialog_invalid_combination)
@@ -758,10 +804,6 @@ public class FragmentAddCourse extends Fragment {
 	}
 
 	/**
-	 * Where the currently chosen professor sits in {@link #professors}, or -1 when none is
-	 * chosen. Used to preselect the entry in the picker dialog.
-	 */
-	/**
 	 * Marks a field as required and brings it into view.
 	 * <p>
 	 * The error alone was not enough. Save is at the foot of a long form, so the field it
@@ -790,16 +832,103 @@ public class FragmentAddCourse extends Fragment {
 		}
 	}
 
-	private int indexOfSelectedProfessor() {
-		String selected = actvProfessor.getText().toString().trim();
-		for (int i = 0; i < professors.size(); i++) {
-			EntityProfessor professor = professors.get(i);
-			String label = professor.name + " (" + professor.department + ")";
-			if (label.equals(selected)) {
-				return i;
+	/** The coordinator chosen, or null when none is, or the list has not arrived. */
+	@Nullable
+	private EntityProfessor chosenProfessor() {
+		for (EntityProfessor professor : professors) {
+			if (professor.profID == chosenProfID) {
+				return professor;
 			}
 		}
-		return -1;
+		return null;
+	}
+
+	// ── Rotation ─────────────────────────────────────────────────────────
+
+	/**
+	 * Keeps what the fields' own state does not: the chosen department, stream, year,
+	 * semester and type, the coordinator, the co-instructors and the batches ticked. The text
+	 * fields keep themselves (R36).
+	 */
+	@Override
+	public void onSaveInstanceState(@NonNull Bundle outState) {
+		super.onSaveInstanceState(outState);
+
+		if (chosenDept != null) {
+			outState.putString(KEY_DEPT, chosenDept.name());
+		}
+		if (chosenStream != null) {
+			outState.putString(KEY_STREAM, chosenStream.name());
+		}
+		if (chosenYear != null) {
+			outState.putString(KEY_YEAR, chosenYear.name());
+		}
+		if (chosenSemester != null) {
+			outState.putInt(KEY_SEMESTER, chosenSemester);
+		}
+		if (chosenType != null) {
+			outState.putString(KEY_TYPE, chosenType.name());
+		}
+
+		// Before the dropdown has applied the stored coordinator, that one is the choice.
+		outState.putLong(KEY_PROF, chosenProfID > 0 ? chosenProfID : pendingProfID);
+		outState.putLongArray(KEY_INSTRUCTORS, toArray(otherInstructorIDs));
+
+		// Only once the links are known: an empty set saved before then would read as
+		// "nothing linked" after the rotation, and saving that would remove every link.
+		if (batchesLoaded) {
+			outState.putLongArray(KEY_BATCHES, toArray(batchIDs));
+		}
+	}
+
+	private void restoreFrom(@NonNull Bundle state) {
+
+		restored = true;
+
+		chosenDept = enumOrNull(Department.class, state.getString(KEY_DEPT));
+		chosenStream = enumOrNull(Stream.class, state.getString(KEY_STREAM));
+		chosenYear = enumOrNull(Year.class, state.getString(KEY_YEAR));
+		chosenSemester = state.containsKey(KEY_SEMESTER) ? state.getInt(KEY_SEMESTER) : null;
+		chosenType = enumOrNull(CourseType.class, state.getString(KEY_TYPE));
+		pendingProfID = state.getLong(KEY_PROF, -1L);
+
+		long[] instructors = state.getLongArray(KEY_INSTRUCTORS);
+		if (instructors != null) {
+			for (long id : instructors) {
+				otherInstructorIDs.add(id);
+			}
+		}
+
+		long[] batches = state.getLongArray(KEY_BATCHES);
+		if (batches != null) {
+			for (long id : batches) {
+				batchIDs.add(id);
+			}
+			batchesLoaded = true;
+		}
+	}
+
+	@Nullable
+	private static <E extends Enum<E>> E enumOrNull(@NonNull Class<E> type,
+	                                                @Nullable String name) {
+		if (name == null) {
+			return null;
+		}
+		try {
+			return Enum.valueOf(type, name);
+		} catch (IllegalArgumentException renamed) {
+			return null;
+		}
+	}
+
+	@NonNull
+	private static long[] toArray(@NonNull Set<Long> ids) {
+		long[] array = new long[ids.size()];
+		int i = 0;
+		for (long id : ids) {
+			array[i++] = id;
+		}
+		return array;
 	}
 
 }

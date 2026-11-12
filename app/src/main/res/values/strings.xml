@@ -388,10 +388,17 @@
     <string name="helper_starting_year">2025 means the 2025-26 session</string>
     <string name="hint_sessions_explainer">Tap a session to edit it, long-press to remove it.</string>
     <string name="dialog_delete_session_title">Remove this session?</string>
-    <string name="dialog_delete_session_message">%1$s will be removed. Lectures in these dates won\'t appear in reports until another session covers them.</string>
+    <string name="dialog_delete_session_message">%1$s will be removed.</string>
     <string name="dialog_delete_session_empty">Nothing is filed under it yet, so removing it
         costs nothing.</string>
-    <string name="dialog_delete_session_impact">%1$s and %2$s are filed under it.</string>
+    <string name="dialog_session_in_use_title">This session can\'t be removed</string>
+    <string name="dialog_session_in_use_message">%1$s still has %2$s, %3$s and %4$s. Only a session with nothing filed under it can be removed.</string>
+    <plurals name="count_batches_plain">
+        <item quantity="one">1 batch</item>
+        <item quantity="other">%1$d batches</item>
+    </plurals>
+    <string name="error_session_year">Enter the year the session starts in, such as 2026</string>
+    <string name="error_no_session_covers">No session covers %1$s, so this register would count nowhere. Ask an administrator to add or extend a session first. Nothing was saved.</string>
     <plurals name="count_lectures_plain">
         <item quantity="one">1 lecture</item>
         <item quantity="other">%1$d lectures</item>
@@ -545,7 +552,12 @@
         record naming them</string>
 
     <string name="dialog_withdraw_title">Remove from this session?</string>
-    <string name="dialog_withdraw_message">They will be removed from this session\'s roll and batches. Their %1$d attendance record(s) are kept.</string>
+    <string name="dialog_withdraw_message_unmarked">They will be removed from this session\'s roll and batches. They have no attendance in this session.</string>
+    <plurals name="dialog_withdraw_message_marked">
+        <item quantity="one">They will be removed from this session\'s roll and batches. Their 1 attendance record in this session is kept, but no longer counts in the statistics or the register export. If they left part way through, set a leave date instead.</item>
+        <item quantity="other">They will be removed from this session\'s roll and batches. Their %1$d attendance records in this session are kept, but no longer count in the statistics or the register export. If they left part way through, set a leave date instead.</item>
+    </plurals>
+    <string name="action_set_leave_date_instead">Set a leave date</string>
 
     <string name="dialog_delete_student_title">Delete this student?</string>
     <string name="dialog_delete_student_message_clean">There is no attendance recorded for
@@ -798,4 +810,8 @@
     -->
     <string name="title_sign_in_required">Sign in to take attendance</string>
 
+    <!-- Adding a student by hand who is already on record (R34) -->
+    <string name="error_student_exists_roll_no">%1$s already has this roll number this session. Nothing was saved; edit their record instead.</string>
+    <string name="error_student_exists_apaar_id">%1$s already has this APAAR ID. Nothing was saved; edit their record instead.</string>
+    <string name="error_student_exists_email">%1$s already has this email address. Nothing was saved; edit their record instead.</string>
 </resources>

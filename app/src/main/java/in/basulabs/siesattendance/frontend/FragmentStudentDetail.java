@@ -806,11 +806,7 @@ public class FragmentStudentDetail extends Fragment {
 			@Override
 			public boolean onMenuItemSelected(@NonNull MenuItem item) {
 				if (item.getItemId() == R.id.action_edit) {
-					Bundle args = new Bundle();
-					args.putLong("studentID", studentID);
-					args.putInt("academicYear", academicYear);
-					Navigation.findNavController(requireView())
-							.navigate(R.id.action_studentDetail_to_editStudent, args);
+					openEditForm();
 					return true;
 				}
 				if (item.getItemId() == R.id.action_delete) {
@@ -879,15 +875,37 @@ public class FragmentStudentDetail extends Fragment {
 	 */
 	private void confirmWithdraw(@NonNull DeletionImpact impact) {
 
-		new MaterialAlertDialogBuilder(requireContext())
+		MaterialAlertDialogBuilder dialog = new MaterialAlertDialogBuilder(requireContext())
 				.setTitle(R.string.dialog_withdraw_title)
-				.setMessage(getString(R.string.dialog_withdraw_message,
-						impact.attendanceThisSession))
 				.setNegativeButton(R.string.action_cancel, null)
 				.setPositiveButton(R.string.action_withdraw, (d, w) ->
 						viewModel.withdrawStudentFromSession(studentID, academicYear,
-								this::leaveScreen))
-				.show();
+								this::leaveScreen));
+
+		// The marks are kept, but the statistics and the register export count only the marks
+		// of students enrolled in the lecture's session, so after a withdrawal they show in the
+		// per-student breakdown alone (R35). Said plainly, with the leave date offered
+		// instead: a student who left stays enrolled up to that date and their marks count.
+		if (impact.attendanceThisSession > 0) {
+			dialog.setMessage(getResources().getQuantityString(
+							R.plurals.dialog_withdraw_message_marked,
+							impact.attendanceThisSession, impact.attendanceThisSession))
+					.setNeutralButton(R.string.action_set_leave_date_instead, (d, w) ->
+							openEditForm());
+		} else {
+			dialog.setMessage(R.string.dialog_withdraw_message_unmarked);
+		}
+
+		dialog.show();
+	}
+
+	/** The edit form for this student, in the session on show. */
+	private void openEditForm() {
+		Bundle args = new Bundle();
+		args.putLong("studentID", studentID);
+		args.putInt("academicYear", academicYear);
+		Navigation.findNavController(requireView())
+				.navigate(R.id.action_studentDetail_to_editStudent, args);
 	}
 
 	/**
