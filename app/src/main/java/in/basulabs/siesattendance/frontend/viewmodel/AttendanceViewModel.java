@@ -63,7 +63,6 @@ import in.basulabs.siesattendance.backend.util.AttendanceRecordImporter;
 import in.basulabs.siesattendance.backend.util.BreakdownFilter;
 import in.basulabs.siesattendance.backend.util.CourseGroup;
 import in.basulabs.siesattendance.backend.util.ExportFilter;
-import in.basulabs.siesattendance.backend.IdGenerator;
 import in.basulabs.siesattendance.backend.repo.AttendanceRepository;
 import in.basulabs.siesattendance.backend.repo.RoomAttendanceRepository;
 import in.basulabs.siesattendance.backend.EntitySyncState;
@@ -488,11 +487,6 @@ public class AttendanceViewModel extends AndroidViewModel {
 		return DeviceIdentity.lastSyncError(getApplication());
 	}
 
-	/** The node this device issues keys under, or 0 before it has been told one. */
-	public int deviceNode() {
-		return IdGenerator.nodeID();
-	}
-
 	/** Who is signed in, as the server named them, or null. */
 	@Nullable
 	public String signedInAs() {
@@ -601,8 +595,9 @@ public class AttendanceViewModel extends AndroidViewModel {
 					// of the app cannot sync" on the screen for the person to wonder about.
 					toastMessage.postValue("Signed in. Choose a new password to continue.");
 				} else {
-					toastMessage.postValue("Signed in as " + session.displayName()
-							+ ", device " + session.node());
+					// The name alone: the device number is the server's bookkeeping, and means
+					// nothing to the person holding the phone.
+					toastMessage.postValue("Signed in as " + session.displayName());
 					SyncScheduler.syncNow(getApplication());
 				}
 				onDone.accept(session.displayName());
