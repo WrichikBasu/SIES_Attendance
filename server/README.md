@@ -283,7 +283,7 @@ Keep these elsewhere, not with the backups:
 | The server or its disk is gone | point-in-time `--to latest`, which loses at most the last few minutes. If that fails, the newest dump, which loses everything since 02:30 | the off-machine copy |
 | Something older than 7 days | the dump from that night, or that month | the off-machine copy, if the server has rotated it away |
 | A new machine with a newer PostgreSQL, or another kind of CPU | a dump | either |
-| Checking the backups work | `--check` on both, now and then | either |
+| Checking the backups work | `tools/restore-drill.sh` from cron, or `--check` on both by hand | the off-machine copy |
 
 Every restore goes into a new, empty database or container, never over the live one. Look at
 the result first, then swap it in. Both scripts print the steps.
@@ -397,6 +397,38 @@ nothing that already exists, and prints the steps to make that copy the live dat
   Once it's live, run `sies-wal-archiving.sh enable` and take a base backup straight away. The
   recovery started a new timeline, and the old timeline's WAL after that moment doesn't replay
   onto it.
+
+#### Drilling the restores
+
+`--check` proves a backup decrypts and loads. `tools/restore-drill.sh` goes further: on the
+machine that holds the off-machine copy, it rebuilds production from nothing twice, from the
+newest dump and from point-in-time `--to latest`. Each time it follows the steps above: the
+container, the restore script, the environment files, the migrate step and the service. Then
+it checks that the service answers, and removes everything (all named `sies-drill-*`). It
+also fails if the copy is stale (no dump or base backup in 26 hours, or no WAL in 30
+minutes), or if either restore takes longer than 30 minutes.
+
+```sh
+install -D -m 600 server/tools/restore-drill.env.example ~/.config/sies-attendance/restore-drill.env
+# set BACKUP_DIR and IDENTITY in it; the rest is optional
+
+./server/tools/restore-drill.sh            # once by hand: shows every step, exit 0 on success
+
+crontab -e                                 # then, e.g. every morning at 09:00:
+# 0 9 * * * /path/to/checkout/server/tools/restore-drill.sh --quiet
+```
+
+- **Quiet on success with `--quiet`,** which is how cron should run it. Without it, every
+  step is shown on the terminal as well. A failure shows a desktop notification (which
+  needs you signed in) and writes a summary to stdout, so cron mails it as well. Every
+  run's log is in `~/.local/state/sies-restore-drill/`.
+- **The key has to be on that machine,** readable only by you and outside the backup
+  directory. The drill refuses a key inside it.
+- **It restores with the jar built from the checkout,** so it also tests the migrations
+  that haven't reached production yet. Set `JAR` to a copy of production's jar to drill
+  exactly what runs there.
+- **Fill in the three role passwords** from the password manager to also prove they match
+  production. Without them, point-in-time recovery gets throwaway ones.
 
 ### Updating
 
